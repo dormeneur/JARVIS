@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: jv-api
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS
+    env_file: .env
+    restart: unless-stopped

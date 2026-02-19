@@ -1,0 +1,8 @@
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+pydantic-settings==2.8.1
+python-multipart==0.0.20
+PyJWT==2.10.1
+pytest==8.3.5
+httpx==0.28.1
+pytest-cov==6.0.0
