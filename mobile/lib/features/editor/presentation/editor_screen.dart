@@ -99,7 +99,17 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
           contentHash: drift.Value(hash),
           localPath: drift.Value(_entry!.localPath),
           lastSynced: drift.Value(_entry!.lastSynced),
+          serverVersion: drift.Value(_entry!.serverVersion),
         ),
+      );
+
+      // Enqueue mutation with current server version as base_version
+      await db.enqueueMutation(
+        id: 'edit-${DateTime.now().millisecondsSinceEpoch}-${_entry!.path.hashCode}',
+        path: _entry!.path,
+        operation: 'update',
+        timestamp: mtime,
+        baseVersion: _entry!.serverVersion,
       );
 
       setState(() {

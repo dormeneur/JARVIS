@@ -9,6 +9,7 @@ class ManifestEntry(BaseModel):
     path: str
     content_hash: str
     last_modified: datetime
+    version: int | None = None  # Server version number for conflict detection
 
 
 class ManifestRequest(BaseModel):
@@ -29,10 +30,12 @@ class PushMetadata(BaseModel):
     path: str
     content_hash: str
     last_modified: datetime
+    base_version: int | None = None  # Client's known server version
 
 
 class PushResultEntry(BaseModel):
     path: str
+    version: int | None = None  # New server version after successful push
 
 
 class PushResponse(BaseModel):

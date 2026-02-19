@@ -9,6 +9,7 @@ from typing import AsyncIterator
 from app.config import settings
 from app.errors import InvalidPathError, PathNotFoundError, VaultIOError
 from app.services.path_validator import validate_path, resolve_vault_path, check_symlink
+from app.services.version_tracker import VersionTracker
 
 STREAM_CHUNK_SIZE = 64 * 1024
 SYSTEM_DIR = "system"
@@ -39,6 +40,7 @@ def _is_skippable(name: str) -> bool:
 def build_server_manifest() -> dict[str, dict]:
     vault_root = settings.vault_path.resolve()
     manifest: dict[str, dict] = {}
+    version_tracker = VersionTracker()
 
     for dirpath, dirnames, filenames in os.walk(vault_root):
         dirnames[:] = [
@@ -56,11 +58,18 @@ def build_server_manifest() -> dict[str, dict]:
 
             relative = str(fpath.relative_to(vault_root)).replace("\\", "/")
             stat = fpath.stat()
+            content_hash = _sha256_file(fpath)
+
+            # Get or initialize version
+            version = version_tracker.get_version(relative)
+            if version is None:
+                version = version_tracker.create_version(relative, content_hash)
 
             manifest[relative] = {
                 "path": relative,
-                "content_hash": _sha256_file(fpath),
+                "content_hash": content_hash,
                 "last_modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                "version": version,
             }
 
     return manifest
@@ -83,29 +92,52 @@ def diff_manifests(
         server_entry = server_manifest.get(path)
 
         if server_entry is None:
+            # File only exists on client → push
             to_push.append(path)
             continue
 
         if entry["content_hash"] == server_entry["content_hash"]:
+            # Hashes match → no sync needed
             continue
 
-        client_mtime = entry["last_modified"]
-        server_mtime = server_entry["last_modified"]
+        # Hashes differ → check for version conflict
+        client_base_version = entry.get("version")
+        server_version = server_entry.get("version")
 
-        if isinstance(client_mtime, str):
-            client_mtime = datetime.fromisoformat(client_mtime.replace("Z", "+00:00"))
-        if not client_mtime.tzinfo:
-            client_mtime = client_mtime.replace(tzinfo=timezone.utc)
-
-        if client_mtime > server_mtime:
-            to_push.append(path)
-        elif server_mtime > client_mtime:
-            to_pull.append(path)
+        if client_base_version is not None and server_version is not None:
+            # Version-based conflict detection
+            if client_base_version != server_version:
+                # Client's base version doesn't match server → concurrent edit detected
+                conflicts.append(path)
+            else:
+                # Versions match but hashes differ → client has newer changes
+                to_push.append(path)
         else:
-            conflicts.append(path)
+            # Fallback to timestamp-based logic for backward compatibility
+            # (when client or server doesn't have version info yet)
+            client_mtime = entry["last_modified"]
+            server_mtime = server_entry["last_modified"]
+
+            if isinstance(client_mtime, str):
+                client_mtime = datetime.fromisoformat(client_mtime.replace("Z", "+00:00"))
+            if not client_mtime.tzinfo:
+                client_mtime = client_mtime.replace(tzinfo=timezone.utc)
+
+            # Calculate absolute time difference in seconds
+            time_diff_seconds = abs((client_mtime - server_mtime).total_seconds())
+            tolerance_seconds = settings.sync_timestamp_tolerance_seconds
+
+            # If timestamps are within tolerance and hashes differ → conflict
+            if time_diff_seconds <= tolerance_seconds:
+                conflicts.append(path)
+            elif client_mtime > server_mtime:
+                to_push.append(path)
+            else:
+                to_pull.append(path)
 
     for path in server_manifest:
         if path not in client_paths:
+            # File only exists on server → pull
             to_pull.append(path)
 
     return sorted(to_push), sorted(to_pull), sorted(conflicts)
@@ -121,10 +153,21 @@ def push_file(
     relative_path: str,
     file_data: bytes,
     client_last_modified: datetime,
-) -> tuple[str, bool]:
+    base_version: int | None = None,
+) -> tuple[str, bool, int | None]:
+    """
+    Push a file to the vault.
+    
+    Returns:
+        tuple of (path, is_conflict, new_version)
+        - path: The path where the file was written (may be conflict path)
+        - is_conflict: True if a conflict was detected
+        - new_version: The new version number (None if conflict)
+    """
     vault_root = settings.vault_path
     validated = validate_path(relative_path)
     target = resolve_vault_path(vault_root, validated)
+    version_tracker = VersionTracker()
 
     parent = target.parent
     if not parent.exists():
@@ -135,28 +178,60 @@ def push_file(
         client_hash = _sha256(file_data)
 
         if server_hash == client_hash:
-            return validated, False
+            # Hashes match → no write needed, but return current version
+            version = version_tracker.get_version(validated)
+            if version is None:
+                version = version_tracker.create_version(validated, server_hash)
+            return validated, False, version
 
-        server_mtime = datetime.fromtimestamp(
-            target.stat().st_mtime, tz=timezone.utc
-        )
-
-        if not client_last_modified.tzinfo:
-            client_last_modified = client_last_modified.replace(tzinfo=timezone.utc)
-
-        if client_last_modified > server_mtime:
-            pass
-        elif server_mtime > client_last_modified:
-            pass
+        # Hashes differ → check for version conflict
+        server_version = version_tracker.get_version(validated)
+        
+        if base_version is not None and server_version is not None:
+            # Version-based conflict detection
+            if base_version != server_version:
+                # Concurrent edit detected → create conflict file
+                conflict_rel = _conflict_path(validated)
+                conflict_target = resolve_vault_path(vault_root, validate_path(conflict_rel))
+                try:
+                    conflict_target.write_bytes(file_data)
+                except OSError as exc:
+                    raise VaultIOError(f"Failed to write conflict file: {exc}") from exc
+                
+                # Create version tracking for conflict file (use upsert to avoid duplicates)
+                conflict_hash = _sha256(file_data)
+                version_tracker.upsert_version(conflict_rel, 1, conflict_hash)
+                
+                return conflict_rel, True, None
         else:
-            conflict_rel = _conflict_path(validated)
-            conflict_target = resolve_vault_path(vault_root, validate_path(conflict_rel))
-            try:
-                conflict_target.write_bytes(file_data)
-            except OSError as exc:
-                raise VaultIOError(f"Failed to write conflict file: {exc}") from exc
-            return conflict_rel, True
+            # Fallback to timestamp-based conflict detection for backward compatibility
+            server_mtime = datetime.fromtimestamp(
+                target.stat().st_mtime, tz=timezone.utc
+            )
 
+            if not client_last_modified.tzinfo:
+                client_last_modified = client_last_modified.replace(tzinfo=timezone.utc)
+
+            # Calculate absolute time difference in seconds
+            time_diff_seconds = abs((client_last_modified - server_mtime).total_seconds())
+            tolerance_seconds = settings.sync_timestamp_tolerance_seconds
+
+            # If timestamps are within tolerance and hashes differ → conflict
+            if time_diff_seconds <= tolerance_seconds:
+                conflict_rel = _conflict_path(validated)
+                conflict_target = resolve_vault_path(vault_root, validate_path(conflict_rel))
+                try:
+                    conflict_target.write_bytes(file_data)
+                except OSError as exc:
+                    raise VaultIOError(f"Failed to write conflict file: {exc}") from exc
+                
+                # Create version tracking for conflict file (use upsert to avoid duplicates)
+                conflict_hash = _sha256(file_data)
+                version_tracker.upsert_version(conflict_rel, 1, conflict_hash)
+                
+                return conflict_rel, True, None
+
+    # No conflict → write file and increment version
     try:
         target.write_bytes(file_data)
     except OSError as exc:
@@ -168,7 +243,11 @@ def push_file(
     except OSError:
         pass
 
-    return validated, False
+    # Update version tracking
+    new_hash = _sha256(file_data)
+    new_version = version_tracker.increment_version(validated, new_hash)
+
+    return validated, False, new_version
 
 
 async def pull_file(relative_path: str) -> tuple[str, int, AsyncIterator[bytes]]:

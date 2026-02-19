@@ -91,6 +91,18 @@ class $FileCacheEntriesTable extends FileCacheEntries
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _serverVersionMeta = const VerificationMeta(
+    'serverVersion',
+  );
+  @override
+  late final GeneratedColumn<int> serverVersion = GeneratedColumn<int>(
+    'server_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     path,
@@ -101,6 +113,7 @@ class $FileCacheEntriesTable extends FileCacheEntries
     contentHash,
     localPath,
     lastSynced,
+    serverVersion,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -176,6 +189,15 @@ class $FileCacheEntriesTable extends FileCacheEntries
         lastSynced.isAcceptableOrUnknown(data['last_synced']!, _lastSyncedMeta),
       );
     }
+    if (data.containsKey('server_version')) {
+      context.handle(
+        _serverVersionMeta,
+        serverVersion.isAcceptableOrUnknown(
+          data['server_version']!,
+          _serverVersionMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -217,6 +239,10 @@ class $FileCacheEntriesTable extends FileCacheEntries
         DriftSqlType.string,
         data['${effectivePrefix}last_synced'],
       ),
+      serverVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}server_version'],
+      )!,
     );
   }
 
@@ -235,6 +261,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
   final String? contentHash;
   final String? localPath;
   final String? lastSynced;
+  final int serverVersion;
   const FileCacheEntry({
     required this.path,
     required this.name,
@@ -244,6 +271,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
     this.contentHash,
     this.localPath,
     this.lastSynced,
+    required this.serverVersion,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -264,6 +292,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
     if (!nullToAbsent || lastSynced != null) {
       map['last_synced'] = Variable<String>(lastSynced);
     }
+    map['server_version'] = Variable<int>(serverVersion);
     return map;
   }
 
@@ -285,6 +314,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
       lastSynced: lastSynced == null && nullToAbsent
           ? const Value.absent()
           : Value(lastSynced),
+      serverVersion: Value(serverVersion),
     );
   }
 
@@ -302,6 +332,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
       contentHash: serializer.fromJson<String?>(json['contentHash']),
       localPath: serializer.fromJson<String?>(json['localPath']),
       lastSynced: serializer.fromJson<String?>(json['lastSynced']),
+      serverVersion: serializer.fromJson<int>(json['serverVersion']),
     );
   }
   @override
@@ -316,6 +347,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
       'contentHash': serializer.toJson<String?>(contentHash),
       'localPath': serializer.toJson<String?>(localPath),
       'lastSynced': serializer.toJson<String?>(lastSynced),
+      'serverVersion': serializer.toJson<int>(serverVersion),
     };
   }
 
@@ -328,6 +360,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
     Value<String?> contentHash = const Value.absent(),
     Value<String?> localPath = const Value.absent(),
     Value<String?> lastSynced = const Value.absent(),
+    int? serverVersion,
   }) => FileCacheEntry(
     path: path ?? this.path,
     name: name ?? this.name,
@@ -337,6 +370,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
     contentHash: contentHash.present ? contentHash.value : this.contentHash,
     localPath: localPath.present ? localPath.value : this.localPath,
     lastSynced: lastSynced.present ? lastSynced.value : this.lastSynced,
+    serverVersion: serverVersion ?? this.serverVersion,
   );
   FileCacheEntry copyWithCompanion(FileCacheEntriesCompanion data) {
     return FileCacheEntry(
@@ -354,6 +388,9 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
       lastSynced: data.lastSynced.present
           ? data.lastSynced.value
           : this.lastSynced,
+      serverVersion: data.serverVersion.present
+          ? data.serverVersion.value
+          : this.serverVersion,
     );
   }
 
@@ -367,7 +404,8 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
           ..write('lastModified: $lastModified, ')
           ..write('contentHash: $contentHash, ')
           ..write('localPath: $localPath, ')
-          ..write('lastSynced: $lastSynced')
+          ..write('lastSynced: $lastSynced, ')
+          ..write('serverVersion: $serverVersion')
           ..write(')'))
         .toString();
   }
@@ -382,6 +420,7 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
     contentHash,
     localPath,
     lastSynced,
+    serverVersion,
   );
   @override
   bool operator ==(Object other) =>
@@ -394,7 +433,8 @@ class FileCacheEntry extends DataClass implements Insertable<FileCacheEntry> {
           other.lastModified == this.lastModified &&
           other.contentHash == this.contentHash &&
           other.localPath == this.localPath &&
-          other.lastSynced == this.lastSynced);
+          other.lastSynced == this.lastSynced &&
+          other.serverVersion == this.serverVersion);
 }
 
 class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
@@ -406,6 +446,7 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
   final Value<String?> contentHash;
   final Value<String?> localPath;
   final Value<String?> lastSynced;
+  final Value<int> serverVersion;
   final Value<int> rowid;
   const FileCacheEntriesCompanion({
     this.path = const Value.absent(),
@@ -416,6 +457,7 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
     this.contentHash = const Value.absent(),
     this.localPath = const Value.absent(),
     this.lastSynced = const Value.absent(),
+    this.serverVersion = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   FileCacheEntriesCompanion.insert({
@@ -427,6 +469,7 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
     this.contentHash = const Value.absent(),
     this.localPath = const Value.absent(),
     this.lastSynced = const Value.absent(),
+    this.serverVersion = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : path = Value(path),
        name = Value(name),
@@ -441,6 +484,7 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
     Expression<String>? contentHash,
     Expression<String>? localPath,
     Expression<String>? lastSynced,
+    Expression<int>? serverVersion,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -452,6 +496,7 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
       if (contentHash != null) 'content_hash': contentHash,
       if (localPath != null) 'local_path': localPath,
       if (lastSynced != null) 'last_synced': lastSynced,
+      if (serverVersion != null) 'server_version': serverVersion,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -465,6 +510,7 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
     Value<String?>? contentHash,
     Value<String?>? localPath,
     Value<String?>? lastSynced,
+    Value<int>? serverVersion,
     Value<int>? rowid,
   }) {
     return FileCacheEntriesCompanion(
@@ -476,6 +522,7 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
       contentHash: contentHash ?? this.contentHash,
       localPath: localPath ?? this.localPath,
       lastSynced: lastSynced ?? this.lastSynced,
+      serverVersion: serverVersion ?? this.serverVersion,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -507,6 +554,9 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
     if (lastSynced.present) {
       map['last_synced'] = Variable<String>(lastSynced.value);
     }
+    if (serverVersion.present) {
+      map['server_version'] = Variable<int>(serverVersion.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -524,6 +574,529 @@ class FileCacheEntriesCompanion extends UpdateCompanion<FileCacheEntry> {
           ..write('contentHash: $contentHash, ')
           ..write('localPath: $localPath, ')
           ..write('lastSynced: $lastSynced, ')
+          ..write('serverVersion: $serverVersion, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MutationQueueTable extends MutationQueue
+    with TableInfo<$MutationQueueTable, MutationQueueData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MutationQueueTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _pathMeta = const VerificationMeta('path');
+  @override
+  late final GeneratedColumn<String> path = GeneratedColumn<String>(
+    'path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _operationMeta = const VerificationMeta(
+    'operation',
+  );
+  @override
+  late final GeneratedColumn<String> operation = GeneratedColumn<String>(
+    'operation',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _timestampMeta = const VerificationMeta(
+    'timestamp',
+  );
+  @override
+  late final GeneratedColumn<String> timestamp = GeneratedColumn<String>(
+    'timestamp',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _retryCountMeta = const VerificationMeta(
+    'retryCount',
+  );
+  @override
+  late final GeneratedColumn<int> retryCount = GeneratedColumn<int>(
+    'retry_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _baseVersionMeta = const VerificationMeta(
+    'baseVersion',
+  );
+  @override
+  late final GeneratedColumn<int> baseVersion = GeneratedColumn<int>(
+    'base_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _conflictFilePathMeta = const VerificationMeta(
+    'conflictFilePath',
+  );
+  @override
+  late final GeneratedColumn<String> conflictFilePath = GeneratedColumn<String>(
+    'conflict_file_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    path,
+    operation,
+    timestamp,
+    retryCount,
+    status,
+    baseVersion,
+    conflictFilePath,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'mutation_queue';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MutationQueueData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('path')) {
+      context.handle(
+        _pathMeta,
+        path.isAcceptableOrUnknown(data['path']!, _pathMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_pathMeta);
+    }
+    if (data.containsKey('operation')) {
+      context.handle(
+        _operationMeta,
+        operation.isAcceptableOrUnknown(data['operation']!, _operationMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_operationMeta);
+    }
+    if (data.containsKey('timestamp')) {
+      context.handle(
+        _timestampMeta,
+        timestamp.isAcceptableOrUnknown(data['timestamp']!, _timestampMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_timestampMeta);
+    }
+    if (data.containsKey('retry_count')) {
+      context.handle(
+        _retryCountMeta,
+        retryCount.isAcceptableOrUnknown(data['retry_count']!, _retryCountMeta),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_statusMeta);
+    }
+    if (data.containsKey('base_version')) {
+      context.handle(
+        _baseVersionMeta,
+        baseVersion.isAcceptableOrUnknown(
+          data['base_version']!,
+          _baseVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_baseVersionMeta);
+    }
+    if (data.containsKey('conflict_file_path')) {
+      context.handle(
+        _conflictFilePathMeta,
+        conflictFilePath.isAcceptableOrUnknown(
+          data['conflict_file_path']!,
+          _conflictFilePathMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  MutationQueueData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MutationQueueData(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      path: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}path'],
+      )!,
+      operation: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operation'],
+      )!,
+      timestamp: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}timestamp'],
+      )!,
+      retryCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}retry_count'],
+      )!,
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      baseVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_version'],
+      )!,
+      conflictFilePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}conflict_file_path'],
+      ),
+    );
+  }
+
+  @override
+  $MutationQueueTable createAlias(String alias) {
+    return $MutationQueueTable(attachedDatabase, alias);
+  }
+}
+
+class MutationQueueData extends DataClass
+    implements Insertable<MutationQueueData> {
+  final String id;
+  final String path;
+  final String operation;
+  final String timestamp;
+  final int retryCount;
+  final String status;
+  final int baseVersion;
+  final String? conflictFilePath;
+  const MutationQueueData({
+    required this.id,
+    required this.path,
+    required this.operation,
+    required this.timestamp,
+    required this.retryCount,
+    required this.status,
+    required this.baseVersion,
+    this.conflictFilePath,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['path'] = Variable<String>(path);
+    map['operation'] = Variable<String>(operation);
+    map['timestamp'] = Variable<String>(timestamp);
+    map['retry_count'] = Variable<int>(retryCount);
+    map['status'] = Variable<String>(status);
+    map['base_version'] = Variable<int>(baseVersion);
+    if (!nullToAbsent || conflictFilePath != null) {
+      map['conflict_file_path'] = Variable<String>(conflictFilePath);
+    }
+    return map;
+  }
+
+  MutationQueueCompanion toCompanion(bool nullToAbsent) {
+    return MutationQueueCompanion(
+      id: Value(id),
+      path: Value(path),
+      operation: Value(operation),
+      timestamp: Value(timestamp),
+      retryCount: Value(retryCount),
+      status: Value(status),
+      baseVersion: Value(baseVersion),
+      conflictFilePath: conflictFilePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(conflictFilePath),
+    );
+  }
+
+  factory MutationQueueData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MutationQueueData(
+      id: serializer.fromJson<String>(json['id']),
+      path: serializer.fromJson<String>(json['path']),
+      operation: serializer.fromJson<String>(json['operation']),
+      timestamp: serializer.fromJson<String>(json['timestamp']),
+      retryCount: serializer.fromJson<int>(json['retryCount']),
+      status: serializer.fromJson<String>(json['status']),
+      baseVersion: serializer.fromJson<int>(json['baseVersion']),
+      conflictFilePath: serializer.fromJson<String?>(json['conflictFilePath']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'path': serializer.toJson<String>(path),
+      'operation': serializer.toJson<String>(operation),
+      'timestamp': serializer.toJson<String>(timestamp),
+      'retryCount': serializer.toJson<int>(retryCount),
+      'status': serializer.toJson<String>(status),
+      'baseVersion': serializer.toJson<int>(baseVersion),
+      'conflictFilePath': serializer.toJson<String?>(conflictFilePath),
+    };
+  }
+
+  MutationQueueData copyWith({
+    String? id,
+    String? path,
+    String? operation,
+    String? timestamp,
+    int? retryCount,
+    String? status,
+    int? baseVersion,
+    Value<String?> conflictFilePath = const Value.absent(),
+  }) => MutationQueueData(
+    id: id ?? this.id,
+    path: path ?? this.path,
+    operation: operation ?? this.operation,
+    timestamp: timestamp ?? this.timestamp,
+    retryCount: retryCount ?? this.retryCount,
+    status: status ?? this.status,
+    baseVersion: baseVersion ?? this.baseVersion,
+    conflictFilePath: conflictFilePath.present
+        ? conflictFilePath.value
+        : this.conflictFilePath,
+  );
+  MutationQueueData copyWithCompanion(MutationQueueCompanion data) {
+    return MutationQueueData(
+      id: data.id.present ? data.id.value : this.id,
+      path: data.path.present ? data.path.value : this.path,
+      operation: data.operation.present ? data.operation.value : this.operation,
+      timestamp: data.timestamp.present ? data.timestamp.value : this.timestamp,
+      retryCount: data.retryCount.present
+          ? data.retryCount.value
+          : this.retryCount,
+      status: data.status.present ? data.status.value : this.status,
+      baseVersion: data.baseVersion.present
+          ? data.baseVersion.value
+          : this.baseVersion,
+      conflictFilePath: data.conflictFilePath.present
+          ? data.conflictFilePath.value
+          : this.conflictFilePath,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MutationQueueData(')
+          ..write('id: $id, ')
+          ..write('path: $path, ')
+          ..write('operation: $operation, ')
+          ..write('timestamp: $timestamp, ')
+          ..write('retryCount: $retryCount, ')
+          ..write('status: $status, ')
+          ..write('baseVersion: $baseVersion, ')
+          ..write('conflictFilePath: $conflictFilePath')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    path,
+    operation,
+    timestamp,
+    retryCount,
+    status,
+    baseVersion,
+    conflictFilePath,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MutationQueueData &&
+          other.id == this.id &&
+          other.path == this.path &&
+          other.operation == this.operation &&
+          other.timestamp == this.timestamp &&
+          other.retryCount == this.retryCount &&
+          other.status == this.status &&
+          other.baseVersion == this.baseVersion &&
+          other.conflictFilePath == this.conflictFilePath);
+}
+
+class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
+  final Value<String> id;
+  final Value<String> path;
+  final Value<String> operation;
+  final Value<String> timestamp;
+  final Value<int> retryCount;
+  final Value<String> status;
+  final Value<int> baseVersion;
+  final Value<String?> conflictFilePath;
+  final Value<int> rowid;
+  const MutationQueueCompanion({
+    this.id = const Value.absent(),
+    this.path = const Value.absent(),
+    this.operation = const Value.absent(),
+    this.timestamp = const Value.absent(),
+    this.retryCount = const Value.absent(),
+    this.status = const Value.absent(),
+    this.baseVersion = const Value.absent(),
+    this.conflictFilePath = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MutationQueueCompanion.insert({
+    required String id,
+    required String path,
+    required String operation,
+    required String timestamp,
+    this.retryCount = const Value.absent(),
+    required String status,
+    required int baseVersion,
+    this.conflictFilePath = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       path = Value(path),
+       operation = Value(operation),
+       timestamp = Value(timestamp),
+       status = Value(status),
+       baseVersion = Value(baseVersion);
+  static Insertable<MutationQueueData> custom({
+    Expression<String>? id,
+    Expression<String>? path,
+    Expression<String>? operation,
+    Expression<String>? timestamp,
+    Expression<int>? retryCount,
+    Expression<String>? status,
+    Expression<int>? baseVersion,
+    Expression<String>? conflictFilePath,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (path != null) 'path': path,
+      if (operation != null) 'operation': operation,
+      if (timestamp != null) 'timestamp': timestamp,
+      if (retryCount != null) 'retry_count': retryCount,
+      if (status != null) 'status': status,
+      if (baseVersion != null) 'base_version': baseVersion,
+      if (conflictFilePath != null) 'conflict_file_path': conflictFilePath,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MutationQueueCompanion copyWith({
+    Value<String>? id,
+    Value<String>? path,
+    Value<String>? operation,
+    Value<String>? timestamp,
+    Value<int>? retryCount,
+    Value<String>? status,
+    Value<int>? baseVersion,
+    Value<String?>? conflictFilePath,
+    Value<int>? rowid,
+  }) {
+    return MutationQueueCompanion(
+      id: id ?? this.id,
+      path: path ?? this.path,
+      operation: operation ?? this.operation,
+      timestamp: timestamp ?? this.timestamp,
+      retryCount: retryCount ?? this.retryCount,
+      status: status ?? this.status,
+      baseVersion: baseVersion ?? this.baseVersion,
+      conflictFilePath: conflictFilePath ?? this.conflictFilePath,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (path.present) {
+      map['path'] = Variable<String>(path.value);
+    }
+    if (operation.present) {
+      map['operation'] = Variable<String>(operation.value);
+    }
+    if (timestamp.present) {
+      map['timestamp'] = Variable<String>(timestamp.value);
+    }
+    if (retryCount.present) {
+      map['retry_count'] = Variable<int>(retryCount.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (baseVersion.present) {
+      map['base_version'] = Variable<int>(baseVersion.value);
+    }
+    if (conflictFilePath.present) {
+      map['conflict_file_path'] = Variable<String>(conflictFilePath.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MutationQueueCompanion(')
+          ..write('id: $id, ')
+          ..write('path: $path, ')
+          ..write('operation: $operation, ')
+          ..write('timestamp: $timestamp, ')
+          ..write('retryCount: $retryCount, ')
+          ..write('status: $status, ')
+          ..write('baseVersion: $baseVersion, ')
+          ..write('conflictFilePath: $conflictFilePath, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -536,11 +1109,15 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $FileCacheEntriesTable fileCacheEntries = $FileCacheEntriesTable(
     this,
   );
+  late final $MutationQueueTable mutationQueue = $MutationQueueTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities => [fileCacheEntries];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [
+    fileCacheEntries,
+    mutationQueue,
+  ];
 }
 
 typedef $$FileCacheEntriesTableCreateCompanionBuilder =
@@ -553,6 +1130,7 @@ typedef $$FileCacheEntriesTableCreateCompanionBuilder =
       Value<String?> contentHash,
       Value<String?> localPath,
       Value<String?> lastSynced,
+      Value<int> serverVersion,
       Value<int> rowid,
     });
 typedef $$FileCacheEntriesTableUpdateCompanionBuilder =
@@ -565,6 +1143,7 @@ typedef $$FileCacheEntriesTableUpdateCompanionBuilder =
       Value<String?> contentHash,
       Value<String?> localPath,
       Value<String?> lastSynced,
+      Value<int> serverVersion,
       Value<int> rowid,
     });
 
@@ -614,6 +1193,11 @@ class $$FileCacheEntriesTableFilterComposer
 
   ColumnFilters<String> get lastSynced => $composableBuilder(
     column: $table.lastSynced,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get serverVersion => $composableBuilder(
+    column: $table.serverVersion,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -666,6 +1250,11 @@ class $$FileCacheEntriesTableOrderingComposer
     column: $table.lastSynced,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get serverVersion => $composableBuilder(
+    column: $table.serverVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$FileCacheEntriesTableAnnotationComposer
@@ -704,6 +1293,11 @@ class $$FileCacheEntriesTableAnnotationComposer
 
   GeneratedColumn<String> get lastSynced => $composableBuilder(
     column: $table.lastSynced,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get serverVersion => $composableBuilder(
+    column: $table.serverVersion,
     builder: (column) => column,
   );
 }
@@ -753,6 +1347,7 @@ class $$FileCacheEntriesTableTableManager
                 Value<String?> contentHash = const Value.absent(),
                 Value<String?> localPath = const Value.absent(),
                 Value<String?> lastSynced = const Value.absent(),
+                Value<int> serverVersion = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => FileCacheEntriesCompanion(
                 path: path,
@@ -763,6 +1358,7 @@ class $$FileCacheEntriesTableTableManager
                 contentHash: contentHash,
                 localPath: localPath,
                 lastSynced: lastSynced,
+                serverVersion: serverVersion,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -775,6 +1371,7 @@ class $$FileCacheEntriesTableTableManager
                 Value<String?> contentHash = const Value.absent(),
                 Value<String?> localPath = const Value.absent(),
                 Value<String?> lastSynced = const Value.absent(),
+                Value<int> serverVersion = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => FileCacheEntriesCompanion.insert(
                 path: path,
@@ -785,6 +1382,7 @@ class $$FileCacheEntriesTableTableManager
                 contentHash: contentHash,
                 localPath: localPath,
                 lastSynced: lastSynced,
+                serverVersion: serverVersion,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -812,10 +1410,279 @@ typedef $$FileCacheEntriesTableProcessedTableManager =
       FileCacheEntry,
       PrefetchHooks Function()
     >;
+typedef $$MutationQueueTableCreateCompanionBuilder =
+    MutationQueueCompanion Function({
+      required String id,
+      required String path,
+      required String operation,
+      required String timestamp,
+      Value<int> retryCount,
+      required String status,
+      required int baseVersion,
+      Value<String?> conflictFilePath,
+      Value<int> rowid,
+    });
+typedef $$MutationQueueTableUpdateCompanionBuilder =
+    MutationQueueCompanion Function({
+      Value<String> id,
+      Value<String> path,
+      Value<String> operation,
+      Value<String> timestamp,
+      Value<int> retryCount,
+      Value<String> status,
+      Value<int> baseVersion,
+      Value<String?> conflictFilePath,
+      Value<int> rowid,
+    });
+
+class $$MutationQueueTableFilterComposer
+    extends Composer<_$AppDatabase, $MutationQueueTable> {
+  $$MutationQueueTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get path => $composableBuilder(
+    column: $table.path,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get operation => $composableBuilder(
+    column: $table.operation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get timestamp => $composableBuilder(
+    column: $table.timestamp,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get retryCount => $composableBuilder(
+    column: $table.retryCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get baseVersion => $composableBuilder(
+    column: $table.baseVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get conflictFilePath => $composableBuilder(
+    column: $table.conflictFilePath,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$MutationQueueTableOrderingComposer
+    extends Composer<_$AppDatabase, $MutationQueueTable> {
+  $$MutationQueueTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get path => $composableBuilder(
+    column: $table.path,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get operation => $composableBuilder(
+    column: $table.operation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get timestamp => $composableBuilder(
+    column: $table.timestamp,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get retryCount => $composableBuilder(
+    column: $table.retryCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get baseVersion => $composableBuilder(
+    column: $table.baseVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get conflictFilePath => $composableBuilder(
+    column: $table.conflictFilePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$MutationQueueTableAnnotationComposer
+    extends Composer<_$AppDatabase, $MutationQueueTable> {
+  $$MutationQueueTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get path =>
+      $composableBuilder(column: $table.path, builder: (column) => column);
+
+  GeneratedColumn<String> get operation =>
+      $composableBuilder(column: $table.operation, builder: (column) => column);
+
+  GeneratedColumn<String> get timestamp =>
+      $composableBuilder(column: $table.timestamp, builder: (column) => column);
+
+  GeneratedColumn<int> get retryCount => $composableBuilder(
+    column: $table.retryCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<int> get baseVersion => $composableBuilder(
+    column: $table.baseVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get conflictFilePath => $composableBuilder(
+    column: $table.conflictFilePath,
+    builder: (column) => column,
+  );
+}
+
+class $$MutationQueueTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $MutationQueueTable,
+          MutationQueueData,
+          $$MutationQueueTableFilterComposer,
+          $$MutationQueueTableOrderingComposer,
+          $$MutationQueueTableAnnotationComposer,
+          $$MutationQueueTableCreateCompanionBuilder,
+          $$MutationQueueTableUpdateCompanionBuilder,
+          (
+            MutationQueueData,
+            BaseReferences<
+              _$AppDatabase,
+              $MutationQueueTable,
+              MutationQueueData
+            >,
+          ),
+          MutationQueueData,
+          PrefetchHooks Function()
+        > {
+  $$MutationQueueTableTableManager(_$AppDatabase db, $MutationQueueTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$MutationQueueTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$MutationQueueTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$MutationQueueTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> path = const Value.absent(),
+                Value<String> operation = const Value.absent(),
+                Value<String> timestamp = const Value.absent(),
+                Value<int> retryCount = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int> baseVersion = const Value.absent(),
+                Value<String?> conflictFilePath = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => MutationQueueCompanion(
+                id: id,
+                path: path,
+                operation: operation,
+                timestamp: timestamp,
+                retryCount: retryCount,
+                status: status,
+                baseVersion: baseVersion,
+                conflictFilePath: conflictFilePath,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String path,
+                required String operation,
+                required String timestamp,
+                Value<int> retryCount = const Value.absent(),
+                required String status,
+                required int baseVersion,
+                Value<String?> conflictFilePath = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => MutationQueueCompanion.insert(
+                id: id,
+                path: path,
+                operation: operation,
+                timestamp: timestamp,
+                retryCount: retryCount,
+                status: status,
+                baseVersion: baseVersion,
+                conflictFilePath: conflictFilePath,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$MutationQueueTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $MutationQueueTable,
+      MutationQueueData,
+      $$MutationQueueTableFilterComposer,
+      $$MutationQueueTableOrderingComposer,
+      $$MutationQueueTableAnnotationComposer,
+      $$MutationQueueTableCreateCompanionBuilder,
+      $$MutationQueueTableUpdateCompanionBuilder,
+      (
+        MutationQueueData,
+        BaseReferences<_$AppDatabase, $MutationQueueTable, MutationQueueData>,
+      ),
+      MutationQueueData,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
   $AppDatabaseManager(this._db);
   $$FileCacheEntriesTableTableManager get fileCacheEntries =>
       $$FileCacheEntriesTableTableManager(_db, _db.fileCacheEntries);
+  $$MutationQueueTableTableManager get mutationQueue =>
+      $$MutationQueueTableTableManager(_db, _db.mutationQueue);
 }

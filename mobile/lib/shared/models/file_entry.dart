@@ -8,6 +8,7 @@ class FileEntry {
   final String? contentHash;
   final String? localPath;
   final String? lastSynced;
+  final int serverVersion; // Server version for conflict detection
 
   const FileEntry({
     required this.path,
@@ -18,6 +19,7 @@ class FileEntry {
     this.contentHash,
     this.localPath,
     this.lastSynced,
+    this.serverVersion = 1,
   });
 
   bool get isDirectory => type == 'directory';
@@ -33,6 +35,7 @@ class FileEntry {
     String? contentHash,
     String? localPath,
     String? lastSynced,
+    int? serverVersion,
   }) {
     return FileEntry(
       path: path ?? this.path,
@@ -43,6 +46,7 @@ class FileEntry {
       contentHash: contentHash ?? this.contentHash,
       localPath: localPath ?? this.localPath,
       lastSynced: lastSynced ?? this.lastSynced,
+      serverVersion: serverVersion ?? this.serverVersion,
     );
   }
 
@@ -50,8 +54,9 @@ class FileEntry {
     'path': path,
     'content_hash': contentHash ?? '',
     'last_modified': lastModified,
+    'version': serverVersion,
   };
 
   @override
-  String toString() => 'FileEntry($path, $type)';
+  String toString() => 'FileEntry($path, $type, v$serverVersion)';
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:jarvis_mobile/features/sync/presentation/conflict_list_screen.dart';
 import 'package:jarvis_mobile/shared/models/sync_result.dart';
 
 /// Dialog shown after a sync operation completes.
@@ -79,6 +80,17 @@ class SyncSummaryDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('OK'),
         ),
+        if (result.hasConflicts)
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ConflictListScreen()),
+              );
+            },
+            icon: const Icon(Icons.warning_amber_rounded, size: 18),
+            label: const Text('View Conflicts'),
+          ),
       ],
     );
   }

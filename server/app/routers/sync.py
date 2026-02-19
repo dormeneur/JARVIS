@@ -37,6 +37,7 @@ async def sync_manifest(
             "path": e.path,
             "content_hash": e.content_hash,
             "last_modified": e.last_modified,
+            "version": e.version,
         }
         for e in body.manifest
     ]
@@ -63,10 +64,11 @@ async def sync_push(
     if file is not None:
         file_data = await file.read()
 
-    result_path, is_conflict = sync.push_file(
+    result_path, is_conflict, new_version = sync.push_file(
         relative_path=meta.path,
         file_data=file_data,
         client_last_modified=meta.last_modified,
+        base_version=meta.base_version,
     )
 
     if is_conflict:
@@ -76,7 +78,7 @@ async def sync_push(
         )
 
     return PushResponse(
-        accepted=[PushResultEntry(path=result_path)],
+        accepted=[PushResultEntry(path=result_path, version=new_version)],
         conflicts=[],
     )
 

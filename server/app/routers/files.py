@@ -76,5 +76,12 @@ async def delete_path(
     path: str,
     _device: dict = Depends(get_current_device),
 ) -> OperationResponse:
+    from app.services.version_tracker import VersionTracker
+    
     vault.delete_path(path)
+    
+    # Clean up version tracking
+    version_tracker = VersionTracker()
+    version_tracker.delete_version(path)
+    
     return OperationResponse(message="Deleted successfully", path=path)

@@ -109,6 +109,81 @@ class TestDiffManifests:
         assert to_pull == []
         assert conflicts == []
 
+    def test_version_match_different_hash_to_push(self, vault_settings):
+        """Client and server have same version but different hash → push (client has new changes)"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-02-01T00:00:00Z", "version": 5},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:old",
+                "last_modified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "version": 5,
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert "file.md" in to_push
+        assert to_pull == []
+        assert conflicts == []
+
+    def test_version_mismatch_conflict(self, vault_settings):
+        """Client version != server version → conflict (concurrent edit detected)"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:client", "last_modified": "2026-02-01T00:00:00Z", "version": 3},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:server",
+                "last_modified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "version": 5,
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert to_pull == []
+        assert "file.md" in conflicts
+
+    def test_version_mismatch_even_with_newer_timestamp(self, vault_settings):
+        """Version mismatch triggers conflict even if client timestamp is newer"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:client", "last_modified": "2026-03-01T00:00:00Z", "version": 2},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:server",
+                "last_modified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "version": 3,
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert to_pull == []
+        assert "file.md" in conflicts
+
+    def test_fallback_to_timestamp_when_no_version(self, vault_settings):
+        """Falls back to timestamp comparison when version info is missing"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-02-01T00:00:00Z"},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:old",
+                "last_modified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert "file.md" in to_push
+        assert to_pull == []
+        assert conflicts == []
+
     def test_client_newer_to_push(self, vault_settings):
         from app.services import sync
         client = [
@@ -159,6 +234,121 @@ class TestDiffManifests:
         assert to_pull == []
         assert "file.md" in conflicts
 
+    def test_timestamps_within_tolerance_conflict(self, vault_settings):
+        """Timestamps within 2 seconds with different hashes → conflict"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:aaa", "last_modified": "2026-01-15T12:00:00Z"},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:bbb",
+                "last_modified": datetime(2026, 1, 15, 12, 0, 1, tzinfo=timezone.utc),  # 1 second diff
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert to_pull == []
+        assert "file.md" in conflicts
+
+    def test_timestamps_outside_tolerance_client_newer(self, vault_settings):
+        """Timestamps >2 seconds apart, client newer → push"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-01-15T12:00:05Z"},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:old",
+                "last_modified": datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),  # 5 seconds diff
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert "file.md" in to_push
+        assert to_pull == []
+        assert conflicts == []
+
+    def test_timestamps_outside_tolerance_server_newer(self, vault_settings):
+        """Timestamps >2 seconds apart, server newer → pull"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:old", "last_modified": "2026-01-15T12:00:00Z"},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:new",
+                "last_modified": datetime(2026, 1, 15, 12, 0, 5, tzinfo=timezone.utc),  # 5 seconds diff
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert "file.md" in to_pull
+        assert conflicts == []
+
+    def test_tolerance_boundary_exactly_2_seconds(self, vault_settings):
+        """Exactly 2 seconds difference → conflict (within tolerance)"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:aaa", "last_modified": "2026-01-15T12:00:00Z"},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:bbb",
+                "last_modified": datetime(2026, 1, 15, 12, 0, 2, tzinfo=timezone.utc),  # exactly 2 seconds
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert to_pull == []
+        assert "file.md" in conflicts
+
+    def test_tolerance_boundary_just_over_2_seconds(self, vault_settings):
+        """Just over 2 seconds → push (outside tolerance)"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-01-15T12:00:02.1Z"},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:old",
+                "last_modified": datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),  # 2.1 seconds
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert "file.md" in to_push
+        assert to_pull == []
+        assert conflicts == []
+
+    def test_tolerance_with_custom_setting(self, vault_settings):
+        """Test with custom tolerance setting"""
+        from app.services import sync
+        from app.config import settings
+        
+        # Temporarily change tolerance
+        original_tolerance = settings.sync_timestamp_tolerance_seconds
+        try:
+            settings.sync_timestamp_tolerance_seconds = 5
+            
+            client = [
+                {"path": "file.md", "content_hash": "sha256:aaa", "last_modified": "2026-01-15T12:00:00Z"},
+            ]
+            server = {
+                "file.md": {
+                    "path": "file.md",
+                    "content_hash": "sha256:bbb",
+                    "last_modified": datetime(2026, 1, 15, 12, 0, 4, tzinfo=timezone.utc),  # 4 seconds
+                },
+            }
+            to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+            assert "file.md" in conflicts  # Within 5 second tolerance
+        finally:
+            settings.sync_timestamp_tolerance_seconds = original_tolerance
+
     def test_mixed_scenario(self, vault_settings):
         from app.services import sync
         client = [
@@ -186,10 +376,127 @@ class TestPushFile:
         from app.services import sync
         data = b"# Brand new file"
         mtime = datetime(2026, 2, 1, tzinfo=timezone.utc)
-        result_path, is_conflict = sync.push_file("pushed.md", data, mtime)
+        result_path, is_conflict, version = sync.push_file("pushed.md", data, mtime)
         assert result_path == "pushed.md"
         assert not is_conflict
+        assert version == 1
         assert (tmp_vault / "pushed.md").read_bytes() == data
+
+    def test_push_new_file_creates_version(self, vault_settings, tmp_vault):
+        from app.services import sync
+        from app.services.version_tracker import VersionTracker
+        
+        data = b"# New file"
+        mtime = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        sync.push_file("new.md", data, mtime)
+        
+        tracker = VersionTracker()
+        version = tracker.get_version("new.md")
+        assert version == 1
+
+    def test_push_with_matching_version_increments(self, vault_settings, tmp_vault):
+        from app.services import sync
+        from app.services.version_tracker import VersionTracker
+        
+        # Create initial file
+        initial_data = b"# Initial"
+        mtime1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _, _, v1 = sync.push_file("file.md", initial_data, mtime1)
+        assert v1 == 1
+        
+        # Update with matching version
+        new_data = b"# Updated"
+        mtime2 = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        _, is_conflict, v2 = sync.push_file("file.md", new_data, mtime2, base_version=1)
+        assert not is_conflict
+        assert v2 == 2
+        assert (tmp_vault / "file.md").read_bytes() == new_data
+
+    def test_push_with_version_mismatch_creates_conflict(self, vault_settings, tmp_vault):
+        from app.services import sync
+        
+        # Create initial file (version 1)
+        initial_data = b"# Initial"
+        mtime1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _, _, v1 = sync.push_file("version_test.md", initial_data, mtime1)
+        assert v1 == 1
+        
+        # Server updates to version 2 (with correct base_version)
+        server_update = b"# Server update"
+        mtime2 = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        _, _, v2 = sync.push_file("version_test.md", server_update, mtime2, base_version=1)
+        assert v2 == 2
+        
+        # Client tries to push with base_version=1 (stale)
+        client_update = b"# Client update"
+        mtime3 = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        result_path, is_conflict, version = sync.push_file("version_test.md", client_update, mtime3, base_version=1)
+        
+        assert is_conflict
+        assert "_conflict_" in result_path
+        assert version is None
+        # Server version should be preserved
+        assert (tmp_vault / "version_test.md").read_bytes() == server_update
+
+    def test_push_version_mismatch_even_with_newer_timestamp(self, vault_settings, tmp_vault):
+        """Version mismatch triggers conflict even if client has newer timestamp"""
+        from app.services import sync
+        
+        # Create file at version 1
+        sync.push_file("file.md", b"# V1", datetime(2026, 1, 1, tzinfo=timezone.utc))
+        
+        # Update to version 2
+        sync.push_file("file.md", b"# V2", datetime(2026, 2, 1, tzinfo=timezone.utc), base_version=1)
+        
+        # Client with stale version 1 tries to push with much newer timestamp
+        result_path, is_conflict, version = sync.push_file(
+            "file.md",
+            b"# Client with newer timestamp",
+            datetime(2026, 12, 31, tzinfo=timezone.utc),  # Much newer timestamp
+            base_version=1  # But stale version
+        )
+        
+        assert is_conflict
+        assert "_conflict_" in result_path
+        assert version is None
+
+    def test_push_identical_hash_returns_current_version(self, vault_settings, tmp_vault):
+        from app.services import sync
+        
+        # Create initial file
+        data = b"# Same content"
+        mtime = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _, _, v1 = sync.push_file("file.md", data, mtime)
+        
+        # Push same content again
+        _, is_conflict, v2 = sync.push_file("file.md", data, mtime, base_version=1)
+        
+        assert not is_conflict
+        assert v2 == v1  # Version unchanged
+
+    def test_push_fallback_to_timestamp_when_no_base_version(self, vault_settings, tmp_vault):
+        """Falls back to timestamp-based conflict detection when base_version is None"""
+        from app.services import sync
+        
+        # Create file
+        sync.push_file("file.md", b"# Initial", datetime(2026, 1, 1, tzinfo=timezone.utc))
+        
+        # Push without base_version (old client)
+        server_mtime = datetime.fromtimestamp(
+            (tmp_vault / "file.md").stat().st_mtime, tz=timezone.utc
+        )
+        
+        # Within tolerance → conflict
+        client_mtime = server_mtime + timedelta(seconds=1)
+        result_path, is_conflict, _ = sync.push_file(
+            "file.md",
+            b"# Different content",
+            client_mtime,
+            base_version=None
+        )
+        
+        assert is_conflict
+        assert "_conflict_" in result_path
 
     def test_push_overwrites_when_client_newer(self, vault_settings, tmp_vault):
         from app.services import sync
@@ -198,9 +505,10 @@ class TestPushFile:
 
         new_data = b"# Updated by client"
         new_mtime = datetime(2026, 3, 1, tzinfo=timezone.utc)
-        result_path, is_conflict = sync.push_file("readme.md", new_data, new_mtime)
+        result_path, is_conflict, version = sync.push_file("readme.md", new_data, new_mtime)
         assert result_path == "readme.md"
         assert not is_conflict
+        assert version is not None
         assert (tmp_vault / "readme.md").read_bytes() == new_data
 
     def test_push_conflict_when_same_timestamp(self, vault_settings, tmp_vault):
@@ -209,26 +517,74 @@ class TestPushFile:
             (tmp_vault / "readme.md").stat().st_mtime, tz=timezone.utc
         )
         different_data = b"# Different content from client"
-        result_path, is_conflict = sync.push_file("readme.md", different_data, server_mtime)
+        result_path, is_conflict, version = sync.push_file("readme.md", different_data, server_mtime)
         assert is_conflict
         assert "_conflict_" in result_path
+        assert version is None
         assert (tmp_vault / "readme.md").read_text(encoding="utf-8") == "# JARVIS Vault"
+
+    def test_push_conflict_within_tolerance(self, vault_settings, tmp_vault):
+        """Push with timestamp within tolerance window → conflict"""
+        from app.services import sync
+        server_mtime = datetime.fromtimestamp(
+            (tmp_vault / "readme.md").stat().st_mtime, tz=timezone.utc
+        )
+        # Client timestamp 1 second later (within 2 second tolerance)
+        client_mtime = server_mtime + timedelta(seconds=1)
+        different_data = b"# Different content from client"
+        result_path, is_conflict, version = sync.push_file("readme.md", different_data, client_mtime)
+        assert is_conflict
+        assert "_conflict_" in result_path
+        assert version is None
+        assert (tmp_vault / "readme.md").read_text(encoding="utf-8") == "# JARVIS Vault"
+
+    def test_push_overwrites_outside_tolerance(self, vault_settings, tmp_vault):
+        """Push with timestamp outside tolerance window → overwrite"""
+        from app.services import sync
+        server_mtime = datetime.fromtimestamp(
+            (tmp_vault / "readme.md").stat().st_mtime, tz=timezone.utc
+        )
+        # Client timestamp 5 seconds later (outside 2 second tolerance)
+        client_mtime = server_mtime + timedelta(seconds=5)
+        different_data = b"# Different content from client"
+        result_path, is_conflict, version = sync.push_file("readme.md", different_data, client_mtime)
+        assert not is_conflict
+        assert result_path == "readme.md"
+        assert version is not None
+        assert (tmp_vault / "readme.md").read_bytes() == different_data
 
     def test_push_creates_parent_dirs(self, vault_settings, tmp_vault):
         from app.services import sync
         data = b"nested content"
         mtime = datetime(2026, 2, 1, tzinfo=timezone.utc)
-        result_path, is_conflict = sync.push_file("Deep/Nested/file.md", data, mtime)
+        result_path, is_conflict, version = sync.push_file("Deep/Nested/file.md", data, mtime)
         assert not is_conflict
+        assert version == 1
         assert (tmp_vault / "Deep" / "Nested" / "file.md").exists()
 
-    def test_push_identical_hash_skips_write(self, vault_settings, tmp_vault):
+    def test_push_conflict_file_gets_version_tracking(self, vault_settings, tmp_vault):
+        """Conflict files should also get version tracking"""
         from app.services import sync
-        existing_data = (tmp_vault / "readme.md").read_bytes()
-        mtime = datetime(2026, 2, 1, tzinfo=timezone.utc)
-        result_path, is_conflict = sync.push_file("readme.md", existing_data, mtime)
-        assert result_path == "readme.md"
-        assert not is_conflict
+        from app.services.version_tracker import VersionTracker
+        
+        # Create file
+        sync.push_file("file.md", b"# V1", datetime(2026, 1, 1, tzinfo=timezone.utc))
+        sync.push_file("file.md", b"# V2", datetime(2026, 2, 1, tzinfo=timezone.utc), base_version=1)
+        
+        # Create conflict
+        conflict_path, is_conflict, _ = sync.push_file(
+            "file.md",
+            b"# Conflict",
+            datetime(2026, 3, 1, tzinfo=timezone.utc),
+            base_version=1
+        )
+        
+        assert is_conflict
+        
+        # Conflict file should have version tracking
+        tracker = VersionTracker()
+        conflict_version = tracker.get_version(conflict_path)
+        assert conflict_version == 1
 
 
 class TestPullFile:

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_expiry_hours: int = 720
     max_devices: int = 5
+    sync_timestamp_tolerance_seconds: int = 2
 
     model_config = {"env_prefix": "JARVIS_"}
 

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 import 'package:jarvis_mobile/features/editor/presentation/editor_screen.dart';
+import 'package:jarvis_mobile/features/sync/presentation/conflict_list_screen.dart';
+import 'package:jarvis_mobile/features/sync/presentation/conflict_provider.dart';
 import 'package:jarvis_mobile/features/sync/presentation/sync_provider.dart';
 import 'package:jarvis_mobile/features/sync/presentation/sync_summary_dialog.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_screen.dart';
@@ -17,6 +19,7 @@ class ExplorerScreen extends ConsumerWidget {
     final currentDir = ref.watch(currentDirectoryProvider);
     final entriesAsync = ref.watch(directoryEntriesProvider);
     final syncState = ref.watch(syncProvider);
+    final conflictCount = ref.watch(conflictCountProvider);
     final theme = Theme.of(context);
 
     final title = currentDir.isEmpty
@@ -38,6 +41,19 @@ class ExplorerScreen extends ConsumerWidget {
                 },
               ),
         actions: [
+          if (conflictCount > 0)
+            Badge.count(
+              count: conflictCount,
+              backgroundColor: Theme.of(context).colorScheme.error,
+              child: IconButton(
+                icon: const Icon(Icons.warning_amber_rounded),
+                tooltip:
+                    '$conflictCount conflict${conflictCount == 1 ? '' : 's'}',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ConflictListScreen()),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             onPressed: () => Navigator.of(
@@ -195,6 +211,62 @@ class _EntryTile extends ConsumerWidget {
           );
         }
       },
+      onLongPress: entry.isFile && entry.isSynced
+          ? () => _showDeleteDialog(context, ref)
+          : null,
     );
+  }
+
+  Future<void> _showDeleteDialog(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete File'),
+        content: Text(
+          'Delete "${entry.name}"?\n\nThis will be synced to the server on next sync.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      try {
+        final repo = ref.read(explorerRepositoryProvider);
+        await repo.deleteFile(entry.path);
+
+        // Refresh the directory listing
+        ref.invalidate(directoryEntriesProvider);
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${entry.name} deleted. Will sync on next sync.'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to delete: $e'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
+      }
+    }
   }
 }

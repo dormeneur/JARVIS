@@ -144,4 +144,199 @@ void main() {
       expect(dirs, contains('Work/Deep'));
     });
   });
+
+  group('MutationQueue operations', () {
+    test('enqueueMutation adds mutation to queue', () async {
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'test.md',
+        operation: 'create',
+        timestamp: '2026-02-19T12:00:00Z',
+        baseVersion: 1,
+      );
+
+      final mutations = await db.getPendingMutations();
+      expect(mutations.length, 1);
+      expect(mutations[0].id, 'mut-001');
+      expect(mutations[0].path, 'test.md');
+      expect(mutations[0].operation, 'create');
+      expect(mutations[0].status, 'pending');
+      expect(mutations[0].retryCount, 0);
+      expect(mutations[0].baseVersion, 1);
+    });
+
+    test('getPendingMutations returns only pending', () async {
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'a.md',
+        operation: 'update',
+        timestamp: '2026-02-19T12:00:00Z',
+        baseVersion: 1,
+      );
+      await db.enqueueMutation(
+        id: 'mut-002',
+        path: 'b.md',
+        operation: 'delete',
+        timestamp: '2026-02-19T12:01:00Z',
+        baseVersion: 1,
+      );
+
+      // Mark one as failed
+      await db.markMutationFailed('mut-001');
+
+      final pending = await db.getPendingMutations();
+      expect(pending.length, 1);
+      expect(pending[0].id, 'mut-002');
+    });
+
+    test('getPendingMutations orders by timestamp', () async {
+      await db.enqueueMutation(
+        id: 'mut-003',
+        path: 'c.md',
+        operation: 'create',
+        timestamp: '2026-02-19T12:03:00Z',
+        baseVersion: 1,
+      );
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'a.md',
+        operation: 'create',
+        timestamp: '2026-02-19T12:01:00Z',
+        baseVersion: 1,
+      );
+      await db.enqueueMutation(
+        id: 'mut-002',
+        path: 'b.md',
+        operation: 'create',
+        timestamp: '2026-02-19T12:02:00Z',
+        baseVersion: 1,
+      );
+
+      final pending = await db.getPendingMutations();
+      expect(pending.length, 3);
+      expect(pending[0].id, 'mut-001');
+      expect(pending[1].id, 'mut-002');
+      expect(pending[2].id, 'mut-003');
+    });
+
+    test('removeMutation deletes from queue', () async {
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'test.md',
+        operation: 'create',
+        timestamp: '2026-02-19T12:00:00Z',
+        baseVersion: 1,
+      );
+
+      await db.removeMutation('mut-001');
+
+      final mutations = await db.getPendingMutations();
+      expect(mutations, isEmpty);
+    });
+
+    test('markMutationFailed updates status and increments retry', () async {
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'test.md',
+        operation: 'update',
+        timestamp: '2026-02-19T12:00:00Z',
+        baseVersion: 1,
+      );
+
+      await db.markMutationFailed('mut-001');
+
+      final failed = await db.getFailedMutations();
+      expect(failed.length, 1);
+      expect(failed[0].status, 'failed');
+      expect(failed[0].retryCount, 1);
+
+      // Mark failed again
+      await db.markMutationFailed('mut-001');
+      final failedAgain = await db.getFailedMutations();
+      expect(failedAgain[0].retryCount, 2);
+    });
+
+    test('resetMutation changes failed back to pending', () async {
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'test.md',
+        operation: 'delete',
+        timestamp: '2026-02-19T12:00:00Z',
+        baseVersion: 1,
+      );
+
+      await db.markMutationFailed('mut-001');
+      await db.resetMutation('mut-001');
+
+      final pending = await db.getPendingMutations();
+      expect(pending.length, 1);
+      expect(pending[0].status, 'pending');
+    });
+
+    test('getPendingMutationCount returns correct count', () async {
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'a.md',
+        operation: 'create',
+        timestamp: '2026-02-19T12:00:00Z',
+        baseVersion: 1,
+      );
+      await db.enqueueMutation(
+        id: 'mut-002',
+        path: 'b.md',
+        operation: 'update',
+        timestamp: '2026-02-19T12:01:00Z',
+        baseVersion: 1,
+      );
+
+      final count = await db.getPendingMutationCount();
+      expect(count, 2);
+
+      await db.markMutationFailed('mut-001');
+      final countAfter = await db.getPendingMutationCount();
+      expect(countAfter, 1);
+    });
+
+    test('clearAllMutations removes all mutations', () async {
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'a.md',
+        operation: 'create',
+        timestamp: '2026-02-19T12:00:00Z',
+        baseVersion: 1,
+      );
+      await db.enqueueMutation(
+        id: 'mut-002',
+        path: 'b.md',
+        operation: 'delete',
+        timestamp: '2026-02-19T12:01:00Z',
+        baseVersion: 1,
+      );
+
+      await db.clearAllMutations();
+
+      final pending = await db.getPendingMutations();
+      expect(pending, isEmpty);
+    });
+
+    test('multiple operations on same path allowed', () async {
+      await db.enqueueMutation(
+        id: 'mut-001',
+        path: 'test.md',
+        operation: 'create',
+        timestamp: '2026-02-19T12:00:00Z',
+        baseVersion: 1,
+      );
+      await db.enqueueMutation(
+        id: 'mut-002',
+        path: 'test.md',
+        operation: 'update',
+        timestamp: '2026-02-19T12:01:00Z',
+        baseVersion: 2,
+      );
+
+      final mutations = await db.getPendingMutations();
+      expect(mutations.length, 2);
+    });
+  });
 }

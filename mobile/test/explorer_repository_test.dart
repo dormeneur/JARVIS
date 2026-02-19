@@ -121,5 +121,32 @@ void main() {
       final all = await repo.getAllFiles();
       expect(all, isEmpty);
     });
+
+    test('deleteFile removes entry and enqueues mutation', () async {
+      // Add a file without local path (to avoid file system operations in test)
+      await repo.upsertFile(
+        const FileEntry(
+          path: 'to_delete.md',
+          name: 'to_delete.md',
+          type: 'file',
+          lastModified: '2026-01-01T00:00:00Z',
+          contentHash: 'sha256:test',
+        ),
+      );
+
+      // Delete the file
+      await repo.deleteFile('to_delete.md');
+
+      // Verify entry is removed from cache
+      final entry = await repo.getEntry('to_delete.md');
+      expect(entry, isNull);
+
+      // Verify delete mutation was enqueued
+      final mutations = await db.getPendingMutations();
+      expect(mutations.length, 1);
+      expect(mutations[0].path, 'to_delete.md');
+      expect(mutations[0].operation, 'delete');
+      expect(mutations[0].status, 'pending');
+    });
   });
 }
