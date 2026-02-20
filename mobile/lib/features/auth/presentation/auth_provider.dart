@@ -144,6 +144,30 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Reconnect to an existing device when app data is cleared.
+  /// This allows re-logging in to a device already registered on the server.
+  Future<void> reconnect({
+    required String serverUrl,
+    required String deviceName,
+    required String deviceSecret,
+  }) async {
+    state = const AuthState.loading();
+    try {
+      await _authRepo.reconnectDevice(
+        serverUrl: serverUrl,
+        deviceName: deviceName,
+        deviceSecret: deviceSecret,
+      );
+      state = AuthState.authenticated(
+        deviceId: await _secureStorage.getDeviceId() ?? '',
+        deviceName: deviceName,
+        serverUrl: serverUrl,
+      );
+    } catch (e) {
+      state = AuthState.unauthenticated(error: e.toString());
+    }
+  }
+
   /// Logout.
   Future<void> logout() async {
     await _authRepo.logout();

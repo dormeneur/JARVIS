@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 
+enum RegistrationMode { first, additional, reconnect }
+
 /// Screen for registering a device with the server.
-/// Supports both first-device (setup_secret) and additional device (existing JWT) flows.
+/// Supports three flows: first-device, additional device, and reconnect to existing.
 class RegisterScreen extends ConsumerStatefulWidget {
   final String serverUrl;
 
@@ -16,7 +18,7 @@ class RegisterScreen extends ConsumerStatefulWidget {
 class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _deviceNameController = TextEditingController();
   final _secretController = TextEditingController();
-  bool _isFirstDevice = true;
+  RegistrationMode _mode = RegistrationMode.first;
   bool _loading = false;
   String? _error;
 
@@ -42,7 +44,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     final authNotifier = ref.read(authProvider.notifier);
 
     try {
-      if (_isFirstDevice) {
+      if (_mode == RegistrationMode.first) {
         final secret = _secretController.text.trim();
         if (secret.isEmpty) {
           setState(() {
@@ -57,7 +59,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           deviceName: deviceName,
           setupSecret: secret,
         );
-      } else {
+      } else if (_mode == RegistrationMode.additional) {
         final token = _secretController.text.trim();
         if (token.isEmpty) {
           setState(() {
@@ -71,6 +73,22 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           serverUrl: widget.serverUrl,
           existingToken: token,
           deviceName: deviceName,
+        );
+      } else {
+        // Reconnect mode
+        final deviceSecret = _secretController.text.trim();
+        if (deviceSecret.isEmpty) {
+          setState(() {
+            _loading = false;
+            _error = 'Enter your device secret (from initial registration)';
+          });
+          return;
+        }
+
+        await authNotifier.reconnect(
+          serverUrl: widget.serverUrl,
+          deviceName: deviceName,
+          deviceSecret: deviceSecret,
         );
       }
     } catch (e) {
@@ -116,14 +134,44 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              SegmentedButton<bool>(
+              SegmentedButton<RegistrationMode>(
                 segments: const [
-                  ButtonSegment(value: true, label: Text('First Device')),
-                  ButtonSegment(value: false, label: Text('Additional Device')),
+                  ButtonSegment(
+                    value: RegistrationMode.first,
+                    label: Text('First'),
+                  ),
+                  ButtonSegment(
+                    value: RegistrationMode.additional,
+                    label: Text('Additional'),
+                  ),
+                  ButtonSegment(
+                    value: RegistrationMode.reconnect,
+                    label: Text('Reconnect'),
+                  ),
                 ],
-                selected: {_isFirstDevice},
-                onSelectionChanged: (v) =>
-                    setState(() => _isFirstDevice = v.first),
+                selected: {_mode},
+                onSelectionChanged: (v) => setState(() => _mode = v.first),
+              ),
+              const SizedBox(height: 24),
+              // Mode description with background
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withOpacity(
+                    0.5,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: theme.colorScheme.outline.withOpacity(0.5),
+                  ),
+                ),
+                child: Text(
+                  _getModeDescription(),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.5,
+                  ),
+                ),
               ),
               const SizedBox(height: 24),
               TextField(
@@ -139,20 +187,18 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               TextField(
                 controller: _secretController,
                 decoration: InputDecoration(
-                  labelText: _isFirstDevice ? 'Setup secret' : 'Existing JWT',
-                  hintText: _isFirstDevice
-                      ? 'From docker logs jv-api'
-                      : 'Bearer token from another device',
+                  labelText: _getSecretLabel(),
+                  hintText: _getSecretHint(),
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.key),
                 ),
-                maxLines: _isFirstDevice ? 1 : 3,
+                maxLines: _mode == RegistrationMode.additional ? 3 : 1,
               ),
+              const SizedBox(height: 16),
               if (_error != null) ...[
-                const SizedBox(height: 12),
                 Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                const SizedBox(height: 16),
               ],
-              const SizedBox(height: 24),
               FilledButton(
                 onPressed: _loading ? null : _register,
                 child: _loading
@@ -168,5 +214,59 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         ),
       ),
     );
+  }
+
+  String _getSecretLabel() {
+    switch (_mode) {
+      case RegistrationMode.first:
+        return 'Setup Secret';
+      case RegistrationMode.additional:
+        return 'JWT Token';
+      case RegistrationMode.reconnect:
+        return 'Device Secret';
+    }
+  }
+
+  String _getSecretHint() {
+    switch (_mode) {
+      case RegistrationMode.first:
+        return 'e.g., MySecure123Key (from docker logs)';
+      case RegistrationMode.additional:
+        return 'e.g., eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... (long token)';
+      case RegistrationMode.reconnect:
+        return 'e.g., a7f3-9k2m-5b1c (short alphanumeric code)';
+    }
+  }
+
+  String _getModeDescription() {
+    switch (_mode) {
+      case RegistrationMode.first:
+        return '''Register your first device using the setup secret.
+
+Where to find it:
+1. Check the Docker server logs
+2. Run: docker logs jv-api
+3. Look for a box starting with "JARVIS SETUP SECRET"
+4. Copy the code (appears once during server startup)''';
+
+      case RegistrationMode.additional:
+        return '''Add another device using a JWT token.
+
+Where to find it:
+1. Use any already-registered device with the app open
+2. Go to Settings > My Device
+3. Tap "Show JWT Token"
+4. Copy and paste the full Bearer token here
+(The token starts with "eyJ..." and is quite long)''';
+
+      case RegistrationMode.reconnect:
+        return '''Reconnect to an existing device (if app was cleared).
+
+Where to find it:
+1. Look in your saved notes/passwords from when this device was first registered
+2. The device secret is a short code like "a7f3-9k2m-5b1c"
+3. It was shown only once after initial registration
+4. It's stored in your phone's secure storage if app data wasn't fully wiped''';
+    }
   }
 }

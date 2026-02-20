@@ -14,12 +14,27 @@ class RegisterByDeviceRequest(BaseModel):
     device_name: str
 
 
+class ReconnectRequest(BaseModel):
+    device_name: str
+    device_secret: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_at: datetime
     device_id: str
     device_name: str
+
+
+class RegistrationResponse(BaseModel):
+    """Response from device registration endpoints. Returns the device secret (shown only once)."""
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+    device_id: str
+    device_name: str
+    device_secret: str
 
 
 class RevokeRequest(BaseModel):

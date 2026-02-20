@@ -6,6 +6,7 @@ class SecureStorage {
   static const _keyServerUrl = 'jarvis_server_url';
   static const _keyDeviceId = 'jarvis_device_id';
   static const _keyDeviceName = 'jarvis_device_name';
+  static const _keyDeviceSecret = 'jarvis_device_secret';
 
   final FlutterSecureStorage _storage;
 
@@ -43,6 +44,13 @@ class SecureStorage {
 
   Future<void> setDeviceName(String name) =>
       _storage.write(key: _keyDeviceName, value: name);
+
+  // --- Device Secret (for reconnection) ---
+
+  Future<String?> getDeviceSecret() => _storage.read(key: _keyDeviceSecret);
+
+  Future<void> setDeviceSecret(String secret) =>
+      _storage.write(key: _keyDeviceSecret, value: secret);
 
   // --- Clear All ---
 

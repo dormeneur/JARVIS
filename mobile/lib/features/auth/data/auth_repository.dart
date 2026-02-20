@@ -43,6 +43,7 @@ class AuthRepository {
       await _secureStorage.setJwt(data['access_token'] as String);
       await _secureStorage.setDeviceId(data['device_id'] as String);
       await _secureStorage.setDeviceName(data['device_name'] as String);
+      await _secureStorage.setDeviceSecret(data['device_secret'] as String);
     } on DioException catch (e) {
       throw mapDioError(e);
     }
@@ -69,6 +70,33 @@ class AuthRepository {
       await _secureStorage.setJwt(data['access_token'] as String);
       await _secureStorage.setDeviceId(data['device_id'] as String);
       await _secureStorage.setDeviceName(data['device_name'] as String);
+      await _secureStorage.setDeviceSecret(data['device_secret'] as String);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// Reconnect to an existing device by name and secret (no auth required).
+  /// Use this when app data is cleared but device is still registered on server.
+  Future<void> reconnectDevice({
+    required String serverUrl,
+    required String deviceName,
+    required String deviceSecret,
+  }) async {
+    _apiClient.setBaseUrl(serverUrl);
+
+    try {
+      final response = await _apiClient.dio.post(
+        '/auth/reconnect',
+        data: {'device_name': deviceName, 'device_secret': deviceSecret},
+      );
+
+      final data = response.data as Map<String, dynamic>;
+      await _secureStorage.setServerUrl(serverUrl);
+      await _secureStorage.setJwt(data['access_token'] as String);
+      await _secureStorage.setDeviceId(data['device_id'] as String);
+      await _secureStorage.setDeviceName(data['device_name'] as String);
+      // Device secret already stored, but we keep it (doesn't change)
     } on DioException catch (e) {
       throw mapDioError(e);
     }

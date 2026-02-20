@@ -75,18 +75,21 @@ def get_device(device_id: str) -> dict | None:
     return {"device_id": device_id, **info}
 
 
-def _add_device(device_name: str) -> str:
+def _add_device(device_name: str) -> tuple[str, str]:
+    """Add a new device and return (device_id, device_secret)."""
     devices = _load_devices()
     if len(devices) >= settings.max_devices:
         raise DeviceLimitError(settings.max_devices)
 
     device_id = uuid.uuid4().hex[:12]
+    device_secret = secrets.token_urlsafe(12)  # ~16 char recoverable secret
     devices[device_id] = {
         "device_name": device_name,
+        "device_secret": device_secret,
         "registered_at": datetime.now(tz=timezone.utc).isoformat(),
     }
     _save_devices(devices)
-    return device_id
+    return device_id, device_secret
 
 
 def remove_device(device_id: str) -> None:
@@ -207,18 +210,48 @@ def decode_token(token: str) -> dict:
 # --- Registration Flows ---
 
 
-def register_first_device(device_name: str, setup_secret: str) -> tuple[str, str, datetime]:
+def register_first_device(device_name: str, setup_secret: str) -> tuple[str, str, str, datetime]:
+    """Register first device. Returns (device_id, device_secret, token, expires)."""
     _validate_setup_secret(setup_secret)
 
-    device_id = _add_device(device_name)
+    device_id, device_secret = _add_device(device_name)
     _consume_setup_secret()
 
     token, expires = create_token(device_id, device_name)
-    return device_id, token, expires
+    return device_id, device_secret, token, expires
 
 
-def register_additional_device(device_name: str) -> tuple[str, str, datetime]:
-    device_id = _add_device(device_name)
+def register_additional_device(device_name: str) -> tuple[str, str, str, datetime]:
+    """Register additional device. Returns (device_id, device_secret, token, expires)."""
+    device_id, device_secret = _add_device(device_name)
+    token, expires = create_token(device_id, device_name)
+    return device_id, device_secret, token, expires
+
+
+def reconnect_device(device_name: str, device_secret: str) -> tuple[str, str, datetime]:
+    """Reconnect to an existing device by name and secret.
+    
+    Requires the device secret that was provided during first registration.
+    This allows a device to log back in without re-registering,
+    useful when app data is cleared or app is reinstalled on the same device.
+    """
+    devices = _load_devices()
+    
+    # Find device by name
+    device_id = None
+    for did, device_info in devices.items():
+        if device_info["device_name"] == device_name:
+            device_id = did
+            break
+    
+    if device_id is None:
+        raise InvalidTokenError(f"Device '{device_name}' not found")
+    
+    # Validate device secret
+    device_info = devices[device_id]
+    if device_info.get("device_secret") != device_secret:
+        raise InvalidTokenError("Invalid device secret")
+    
     token, expires = create_token(device_id, device_name)
     return device_id, token, expires
 
