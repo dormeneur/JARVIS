@@ -200,10 +200,10 @@ Map<String, dynamic> _pushSuccess(String path, int version) => {
   'conflicts': <dynamic>[],
 };
 
-Map<String, dynamic> _pushConflict(String conflictPath) => {
+Map<String, dynamic> _pushConflict(String path, int serverVersion) => {
   'pushed': <dynamic>[],
   'conflicts': [
-    {'path': conflictPath},
+    {'path': path, 'version': serverVersion},
   ],
 };
 
@@ -295,7 +295,8 @@ void main() {
         expect(
           failed.length,
           1,
-          reason: 'Bug B fix: manifest conflict MUST create synthetic mutation row',
+          reason:
+              'Bug B fix: manifest conflict MUST create synthetic mutation row',
         );
         expect(failed.first.path, 'Personal/notes.md');
         expect(failed.first.status, 'failed');
@@ -319,7 +320,7 @@ void main() {
 
   group('Scenario B — Phase 1 conflict vs Phase 2 duplication', () {
     test(
-      'Phase 1 conflict stores conflictFilePath; Phase 2 skips duplicate mutation creation',
+      'Phase 1 conflict stores localContentSnapshot; Phase 2 skips duplicate mutation creation',
       () async {
         final localFile = File('${tempDir.path}/notes.md');
         await localFile.writeAsString('hello world');
@@ -343,10 +344,9 @@ void main() {
           baseVersion: 3,
         );
 
-        // Phase 1: push → conflict response
+        // Phase 1: push -> conflict response (server version = 5)
         fakeAdapter.enqueue(
-          (_) async =>
-              _jsonResponse(_pushConflict('Personal/notes_conflict_123.md')),
+          (_) async => _jsonResponse(_pushConflict('Personal/notes.md', 5)),
         );
         // Phase 2: manifest also reports the same file as conflict
         fakeAdapter.enqueue(
@@ -356,32 +356,29 @@ void main() {
 
         final result = await syncRepo.performSync();
 
-        // Both Phase 1 and Phase 2 add to conflictPaths
+        // Phase 1 adds 1 entry, Phase 2 skips (already conflicted)
         expect(
           result.conflicts,
-          2,
-          reason:
-              'Phase 1 and Phase 2 each add 1 entry — total 2 for same file',
+          1,
+          reason: 'Phase 2 must skip paths already conflicted in Phase 1',
         );
 
-        // Phase 1 mutation must have conflictFilePath set (markMutationConflict)
+        // Phase 1 mutation must have localContentSnapshot set
         final mutation = await db.getMutationById('mut-b-001');
         expect(mutation, isNotNull);
         expect(mutation!.status, 'failed');
         expect(
-          mutation.conflictFilePath,
-          'Personal/notes_conflict_123.md',
-          reason:
-              'Phase 1 MUST store conflictFilePath via markMutationConflict',
+          mutation.localContentSnapshot,
+          'hello world',
+          reason: 'Phase 1 MUST store localContentSnapshot',
         );
 
-        // Still only 1 mutation row (Phase 2 detects existing row and skips creation)
+        // Only 1 mutation row total
         final allFailed = await db.getFailedMutations();
         expect(
           allFailed.length,
           1,
-          reason:
-              'Bug B fix: Phase 2 must NOT create duplicate when Phase 1 row exists',
+          reason: 'Phase 2 must NOT create duplicate when Phase 1 row exists',
         );
 
         expect(result.pushed, 0);
@@ -458,14 +455,14 @@ void main() {
           reason: 'Synthetic mutation operation must be "update"',
         );
         expect(
-          mutation.id.startsWith('manifest-conflict-'),
+          mutation.id.startsWith('conflict-'),
           isTrue,
-          reason: 'Synthetic mutation ID must start with "manifest-conflict-"',
+          reason: 'Synthetic mutation ID must start with "conflict-"',
         );
         expect(
-          mutation.conflictFilePath,
-          isNull,
-          reason: 'Manifest conflicts have no conflictFilePath (no remote snapshot)',
+          mutation.localContentSnapshot,
+          isNotNull,
+          reason: 'Synthetic mutation must store localContentSnapshot',
         );
         expect(
           mutation.retryCount,
@@ -475,7 +472,8 @@ void main() {
         expect(
           mutation.baseVersion,
           5,
-          reason: 'Synthetic mutation baseVersion must match cache entry serverVersion',
+          reason:
+              'Synthetic mutation baseVersion must match cache entry serverVersion',
         );
         // Sanity check: timestamp should be valid ISO8601 and recent
         expect(
@@ -607,8 +605,12 @@ void main() {
         expect(failedAfterSync1.length, 1);
         final mutationId = failedAfterSync1.first.id;
 
-        // User resolves: Keep Local
-        await syncRepo.resolveKeepLocal(mutationId);
+        // resolveConflict calls _fetchServerVersion internally (POST /sync/pull)
+        fakeAdapter.enqueue(
+          (_) async => _pullResponse(utf8.encode('server content'), 3),
+        );
+        // User resolves: use local content
+        await syncRepo.resolveConflict(mutationId, 'my local content');
 
         // Verify mutation is now pending
         final pendingAfterResolve = await db.getPendingMutations();
@@ -929,7 +931,7 @@ void main() {
 
       // Phase 1 → conflict (not success)
       fakeAdapter.enqueue(
-        (_) async => _jsonResponse(_pushConflict('conflict_file_c.md')),
+        (_) async => _jsonResponse(_pushConflict('Work/c.md', 3)),
       );
       // Phase 2 → empty manifest so Phase 3 doesn't push again
       fakeAdapter.enqueue((_) async => _jsonResponse(_emptyManifest()));

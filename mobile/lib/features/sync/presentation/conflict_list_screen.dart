@@ -71,9 +71,6 @@ class _ConflictTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final fileName = mutation.path.split('/').last;
-    final conflictHasRemote =
-        mutation.conflictFilePath != null &&
-        mutation.conflictFilePath!.isNotEmpty;
 
     return ListTile(
       leading: Icon(
@@ -96,30 +93,11 @@ class _ConflictTile extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 2),
-          Row(
-            children: [
-              _chip(
-                context,
-                label: mutation.operation.toUpperCase(),
-                color: theme.colorScheme.errorContainer,
-                textColor: theme.colorScheme.onErrorContainer,
-              ),
-              const SizedBox(width: 6),
-              if (conflictHasRemote)
-                _chip(
-                  context,
-                  label: 'Remote available',
-                  color: Colors.orange.shade100,
-                  textColor: Colors.orange.shade900,
-                )
-              else
-                _chip(
-                  context,
-                  label: 'No remote snapshot',
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  textColor: theme.colorScheme.onSurfaceVariant,
-                ),
-            ],
+          _chip(
+            context,
+            label: 'CONFLICT',
+            color: theme.colorScheme.errorContainer,
+            textColor: theme.colorScheme.onErrorContainer,
           ),
         ],
       ),

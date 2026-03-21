@@ -84,13 +84,14 @@ class TestCreateFile:
         )
         assert response.status_code == 409
 
-    def test_create_in_missing_parent_returns_404(self, client: TestClient, auth_headers: dict):
+    def test_create_in_missing_parent_auto_creates(self, client: TestClient, auth_headers: dict):
         response = client.post(
             "/files/Missing/file.md",
             json={"content": "data"},
             headers=auth_headers,
         )
-        assert response.status_code == 404
+        # create_file auto-creates parent directories
+        assert response.status_code == 201
 
 
 class TestUpdateFile:

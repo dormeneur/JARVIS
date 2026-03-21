@@ -23,6 +23,7 @@ from app.models.file_models import (
     FileInfo,
 )
 from app.services.path_validator import check_symlink, resolve_vault_path, validate_path
+from app.services.version_tracker import VersionTracker
 
 STREAM_CHUNK_SIZE = 64 * 1024
 
@@ -124,7 +125,7 @@ def create_file(relative_path: str, content: str = "", entry_type: EntryType = E
 
     parent = target.parent
     if not parent.exists():
-        raise PathNotFoundError(str(parent.relative_to(vault_root.resolve())).replace("\\", "/"))
+        parent.mkdir(parents=True, exist_ok=True)
 
     try:
         if entry_type == EntryType.DIRECTORY:
@@ -133,6 +134,13 @@ def create_file(relative_path: str, content: str = "", entry_type: EntryType = E
             target.write_text(content, encoding="utf-8")
     except OSError as exc:
         raise VaultIOError(f"Failed to create {validated}: {exc}") from exc
+
+    # Track version for new files so sync conflict detection works correctly
+    if entry_type != EntryType.DIRECTORY:
+        content_hash = _sha256(content.encode("utf-8"))
+        tracker = VersionTracker()
+        # Use upsert to be safe if version entry exists from a previous lifecycle
+        tracker.upsert_version(validated, 1, content_hash)
 
     return _file_info(vault_root, target)
 
@@ -154,6 +162,11 @@ def update_file(relative_path: str, content: str) -> FileInfo:
     except OSError as exc:
         raise VaultIOError(f"Failed to update {validated}: {exc}") from exc
 
+    # Increment version so sync detects the server-side change
+    content_hash = _sha256(content.encode("utf-8"))
+    tracker = VersionTracker()
+    tracker.increment_version(validated, content_hash)
+
     return _file_info(vault_root, target)
 
 
@@ -174,6 +187,10 @@ def delete_path(relative_path: str) -> None:
             target.unlink()
     except OSError as exc:
         raise VaultIOError(f"Failed to delete {validated}: {exc}") from exc
+
+    # Clean up version tracking
+    tracker = VersionTracker()
+    tracker.delete_version(validated)
 
 
 async def save_upload(relative_path: str, file: UploadFile) -> FileInfo:
@@ -201,6 +218,11 @@ async def save_upload(relative_path: str, file: UploadFile) -> FileInfo:
     except OSError as exc:
         raise VaultIOError(f"Failed to save upload to {validated}: {exc}") from exc
 
+    # Track version for uploaded files
+    content_hash = _sha256(target.read_bytes())
+    tracker = VersionTracker()
+    tracker.increment_version(validated, content_hash)
+
     return _file_info(vault_root, target)
 
 
@@ -225,3 +247,27 @@ async def stream_download(relative_path: str) -> tuple[str, int, AsyncIterator[b
                 yield chunk
 
     return filename, file_size, _stream()
+
+
+def reset_vault() -> int:
+    """Delete all user files and directories in the vault, excluding system/.
+
+    Returns the number of top-level items deleted.
+    """
+    vault_root = settings.vault_path.resolve()
+    deleted = 0
+
+    for child in vault_root.iterdir():
+        # Preserve the system directory (devices, version DB, etc.)
+        if child.name == "system":
+            continue
+        try:
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+            deleted += 1
+        except OSError:
+            pass
+
+    return deleted

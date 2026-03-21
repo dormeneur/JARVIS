@@ -1,3 +1,5 @@
+import sqlite3
+
 from fastapi import APIRouter, Depends, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -11,8 +13,28 @@ from app.models.file_models import (
     UpdateFileRequest,
 )
 from app.services import vault
+from app.services.version_tracker import VersionTracker
 
 router = APIRouter(tags=["files"])
+
+
+@router.post("/files/reset", response_model=OperationResponse)
+async def reset_all_files(
+    _device: dict = Depends(get_current_device),
+) -> OperationResponse:
+    """Delete all user files from the vault and reset version tracking."""
+    deleted_count = vault.reset_vault()
+
+    # Wipe all version tracking entries
+    tracker = VersionTracker()
+    with sqlite3.connect(tracker.db_path) as conn:
+        conn.execute("DELETE FROM file_versions")
+        conn.commit()
+
+    return OperationResponse(
+        message=f"Reset complete. {deleted_count} items deleted.",
+        path="/",
+    )
 
 
 @router.get("/files", response_model=DirectoryListing)
@@ -76,12 +98,6 @@ async def delete_path(
     path: str,
     _device: dict = Depends(get_current_device),
 ) -> OperationResponse:
-    from app.services.version_tracker import VersionTracker
-    
     vault.delete_path(path)
-    
-    # Clean up version tracking
-    version_tracker = VersionTracker()
-    version_tracker.delete_version(path)
     
     return OperationResponse(message="Deleted successfully", path=path)

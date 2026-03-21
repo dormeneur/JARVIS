@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
+import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 
 /// Settings screen — shows device info, server URL, and logout.
 class SettingsScreen extends ConsumerWidget {
@@ -9,6 +10,7 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authProvider);
+    final showHidden = ref.watch(showHiddenFilesProvider);
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -35,6 +37,17 @@ class SettingsScreen extends ConsumerWidget {
             leading: const Icon(Icons.fingerprint),
             title: const Text('Device ID'),
             subtitle: Text(authState.deviceId ?? 'Unknown'),
+          ),
+          const Divider(),
+          _SectionHeader('Explorer'),
+          SwitchListTile(
+            secondary: const Icon(Icons.visibility_outlined),
+            title: const Text('Show Hidden Files'),
+            subtitle: const Text('Files starting with . (e.g. .gitkeep)'),
+            value: showHidden,
+            onChanged: (value) {
+              ref.read(showHiddenFilesProvider.notifier).state = value;
+            },
           ),
           const Divider(),
           _SectionHeader('Account'),

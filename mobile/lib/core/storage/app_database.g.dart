@@ -670,6 +670,17 @@ class $MutationQueueTable extends MutationQueue
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _localContentSnapshotMeta =
+      const VerificationMeta('localContentSnapshot');
+  @override
+  late final GeneratedColumn<String> localContentSnapshot =
+      GeneratedColumn<String>(
+        'local_content_snapshot',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -680,6 +691,7 @@ class $MutationQueueTable extends MutationQueue
     status,
     baseVersion,
     conflictFilePath,
+    localContentSnapshot,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -756,6 +768,15 @@ class $MutationQueueTable extends MutationQueue
         ),
       );
     }
+    if (data.containsKey('local_content_snapshot')) {
+      context.handle(
+        _localContentSnapshotMeta,
+        localContentSnapshot.isAcceptableOrUnknown(
+          data['local_content_snapshot']!,
+          _localContentSnapshotMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -797,6 +818,10 @@ class $MutationQueueTable extends MutationQueue
         DriftSqlType.string,
         data['${effectivePrefix}conflict_file_path'],
       ),
+      localContentSnapshot: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}local_content_snapshot'],
+      ),
     );
   }
 
@@ -816,6 +841,7 @@ class MutationQueueData extends DataClass
   final String status;
   final int baseVersion;
   final String? conflictFilePath;
+  final String? localContentSnapshot;
   const MutationQueueData({
     required this.id,
     required this.path,
@@ -825,6 +851,7 @@ class MutationQueueData extends DataClass
     required this.status,
     required this.baseVersion,
     this.conflictFilePath,
+    this.localContentSnapshot,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -838,6 +865,9 @@ class MutationQueueData extends DataClass
     map['base_version'] = Variable<int>(baseVersion);
     if (!nullToAbsent || conflictFilePath != null) {
       map['conflict_file_path'] = Variable<String>(conflictFilePath);
+    }
+    if (!nullToAbsent || localContentSnapshot != null) {
+      map['local_content_snapshot'] = Variable<String>(localContentSnapshot);
     }
     return map;
   }
@@ -854,6 +884,9 @@ class MutationQueueData extends DataClass
       conflictFilePath: conflictFilePath == null && nullToAbsent
           ? const Value.absent()
           : Value(conflictFilePath),
+      localContentSnapshot: localContentSnapshot == null && nullToAbsent
+          ? const Value.absent()
+          : Value(localContentSnapshot),
     );
   }
 
@@ -871,6 +904,9 @@ class MutationQueueData extends DataClass
       status: serializer.fromJson<String>(json['status']),
       baseVersion: serializer.fromJson<int>(json['baseVersion']),
       conflictFilePath: serializer.fromJson<String?>(json['conflictFilePath']),
+      localContentSnapshot: serializer.fromJson<String?>(
+        json['localContentSnapshot'],
+      ),
     );
   }
   @override
@@ -885,6 +921,7 @@ class MutationQueueData extends DataClass
       'status': serializer.toJson<String>(status),
       'baseVersion': serializer.toJson<int>(baseVersion),
       'conflictFilePath': serializer.toJson<String?>(conflictFilePath),
+      'localContentSnapshot': serializer.toJson<String?>(localContentSnapshot),
     };
   }
 
@@ -897,6 +934,7 @@ class MutationQueueData extends DataClass
     String? status,
     int? baseVersion,
     Value<String?> conflictFilePath = const Value.absent(),
+    Value<String?> localContentSnapshot = const Value.absent(),
   }) => MutationQueueData(
     id: id ?? this.id,
     path: path ?? this.path,
@@ -908,6 +946,9 @@ class MutationQueueData extends DataClass
     conflictFilePath: conflictFilePath.present
         ? conflictFilePath.value
         : this.conflictFilePath,
+    localContentSnapshot: localContentSnapshot.present
+        ? localContentSnapshot.value
+        : this.localContentSnapshot,
   );
   MutationQueueData copyWithCompanion(MutationQueueCompanion data) {
     return MutationQueueData(
@@ -925,6 +966,9 @@ class MutationQueueData extends DataClass
       conflictFilePath: data.conflictFilePath.present
           ? data.conflictFilePath.value
           : this.conflictFilePath,
+      localContentSnapshot: data.localContentSnapshot.present
+          ? data.localContentSnapshot.value
+          : this.localContentSnapshot,
     );
   }
 
@@ -938,7 +982,8 @@ class MutationQueueData extends DataClass
           ..write('retryCount: $retryCount, ')
           ..write('status: $status, ')
           ..write('baseVersion: $baseVersion, ')
-          ..write('conflictFilePath: $conflictFilePath')
+          ..write('conflictFilePath: $conflictFilePath, ')
+          ..write('localContentSnapshot: $localContentSnapshot')
           ..write(')'))
         .toString();
   }
@@ -953,6 +998,7 @@ class MutationQueueData extends DataClass
     status,
     baseVersion,
     conflictFilePath,
+    localContentSnapshot,
   );
   @override
   bool operator ==(Object other) =>
@@ -965,7 +1011,8 @@ class MutationQueueData extends DataClass
           other.retryCount == this.retryCount &&
           other.status == this.status &&
           other.baseVersion == this.baseVersion &&
-          other.conflictFilePath == this.conflictFilePath);
+          other.conflictFilePath == this.conflictFilePath &&
+          other.localContentSnapshot == this.localContentSnapshot);
 }
 
 class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
@@ -977,6 +1024,7 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
   final Value<String> status;
   final Value<int> baseVersion;
   final Value<String?> conflictFilePath;
+  final Value<String?> localContentSnapshot;
   final Value<int> rowid;
   const MutationQueueCompanion({
     this.id = const Value.absent(),
@@ -987,6 +1035,7 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
     this.status = const Value.absent(),
     this.baseVersion = const Value.absent(),
     this.conflictFilePath = const Value.absent(),
+    this.localContentSnapshot = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MutationQueueCompanion.insert({
@@ -998,6 +1047,7 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
     required String status,
     required int baseVersion,
     this.conflictFilePath = const Value.absent(),
+    this.localContentSnapshot = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        path = Value(path),
@@ -1014,6 +1064,7 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
     Expression<String>? status,
     Expression<int>? baseVersion,
     Expression<String>? conflictFilePath,
+    Expression<String>? localContentSnapshot,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1025,6 +1076,8 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
       if (status != null) 'status': status,
       if (baseVersion != null) 'base_version': baseVersion,
       if (conflictFilePath != null) 'conflict_file_path': conflictFilePath,
+      if (localContentSnapshot != null)
+        'local_content_snapshot': localContentSnapshot,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1038,6 +1091,7 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
     Value<String>? status,
     Value<int>? baseVersion,
     Value<String?>? conflictFilePath,
+    Value<String?>? localContentSnapshot,
     Value<int>? rowid,
   }) {
     return MutationQueueCompanion(
@@ -1049,6 +1103,7 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
       status: status ?? this.status,
       baseVersion: baseVersion ?? this.baseVersion,
       conflictFilePath: conflictFilePath ?? this.conflictFilePath,
+      localContentSnapshot: localContentSnapshot ?? this.localContentSnapshot,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1080,6 +1135,11 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
     if (conflictFilePath.present) {
       map['conflict_file_path'] = Variable<String>(conflictFilePath.value);
     }
+    if (localContentSnapshot.present) {
+      map['local_content_snapshot'] = Variable<String>(
+        localContentSnapshot.value,
+      );
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1097,6 +1157,7 @@ class MutationQueueCompanion extends UpdateCompanion<MutationQueueData> {
           ..write('status: $status, ')
           ..write('baseVersion: $baseVersion, ')
           ..write('conflictFilePath: $conflictFilePath, ')
+          ..write('localContentSnapshot: $localContentSnapshot, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1420,6 +1481,7 @@ typedef $$MutationQueueTableCreateCompanionBuilder =
       required String status,
       required int baseVersion,
       Value<String?> conflictFilePath,
+      Value<String?> localContentSnapshot,
       Value<int> rowid,
     });
 typedef $$MutationQueueTableUpdateCompanionBuilder =
@@ -1432,6 +1494,7 @@ typedef $$MutationQueueTableUpdateCompanionBuilder =
       Value<String> status,
       Value<int> baseVersion,
       Value<String?> conflictFilePath,
+      Value<String?> localContentSnapshot,
       Value<int> rowid,
     });
 
@@ -1481,6 +1544,11 @@ class $$MutationQueueTableFilterComposer
 
   ColumnFilters<String> get conflictFilePath => $composableBuilder(
     column: $table.conflictFilePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get localContentSnapshot => $composableBuilder(
+    column: $table.localContentSnapshot,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1533,6 +1601,11 @@ class $$MutationQueueTableOrderingComposer
     column: $table.conflictFilePath,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get localContentSnapshot => $composableBuilder(
+    column: $table.localContentSnapshot,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MutationQueueTableAnnotationComposer
@@ -1571,6 +1644,11 @@ class $$MutationQueueTableAnnotationComposer
 
   GeneratedColumn<String> get conflictFilePath => $composableBuilder(
     column: $table.conflictFilePath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get localContentSnapshot => $composableBuilder(
+    column: $table.localContentSnapshot,
     builder: (column) => column,
   );
 }
@@ -1618,6 +1696,7 @@ class $$MutationQueueTableTableManager
                 Value<String> status = const Value.absent(),
                 Value<int> baseVersion = const Value.absent(),
                 Value<String?> conflictFilePath = const Value.absent(),
+                Value<String?> localContentSnapshot = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MutationQueueCompanion(
                 id: id,
@@ -1628,6 +1707,7 @@ class $$MutationQueueTableTableManager
                 status: status,
                 baseVersion: baseVersion,
                 conflictFilePath: conflictFilePath,
+                localContentSnapshot: localContentSnapshot,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -1640,6 +1720,7 @@ class $$MutationQueueTableTableManager
                 required String status,
                 required int baseVersion,
                 Value<String?> conflictFilePath = const Value.absent(),
+                Value<String?> localContentSnapshot = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MutationQueueCompanion.insert(
                 id: id,
@@ -1650,6 +1731,7 @@ class $$MutationQueueTableTableManager
                 status: status,
                 baseVersion: baseVersion,
                 conflictFilePath: conflictFilePath,
+                localContentSnapshot: localContentSnapshot,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

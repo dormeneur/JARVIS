@@ -1,23 +1,12 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
-import 'package:jarvis_mobile/features/editor/presentation/editor_screen.dart';
-import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 import 'package:jarvis_mobile/features/sync/presentation/conflict_provider.dart';
+import 'package:jarvis_mobile/features/sync/presentation/sync_provider.dart';
 
-/// Shows both sides of a conflict and lets the user choose a resolution.
-///
-/// Tabs:
-///   Local  – the user's edit (from local mirror)
-///   Remote – the server's current content (conflict file, if pulled)
-///
-/// Actions:
-///   Keep Local    → re-queues mutation with fresh base_version
-///   Accept Remote → overwrites local with remote content, removes mutation
-///   Edit Merged   → opens EditorScreen for manual editing; user must
-///                   then tap "Resolved" to confirm and re-queue
+/// Conflict detail screen with a 2-step resolution flow:
+/// 1. Compare: read-only Local and Remote tabs
+/// 2. Edit: pick a base, optionally edit, then save & queue for sync
 class ConflictDetailScreen extends ConsumerStatefulWidget {
   final MutationQueueData mutation;
 
@@ -30,11 +19,17 @@ class ConflictDetailScreen extends ConsumerStatefulWidget {
 
 class _ConflictDetailScreenState extends ConsumerState<ConflictDetailScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
-  String? _localContent;
-  String? _remoteContent;
-  bool _loadingLocal = true;
-  bool _loadingRemote = true;
+  late TabController _tabController;
+
+  // Content holders
+  String _localContent = '';
+  String _remoteContent = '';
+  bool _isLoading = true;
+  String? _error;
+
+  // Editor state (Step 2)
+  bool _isEditing = false;
+  final _editController = TextEditingController();
 
   @override
   void initState() {
@@ -46,140 +41,85 @@ class _ConflictDetailScreenState extends ConsumerState<ConflictDetailScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _editController.dispose();
     super.dispose();
   }
 
   Future<void> _loadContents() async {
-    final repo = ref.read(explorerRepositoryProvider);
-    final entry = await repo.getEntry(widget.mutation.path);
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
 
-    // Load local content
-    if (entry?.localPath != null) {
-      final file = File(entry!.localPath!);
-      if (file.existsSync()) {
-        final content = await file.readAsString();
-        if (mounted) setState(() => _localContent = content);
-      }
-    }
-    if (mounted) setState(() => _loadingLocal = false);
+    try {
+      // Local content: read from localContentSnapshot in the mutation row
+      _localContent =
+          widget.mutation.localContentSnapshot ??
+          '(no local snapshot available)';
 
-    // Load remote conflict file content (if available)
-    final conflictPath = widget.mutation.conflictFilePath;
-    if (conflictPath != null && conflictPath.isNotEmpty) {
-      final conflictEntry = await repo.getEntry(conflictPath);
-      if (conflictEntry?.localPath != null) {
-        final file = File(conflictEntry!.localPath!);
-        if (file.existsSync()) {
-          final content = await file.readAsString();
-          if (mounted) setState(() => _remoteContent = content);
-        }
-      }
+      // Remote content: fetch from server
+      final syncRepo = ref.read(syncRepositoryProvider);
+      final remote = await syncRepo.fetchRemoteContent(widget.mutation.path);
+      _remoteContent = remote ?? '(failed to fetch remote content)';
+
+      setState(() => _isLoading = false);
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _error = e.toString();
+      });
     }
-    if (mounted) setState(() => _loadingRemote = false);
   }
 
-  Future<void> _keepLocal(BuildContext context) async {
+  void _pickBase(String content) {
+    setState(() {
+      _isEditing = true;
+      _editController.text = content;
+    });
+  }
+
+  Future<void> _saveAndQueue() async {
     final notifier = ref.read(conflictNotifierProvider.notifier);
-    await notifier.resolveKeepLocal(widget.mutation.id);
+    await notifier.resolveConflict(widget.mutation.id, _editController.text);
 
     if (!mounted) return;
+
     final state = ref.read(conflictNotifierProvider);
-    if (state.error != null) {
-      _showError(context, state.error!);
-    } else {
-      _showSuccess(context, 'Local version kept. Sync to push.');
-      Navigator.of(context).pop();
-    }
-  }
-
-  Future<void> _acceptRemote(BuildContext context) async {
-    final notifier = ref.read(conflictNotifierProvider.notifier);
-    await notifier.resolveAcceptRemote(widget.mutation.id);
-
-    if (!mounted) return;
-    final state = ref.read(conflictNotifierProvider);
-    if (state.error != null) {
-      _showError(context, state.error!);
-    } else {
-      _showSuccess(context, 'Remote version accepted.');
-      Navigator.of(context).pop();
-    }
-  }
-
-  void _editMerged(BuildContext context) {
-    // Open the editor on the local file; user merges content manually.
-    // On returning, confirm the edit was saved and then resolve.
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => EditorScreen(filePath: widget.mutation.path),
-          ),
-        )
-        .then((_) => _showResolvedDialog(context));
-  }
-
-  Future<void> _showResolvedDialog(BuildContext context) async {
-    if (!mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Mark as Resolved?'),
-        content: const Text(
-          'Did you finish merging the content in the editor?\n\n'
-          'Confirming will re-queue this file for push on next sync.',
+    if (state.hasError) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Resolution failed: ${state.error}'),
+          backgroundColor: Theme.of(context).colorScheme.error,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Not yet'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Confirmed, Resolved'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      await ref
-          .read(conflictNotifierProvider.notifier)
-          .resolveKeepLocal(widget.mutation.id);
-      if (mounted) {
-        _showSuccess(context, 'Merged version queued for sync.');
-        Navigator.of(context).pop();
-      }
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Conflict resolved. Will sync on next push.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      Navigator.of(context).pop();
     }
-  }
-
-  void _showError(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Error: $message'),
-        backgroundColor: Theme.of(context).colorScheme.error,
-      ),
-    );
-  }
-
-  void _showSuccess(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final conflictState = ref.watch(conflictNotifierProvider);
     final fileName = widget.mutation.path.split('/').last;
-    final hasRemote =
-        widget.mutation.conflictFilePath != null &&
-        widget.mutation.conflictFilePath!.isNotEmpty;
+    final resolving = ref.watch(conflictNotifierProvider);
 
+    if (_isEditing) {
+      return _buildEditorView(theme, fileName, resolving);
+    }
+    return _buildCompareView(theme, fileName);
+  }
+
+  /// Step 1: Compare local vs remote (read-only tabs)
+  Widget _buildCompareView(ThemeData theme, String fileName) {
     return Scaffold(
       appBar: AppBar(
         title: Text(fileName),
-        centerTitle: false,
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
@@ -188,133 +128,126 @@ class _ConflictDetailScreenState extends ConsumerState<ConflictDetailScreen>
           ],
         ),
       ),
-      body: Column(
-        children: [
-          // Conflict path info banner
-          Container(
-            width: double.infinity,
-            color: theme.colorScheme.errorContainer,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text(
-              'Conflict on: ${widget.mutation.path}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onErrorContainer,
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      size: 48,
+                      color: theme.colorScheme.error,
+                    ),
+                    const SizedBox(height: 12),
+                    Text('Error: $_error', textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: _loadContents,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          // Tab content
-          Expanded(
-            child: TabBarView(
+            )
+          : TabBarView(
               controller: _tabController,
               children: [
-                _ContentPane(
-                  loading: _loadingLocal,
-                  content: _localContent,
-                  missingLabel: 'Local file not found.\nSync to restore.',
-                ),
-                _ContentPane(
-                  loading: _loadingRemote,
-                  content: _remoteContent,
-                  missingLabel: hasRemote
-                      ? 'Remote snapshot not downloaded yet.\n'
-                            'Sync first to pull conflict file.'
-                      : 'No remote snapshot recorded.\n'
-                            'The conflict was detected but no conflict\n'
-                            'file path was returned by the server.',
-                ),
+                _contentView(_localContent, theme),
+                _contentView(_remoteContent, theme),
               ],
             ),
-          ),
-          // Action buttons
-          const Divider(height: 1),
-          if (conflictState.isLoading)
-            const Padding(
-              padding: EdgeInsets.all(20),
-              child: CircularProgressIndicator(),
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  FilledButton.icon(
-                    onPressed: () => _keepLocal(context),
-                    icon: const Icon(Icons.phone_android),
-                    label: const Text('Keep Local'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: theme.colorScheme.primary,
+      bottomNavigationBar: _isLoading || _error != null
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _pickBase(_localContent),
+                        icon: const Icon(Icons.phone_android),
+                        label: const Text('Use Local'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  FilledButton.icon(
-                    onPressed: () => _acceptRemote(context),
-                    icon: const Icon(Icons.cloud_download_outlined),
-                    label: const Text('Accept Remote'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: theme.colorScheme.secondary,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () => _pickBase(_remoteContent),
+                        icon: const Icon(Icons.cloud_outlined),
+                        label: const Text('Use Remote'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => _editMerged(context),
-                    icon: const Icon(Icons.edit_outlined),
-                    label: const Text('Edit Merged'),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-        ],
+    );
+  }
+
+  /// Step 2: Editable text with save button
+  Widget _buildEditorView(
+    ThemeData theme,
+    String fileName,
+    AsyncValue resolving,
+  ) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Edit: $fileName'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => setState(() => _isEditing = false),
+        ),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(12),
+        child: TextField(
+          controller: _editController,
+          maxLines: null,
+          expands: true,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            hintText: 'Edit the final content...',
+          ),
+          textAlignVertical: TextAlignVertical.top,
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: FilledButton.icon(
+            onPressed: resolving.isLoading ? null : _saveAndQueue,
+            icon: resolving.isLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.save),
+            label: const Text('Save & Queue for Sync'),
+          ),
+        ),
       ),
     );
   }
-}
 
-/// Displays file content or a helpful placeholder in a scrollable text view.
-class _ContentPane extends StatelessWidget {
-  final bool loading;
-  final String? content;
-  final String missingLabel;
-
-  const _ContentPane({
-    required this.loading,
-    required this.content,
-    required this.missingLabel,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    if (loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (content == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Text(
-            missingLabel,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-      );
-    }
-
+  Widget _contentView(String content, ThemeData theme) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       child: SelectableText(
-        content!,
-        style: const TextStyle(
+        content,
+        style: TextStyle(
           fontFamily: 'monospace',
           fontSize: 13,
-          height: 1.5,
+          color: theme.colorScheme.onSurface,
         ),
       ),
     );

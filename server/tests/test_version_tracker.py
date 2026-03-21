@@ -38,9 +38,11 @@ class TestVersionTracker:
         assert new_version == 2
 
     def test_increment_version_creates_if_not_exists(self, temp_db):
+        """Incrementing an untracked file initializes at version 2 (not 1)
+        so it's distinguishable from a freshly-created file."""
         tracker = VersionTracker(temp_db)
         version = tracker.increment_version("new.md", "sha256:xyz789")
-        assert version == 1
+        assert version == 2
 
     def test_increment_version_multiple_times(self, temp_db):
         tracker = VersionTracker(temp_db)
@@ -104,3 +106,35 @@ class TestVersionTracker:
         
         result = tracker.get_version_and_hash("test.md")
         assert result == (2, "sha256:v2")
+
+    def test_prev_hash_none_after_create(self, temp_db):
+        """Newly created file has no prev_hash."""
+        tracker = VersionTracker(temp_db)
+        tracker.create_version("test.md", "sha256:v1")
+        assert tracker.get_prev_hash("test.md") is None
+
+    def test_prev_hash_set_after_increment(self, temp_db):
+        """After increment, prev_hash = the old last_hash."""
+        tracker = VersionTracker(temp_db)
+        tracker.create_version("test.md", "sha256:v1")
+        tracker.increment_version("test.md", "sha256:v2")
+        assert tracker.get_prev_hash("test.md") == "sha256:v1"
+
+    def test_prev_hash_chains_through_increments(self, temp_db):
+        """Each increment shifts prev_hash to the previous last_hash."""
+        tracker = VersionTracker(temp_db)
+        tracker.create_version("test.md", "sha256:v1")
+        tracker.increment_version("test.md", "sha256:v2")
+        tracker.increment_version("test.md", "sha256:v3")
+        # prev_hash should be v2 (the hash before the latest increment)
+        assert tracker.get_prev_hash("test.md") == "sha256:v2"
+
+    def test_prev_hash_none_for_nonexistent(self, temp_db):
+        tracker = VersionTracker(temp_db)
+        assert tracker.get_prev_hash("nonexistent.md") is None
+
+    def test_prev_hash_none_for_untracked_increment(self, temp_db):
+        """Incrementing an untracked file has no prev_hash."""
+        tracker = VersionTracker(temp_db)
+        tracker.increment_version("new.md", "sha256:abc")
+        assert tracker.get_prev_hash("new.md") is None

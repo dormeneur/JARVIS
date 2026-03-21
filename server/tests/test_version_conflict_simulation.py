@@ -39,7 +39,7 @@ class TestVersionConflictSimulation:
         # ===== STEP 1: SETUP =====
         print("\n[STEP 1] Setup: Create clean vault and initialize file")
         
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             vault_path = Path(tmpdir)
             
             # Create settings with temporary vault
@@ -136,39 +136,28 @@ class TestVersionConflictSimulation:
                 print("\n[STEP 4] Verify conflict behavior")
                 
                 # CRITICAL ASSERTIONS
-                assert is_conflict_b, "❌ FAILED: Conflict should be detected!"
-                assert version_b is None, "❌ FAILED: Conflict should return None version!"
-                assert "_conflict_" in result_path_b, f"❌ FAILED: Should create conflict file, got {result_path_b}"
+                # New behavior: conflicts return the original path and server version.
+                # No conflict files are written to disk — conflict resolution is
+                # handled entirely on the mobile side via the mutation queue.
+                assert is_conflict_b, "FAILED: Conflict should be detected!"
+                assert version_b == 2, f"FAILED: Conflict should return server version 2, got {version_b}"
+                assert result_path_b == "test.md", f"FAILED: Should return original path, got {result_path_b}"
                 
                 print(f"  ✓ Conflict correctly detected")
-                print(f"  ✓ Conflict file created: {result_path_b}")
+                print(f"  ✓ Returns original path: {result_path_b}")
+                print(f"  ✓ Returns server version: {version_b}")
                 
-                # Verify original file is PRESERVED
+                # Verify original file is PRESERVED (not overwritten by Device B)
                 original_file_content = (vault_path / "test.md").read_bytes()
                 assert original_file_content == device_a_content, \
-                    f"❌ FAILED: Original file was overwritten! Expected '{device_a_content.decode()}', got '{original_file_content.decode()}'"
+                    f"FAILED: Original file was overwritten! Expected '{device_a_content.decode()}', got '{original_file_content.decode()}'"
                 print(f"  ✓ Original file preserved: {original_file_content.decode()}")
                 
                 # Verify original file version is UNCHANGED
                 original_version = tracker.get_version("test.md")
                 assert original_version == 2, \
-                    f"❌ FAILED: Original version changed! Expected 2, got {original_version}"
+                    f"FAILED: Original version changed! Expected 2, got {original_version}"
                 print(f"  ✓ Original file version unchanged: {original_version}")
-                
-                # Verify conflict file exists
-                conflict_file = vault_path / result_path_b
-                assert conflict_file.exists(), f"❌ FAILED: Conflict file not created at {result_path_b}"
-                conflict_content = conflict_file.read_bytes()
-                assert conflict_content == device_b_content, \
-                    f"❌ FAILED: Conflict file has wrong content"
-                print(f"  ✓ Conflict file exists: {result_path_b}")
-                print(f"  ✓ Conflict file content: {conflict_content.decode()}")
-                
-                # Verify conflict file has version tracking
-                conflict_version = tracker.get_version(result_path_b)
-                assert conflict_version == 1, \
-                    f"❌ FAILED: Conflict file should have version 1, got {conflict_version}"
-                print(f"  ✓ Conflict file version: {conflict_version}")
                 
                 # ===== STEP 5: VERIFY VERSION TABLE STATE =====
                 print("\n[STEP 5] Verify version table state")
@@ -190,17 +179,12 @@ class TestVersionConflictSimulation:
                         print(f"  {path:<40} {version:<10} {hash_short:<20}")
                     print("  " + "-" * 60)
                     
-                    # Verify we have exactly 2 entries
-                    assert len(rows) == 2, f"Expected 2 version entries, got {len(rows)}"
+                    # Should have exactly 1 entry (no conflict file on disk)
+                    assert len(rows) == 1, f"Expected 1 version entry, got {len(rows)}"
                     
                     # Verify original file entry
                     original_entry = [r for r in rows if r[0] == "test.md"][0]
                     assert original_entry[1] == 2, "Original file should be version 2"
-                    
-                    # Verify conflict file entry
-                    conflict_entries = [r for r in rows if "_conflict_" in r[0]]
-                    assert len(conflict_entries) == 1, "Should have exactly 1 conflict file"
-                    assert conflict_entries[0][1] == 1, "Conflict file should be version 1"
                 
                 # ===== FINAL SUMMARY =====
                 print("\n" + "="*70)
@@ -209,26 +193,25 @@ class TestVersionConflictSimulation:
                 print(f"\nInitial version: 1")
                 print(f"After Device A: version = 2")
                 print(f"\nAfter Device B (with stale base_version=1):")
-                print(f"  Conflict created: {is_conflict_b}")
-                print(f"  Conflict filename: {result_path_b}")
+                print(f"  Conflict detected: {is_conflict_b}")
+                print(f"  Returned path: {result_path_b} (original, no conflict file)")
+                print(f"  Returned version: {version_b} (server version)")
                 print(f"  Server file content: '{original_file_content.decode()}'")
-                print(f"  Conflict file content: '{conflict_content.decode()}'")
                 print(f"  Final version of original: {original_version}")
-                print(f"  Version of conflict file: {conflict_version}")
                 
                 print("\nVersion table rows:")
                 for row in rows:
                     print(f"  {row[0]}: version={row[1]}, hash={row[2][:16]}...")
                 
                 print("\n" + "="*70)
-                print("✅ ALL ASSERTIONS PASSED")
+                print("ALL ASSERTIONS PASSED")
                 print("="*70)
                 print("\nConclusion:")
-                print("  • Version-based conflict detection works correctly")
-                print("  • base_version != current_server_version triggers conflict")
-                print("  • Original file is preserved at correct version")
-                print("  • Conflict file is created with version tracking")
-                print("  • No silent data loss occurs")
+                print("  - Version-based conflict detection works correctly")
+                print("  - base_version != current_server_version triggers conflict")
+                print("  - Original file is preserved at correct version")
+                print("  - No conflict files written to disk (handled by mobile client)")
+                print("  - No silent data loss occurs")
                 print("="*70 + "\n")
                 
             finally:

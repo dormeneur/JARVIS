@@ -18,6 +18,7 @@ from app.models.sync_models import (
 )
 from app.services import sync
 from app.services.path_validator import validate_path
+from app.services.version_tracker import VersionTracker
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -38,6 +39,7 @@ async def sync_manifest(
             "content_hash": e.content_hash,
             "last_modified": e.last_modified,
             "version": e.version,
+            "has_local_changes": e.has_local_changes,
         }
         for e in body.manifest
     ]
@@ -47,7 +49,10 @@ async def sync_manifest(
     return ManifestResponse(
         to_push=[SyncPathEntry(path=p) for p in to_push],
         to_pull=[SyncPathEntry(path=p) for p in to_pull],
-        conflicts=[SyncPathEntry(path=p) for p in conflicts],
+        conflicts=[
+            SyncPathEntry(path=p, version=server_manifest[p].get("version"))
+            for p in conflicts
+        ],
     )
 
 
@@ -74,7 +79,7 @@ async def sync_push(
     if is_conflict:
         return PushResponse(
             accepted=[],
-            conflicts=[PushResultEntry(path=result_path)],
+            conflicts=[PushResultEntry(path=result_path, version=new_version)],
         )
 
     return PushResponse(
@@ -91,11 +96,16 @@ async def sync_pull(
     validate_path(body.path)
     filename, file_size, stream = await sync.pull_file(body.path)
 
+    # Look up current server version for this file
+    tracker = VersionTracker()
+    version = tracker.get_version(body.path) or 1
+
     return StreamingResponse(
         stream,
         media_type="application/octet-stream",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Content-Length": str(file_size),
+            "X-File-Version": str(version),
         },
     )

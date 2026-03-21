@@ -10,6 +10,7 @@ class ManifestEntry(BaseModel):
     content_hash: str
     last_modified: datetime
     version: int | None = None  # Server version number for conflict detection
+    has_local_changes: bool | None = None  # True if mobile has local edits for this file
 
 
 class ManifestRequest(BaseModel):
@@ -18,6 +19,7 @@ class ManifestRequest(BaseModel):
 
 class SyncPathEntry(BaseModel):
     path: str
+    version: int | None = None  # Server version (for conflict resolution)
 
 
 class ManifestResponse(BaseModel):

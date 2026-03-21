@@ -1,83 +1,44 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
-import 'package:jarvis_mobile/features/sync/data/sync_repository.dart';
 import 'package:jarvis_mobile/features/sync/presentation/sync_provider.dart';
 
-/// Reactive stream of all failed (conflict) mutations.
+/// Reactive stream of failed (conflicted) mutations.
 final failedMutationsProvider = StreamProvider<List<MutationQueueData>>((ref) {
   final db = ref.watch(appDatabaseProvider);
   return db.watchFailedMutations();
 });
 
-/// Count of active conflicts for badge display.
+/// Number of unresolved conflicts (for badge count).
 final conflictCountProvider = Provider<int>((ref) {
-  return ref
-      .watch(failedMutationsProvider)
-      .maybeWhen(data: (list) => list.length, orElse: () => 0);
+  final mutations = ref.watch(failedMutationsProvider);
+  return mutations.when(
+    data: (m) => m.length,
+    loading: () => 0,
+    error: (_, _) => 0,
+  );
 });
 
-// ---------------------------------------------------------------------------
-// ConflictNotifier
-// ---------------------------------------------------------------------------
+/// Notifier for conflict resolution actions.
+class ConflictNotifier extends StateNotifier<AsyncValue<void>> {
+  final Ref _ref;
 
-/// State for [ConflictNotifier]: tracks in-progress resolution actions.
-class ConflictResolutionState {
-  final bool isLoading;
-  final String? error;
+  ConflictNotifier(this._ref) : super(const AsyncValue.data(null));
 
-  const ConflictResolutionState({this.isLoading = false, this.error});
-
-  ConflictResolutionState copyWith({bool? isLoading, String? error}) {
-    return ConflictResolutionState(
-      isLoading: isLoading ?? this.isLoading,
-      error: error,
-    );
-  }
-}
-
-/// Notifier that exposes resolution actions. All actions go through
-/// [SyncRepository] — no business logic lives in the UI.
-class ConflictNotifier extends StateNotifier<ConflictResolutionState> {
-  final SyncRepository _syncRepo;
-
-  ConflictNotifier(this._syncRepo) : super(const ConflictResolutionState());
-
-  Future<void> resolveKeepLocal(String mutationId) async {
-    state = state.copyWith(isLoading: true, error: null);
+  /// Resolve a conflict with the user's final edited content.
+  Future<void> resolveConflict(String mutationId, String finalContent) async {
+    state = const AsyncValue.loading();
     try {
-      await _syncRepo.resolveKeepLocal(mutationId);
-      state = const ConflictResolutionState();
-    } catch (e) {
-      state = ConflictResolutionState(error: e.toString());
-    }
-  }
-
-  Future<void> resolveAcceptRemote(String mutationId) async {
-    state = state.copyWith(isLoading: true, error: null);
-    try {
-      await _syncRepo.resolveAcceptRemote(mutationId);
-      state = const ConflictResolutionState();
-    } catch (e) {
-      state = ConflictResolutionState(error: e.toString());
-    }
-  }
-
-  Future<void> resolveManualEdit(
-    String mutationId,
-    String mergedContent,
-  ) async {
-    state = state.copyWith(isLoading: true, error: null);
-    try {
-      await _syncRepo.resolveManualEdit(mutationId, mergedContent);
-      state = const ConflictResolutionState();
-    } catch (e) {
-      state = ConflictResolutionState(error: e.toString());
+      final syncRepo = _ref.read(syncRepositoryProvider);
+      await syncRepo.resolveConflict(mutationId, finalContent);
+      state = const AsyncValue.data(null);
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
     }
   }
 }
 
 final conflictNotifierProvider =
-    StateNotifierProvider<ConflictNotifier, ConflictResolutionState>((ref) {
-      return ConflictNotifier(ref.watch(syncRepositoryProvider));
+    StateNotifierProvider<ConflictNotifier, AsyncValue<void>>((ref) {
+      return ConflictNotifier(ref);
     });

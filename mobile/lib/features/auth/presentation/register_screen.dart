@@ -157,12 +157,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withOpacity(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha:
                     0.5,
                   ),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: theme.colorScheme.outline.withOpacity(0.5),
+                    color: theme.colorScheme.outline.withValues(alpha:0.5),
                   ),
                 ),
                 child: Text(

@@ -17,7 +17,8 @@ from app.errors import (
 @pytest.fixture
 def svc(tmp_vault: Path):
     test_settings = Settings(vault_path=tmp_vault)
-    with patch("app.services.vault.settings", test_settings):
+    with patch("app.services.vault.settings", test_settings), \
+         patch("app.services.version_tracker.settings", test_settings):
         from app.services import vault
         yield vault
 
@@ -129,9 +130,11 @@ class TestCreateFile:
         with pytest.raises(PathAlreadyExistsError):
             svc.create_file("readme.md", content="duplicate")
 
-    def test_create_in_nonexistent_parent_fails(self, svc):
-        with pytest.raises(PathNotFoundError):
-            svc.create_file("Missing/file.md", content="orphan")
+    def test_create_in_nonexistent_parent_auto_creates(self, svc, tmp_vault):
+        # create_file auto-creates parent directories
+        result = svc.create_file("Missing/file.md", content="orphan")
+        assert result.name == "file.md"
+        assert (tmp_vault / "Missing" / "file.md").read_text(encoding="utf-8") == "orphan"
 
     def test_create_empty_file(self, svc, tmp_vault):
         result = svc.create_file("empty.md")

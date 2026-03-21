@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:developer' as developer;
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
@@ -34,8 +35,10 @@ class MutationQueue extends Table {
   IntColumn get retryCount => integer().withDefault(const Constant(0))();
   TextColumn get status => text()(); // 'pending', 'failed'
   IntColumn get baseVersion => integer()(); // Client's known server version
-  TextColumn get conflictFilePath => text()
-      .nullable()(); // Server conflict file path (set when status='failed' due to version conflict)
+  TextColumn get conflictFilePath =>
+      text().nullable()(); // DEPRECATED: kept for migration compatibility
+  TextColumn get localContentSnapshot => text()
+      .nullable()(); // Snapshot of local content at conflict detection time
 
   @override
   Set<Column> get primaryKey => {id};
@@ -49,7 +52,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration {
@@ -59,16 +62,11 @@ class AppDatabase extends _$AppDatabase {
       },
       onUpgrade: (Migrator m, int from, int to) async {
         if (from < 2) {
-          // Migration from v1 to v2: Add mutation_queue table
           await m.createTable(mutationQueue);
         }
         if (from < 3) {
-          // Migration from v2 to v3: Add version tracking columns
           await m.addColumn(fileCacheEntries, fileCacheEntries.serverVersion);
           await m.addColumn(mutationQueue, mutationQueue.baseVersion);
-
-          // Set default base_version for existing mutations
-          // Use server_version from file_cache if available, otherwise 1
           await customStatement('''
             UPDATE mutation_queue 
             SET base_version = COALESCE(
@@ -79,8 +77,10 @@ class AppDatabase extends _$AppDatabase {
           ''');
         }
         if (from < 4) {
-          // Migration from v3 to v4: Add conflict_file_path column for conflict resolution UI
           await m.addColumn(mutationQueue, mutationQueue.conflictFilePath);
+        }
+        if (from < 5) {
+          await m.addColumn(mutationQueue, mutationQueue.localContentSnapshot);
         }
       },
     );
@@ -224,27 +224,38 @@ class AppDatabase extends _$AppDatabase {
     }
   }
 
-  /// Mark a mutation as failed due to a version conflict, storing the server conflict file path.
-  Future<void> markMutationConflict(String id, String conflictFilePath) async {
+  /// Mark a mutation as failed due to a version conflict, storing
+  /// the local content snapshot for the conflict UI.
+  Future<void> markMutationAsConflict(
+    String id,
+    String localSnapshot,
+    int serverVersion,
+  ) async {
+    await (update(mutationQueue)..where((m) => m.id.equals(id))).write(
+      MutationQueueCompanion(
+        status: const Value('failed'),
+        localContentSnapshot: Value(localSnapshot),
+        baseVersion: Value(serverVersion),
+      ),
+    );
+  }
+
+  /// Update a mutation's base_version and reset it to pending so it can be retried.
+  /// Used after conflict resolution (keep-local or manual-edit flows).
+  Future<void> updateMutationBaseVersion(String id, int newBaseVersion) async {
     final mutation = await (select(
       mutationQueue,
     )..where((m) => m.id.equals(id))).getSingleOrNull();
 
     if (mutation != null) {
-      await (update(mutationQueue)..where((m) => m.id.equals(id))).write(
-        MutationQueueCompanion(
-          status: const Value('failed'),
-          retryCount: Value(mutation.retryCount + 1),
-          conflictFilePath: Value(conflictFilePath),
-        ),
+      developer.log(
+        '[DB:UPDATE_BASE_VERSION] id=$id path=${mutation.path} '
+        'baseVersion:${mutation.baseVersion}→$newBaseVersion status:${mutation.status}→pending',
+        name: 'AppDatabase',
       );
     }
-  }
 
-  /// Update a mutation's base_version and reset it to pending so it can be retried.
-  /// Used after conflict resolution (keep-local or manual-edit flows).
-  Future<void> updateMutationBaseVersion(String id, int newBaseVersion) {
-    return (update(mutationQueue)..where((m) => m.id.equals(id))).write(
+    await (update(mutationQueue)..where((m) => m.id.equals(id))).write(
       MutationQueueCompanion(
         status: const Value('pending'),
         baseVersion: Value(newBaseVersion),
@@ -254,8 +265,20 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Reset a failed mutation back to pending status.
-  Future<void> resetMutation(String id) {
-    return (update(mutationQueue)..where((m) => m.id.equals(id))).write(
+  Future<void> resetMutation(String id) async {
+    final mutation = await (select(
+      mutationQueue,
+    )..where((m) => m.id.equals(id))).getSingleOrNull();
+
+    if (mutation != null) {
+      developer.log(
+        '[DB:RESET_MUTATION] id=$id path=${mutation.path} '
+        'baseVersion:${mutation.baseVersion} status:${mutation.status}→pending',
+        name: 'AppDatabase',
+      );
+    }
+
+    await (update(mutationQueue)..where((m) => m.id.equals(id))).write(
       const MutationQueueCompanion(status: Value('pending')),
     );
   }

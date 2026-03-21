@@ -10,9 +10,18 @@ final explorerRepositoryProvider = Provider<ExplorerRepository>((ref) {
 /// Tracks the current directory path for navigation.
 final currentDirectoryProvider = StateProvider<String>((ref) => '');
 
+/// Whether to show hidden files (names starting with '.').
+final showHiddenFilesProvider = StateProvider<bool>((ref) => false);
+
 /// Provides the list of entries in the current directory.
 final directoryEntriesProvider = FutureProvider<List<FileEntry>>((ref) async {
   final currentDir = ref.watch(currentDirectoryProvider);
+  final showHidden = ref.watch(showHiddenFilesProvider);
   final repo = ref.read(explorerRepositoryProvider);
-  return repo.listDirectory(currentDir);
+  final entries = await repo.listDirectory(currentDir);
+
+  if (showHidden) return entries;
+
+  // Hide files/folders whose name starts with '.'
+  return entries.where((e) => !e.name.startsWith('.')).toList();
 });

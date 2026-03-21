@@ -63,6 +63,38 @@ class TestBuildServerManifest:
         manifest = sync.build_server_manifest()
         assert manifest == {}
 
+    def test_disk_modification_bumps_version(self, vault_settings, tmp_vault):
+        """When a file is modified on disk outside the API, build_server_manifest
+        should detect the change and auto-bump the version."""
+        from app.services import sync
+        from app.services.version_tracker import VersionTracker
+
+        # First build — initializes version tracking
+        manifest1 = sync.build_server_manifest()
+        assert "readme.md" in manifest1
+        v1 = manifest1["readme.md"]["version"]
+
+        # Modify the file on disk (simulates laptop editing outside the API)
+        readme = tmp_vault / "readme.md"
+        readme.write_text("modified content", encoding="utf-8")
+
+        # Second build — should detect the change and bump version
+        manifest2 = sync.build_server_manifest()
+        v2 = manifest2["readme.md"]["version"]
+        assert v2 > v1, f"Version should have increased: {v2} > {v1}"
+        assert manifest2["readme.md"]["content_hash"] == sha256hex(b"modified content")
+
+    def test_unmodified_file_keeps_version(self, vault_settings, tmp_vault):
+        """When a file is NOT modified between builds, the version stays the same."""
+        from app.services import sync
+
+        manifest1 = sync.build_server_manifest()
+        v1 = manifest1["readme.md"]["version"]
+
+        manifest2 = sync.build_server_manifest()
+        v2 = manifest2["readme.md"]["version"]
+        assert v2 == v1, f"Version should stay the same: {v2} == {v1}"
+
 
 class TestDiffManifests:
     def test_client_only_files_to_push(self, vault_settings):
@@ -110,7 +142,7 @@ class TestDiffManifests:
         assert conflicts == []
 
     def test_version_match_different_hash_to_push(self, vault_settings):
-        """Client and server have same version but different hash → push (client has new changes)"""
+        """Client and server have same version but different hash → push (only mobile changed)"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-02-01T00:00:00Z", "version": 5},
@@ -128,8 +160,206 @@ class TestDiffManifests:
         assert to_pull == []
         assert conflicts == []
 
+    def test_server_ahead_mobile_untouched_to_pull(self, vault_settings):
+        """Server version ahead, mobile hash matches prev_hash → only server changed → pull"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:old", "last_modified": "2026-01-01T00:00:00Z", "version": 2},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:new",
+                "last_modified": datetime(2026, 2, 1, tzinfo=timezone.utc),
+                "version": 3,
+                "prev_hash": "sha256:old",  # matches mobile's hash
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert "file.md" in to_pull
+        assert conflicts == []
+
+    def test_server_ahead_mobile_also_changed_conflict(self, vault_settings):
+        """Server version ahead, mobile hash differs from prev_hash → both changed → conflict"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:mobile_edit", "last_modified": "2026-02-01T00:00:00Z", "version": 2},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:server_edit",
+                "last_modified": datetime(2026, 2, 1, tzinfo=timezone.utc),
+                "version": 3,
+                "prev_hash": "sha256:old",  # differs from mobile's hash
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert to_pull == []
+        assert "file.md" in conflicts
+
+    def test_server_ahead_no_prev_hash_conflict(self, vault_settings):
+        """Server version ahead but no prev_hash available → safe fallback to conflict"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:client", "last_modified": "2026-02-01T00:00:00Z", "version": 2},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:server",
+                "last_modified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "version": 3,
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert to_pull == []
+        assert "file.md" in conflicts
+
+    # --- has_local_changes flag tests ---
+
+    def test_has_local_changes_false_server_ahead_pull(self, vault_settings):
+        """Mobile reports no local changes + server ahead → pull"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:old", "last_modified": "2026-01-01T00:00:00Z", "version": 2, "has_local_changes": False},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:new",
+                "last_modified": datetime(2026, 2, 1, tzinfo=timezone.utc),
+                "version": 3,
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert "file.md" in to_pull
+        assert conflicts == []
+
+    def test_has_local_changes_true_server_ahead_conflict(self, vault_settings):
+        """Mobile reports local changes + server ahead → conflict"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:mobile_edit", "last_modified": "2026-02-01T00:00:00Z", "version": 2, "has_local_changes": True},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:server_edit",
+                "last_modified": datetime(2026, 2, 1, tzinfo=timezone.utc),
+                "version": 3,
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert to_pull == []
+        assert "file.md" in conflicts
+
+    def test_has_local_changes_false_overrides_prev_hash_mismatch(self, vault_settings):
+        """has_local_changes=False takes priority over prev_hash mismatch → pull"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:old_v1", "last_modified": "2026-01-01T00:00:00Z", "version": 2, "has_local_changes": False},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:new",
+                "last_modified": datetime(2026, 2, 1, tzinfo=timezone.utc),
+                "version": 5,
+                "prev_hash": "sha256:old_v4",  # Doesn't match client hash (multi-version jump)
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert "file.md" in to_pull
+        assert conflicts == []
+
+    def test_has_local_changes_multi_version_jump_pull(self, vault_settings):
+        """Client 3 versions behind, no local changes → pull (prev_hash alone would fail here)"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:v2", "last_modified": "2026-01-01T00:00:00Z", "version": 2, "has_local_changes": False},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:v5",
+                "last_modified": datetime(2026, 2, 1, tzinfo=timezone.utc),
+                "version": 5,
+                "prev_hash": "sha256:v4",  # Only one step back, won't match v2
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert "file.md" in to_pull
+        assert conflicts == []
+
+    def test_has_local_changes_none_falls_back_to_prev_hash(self, vault_settings):
+        """No has_local_changes flag → falls back to prev_hash comparison"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:old", "last_modified": "2026-01-01T00:00:00Z", "version": 2},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:new",
+                "last_modified": datetime(2026, 2, 1, tzinfo=timezone.utc),
+                "version": 3,
+                "prev_hash": "sha256:old",  # Matches client hash → pull
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert to_push == []
+        assert "file.md" in to_pull
+        assert conflicts == []
+
+    def test_has_local_changes_false_same_version_still_push(self, vault_settings):
+        """has_local_changes=False but same version + different hash → push (hash mismatch is on mobile side)"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:mobile", "last_modified": "2026-02-01T00:00:00Z", "version": 3, "has_local_changes": False},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:server",
+                "last_modified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "version": 3,
+            },
+        }
+        # Same version → push (the has_local_changes check only applies when client_version < server_version)
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert "file.md" in to_push
+        assert to_pull == []
+        assert conflicts == []
+
+    def test_client_version_ahead_to_push(self, vault_settings):
+        """Client version > server version (abnormal) → push to recover"""
+        from app.services import sync
+        client = [
+            {"path": "file.md", "content_hash": "sha256:client", "last_modified": "2026-02-01T00:00:00Z", "version": 5},
+        ]
+        server = {
+            "file.md": {
+                "path": "file.md",
+                "content_hash": "sha256:server",
+                "last_modified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "version": 3,
+            },
+        }
+        to_push, to_pull, conflicts = sync.diff_manifests(client, server)
+        assert "file.md" in to_push
+        assert to_pull == []
+        assert conflicts == []
+
     def test_version_mismatch_conflict(self, vault_settings):
-        """Client version != server version → conflict (concurrent edit detected)"""
+        """Client version < server version, no prev_hash → conflict"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:client", "last_modified": "2026-02-01T00:00:00Z", "version": 3},
@@ -148,7 +378,7 @@ class TestDiffManifests:
         assert "file.md" in conflicts
 
     def test_version_mismatch_even_with_newer_timestamp(self, vault_settings):
-        """Version mismatch triggers conflict even if client timestamp is newer"""
+        """Version mismatch with no prev_hash triggers conflict even if client timestamp is newer"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:client", "last_modified": "2026-03-01T00:00:00Z", "version": 2},
@@ -166,8 +396,8 @@ class TestDiffManifests:
         assert to_pull == []
         assert "file.md" in conflicts
 
-    def test_fallback_to_timestamp_when_no_version(self, vault_settings):
-        """Falls back to timestamp comparison when version info is missing"""
+    def test_fallback_no_version_different_hash_conflict(self, vault_settings):
+        """No version info, different hashes → conflict (both sides exist with different content)"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-02-01T00:00:00Z"},
@@ -180,11 +410,12 @@ class TestDiffManifests:
             },
         }
         to_push, to_pull, conflicts = sync.diff_manifests(client, server)
-        assert "file.md" in to_push
+        assert to_push == []
         assert to_pull == []
-        assert conflicts == []
+        assert "file.md" in conflicts
 
-    def test_client_newer_to_push(self, vault_settings):
+    def test_client_newer_different_hash_conflict(self, vault_settings):
+        """Client newer timestamp, different hashes → conflict (both sides exist)"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-02-01T00:00:00Z"},
@@ -197,10 +428,12 @@ class TestDiffManifests:
             },
         }
         to_push, to_pull, conflicts = sync.diff_manifests(client, server)
-        assert "file.md" in to_push
+        assert to_push == []
         assert to_pull == []
+        assert "file.md" in conflicts
 
-    def test_server_newer_to_pull(self, vault_settings):
+    def test_server_newer_different_hash_conflict(self, vault_settings):
+        """Server newer timestamp, different hashes → conflict (both sides exist)"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:old", "last_modified": "2026-01-01T00:00:00Z"},
@@ -214,7 +447,8 @@ class TestDiffManifests:
         }
         to_push, to_pull, conflicts = sync.diff_manifests(client, server)
         assert to_push == []
-        assert "file.md" in to_pull
+        assert to_pull == []
+        assert "file.md" in conflicts
 
     def test_equal_timestamps_different_hash_conflict(self, vault_settings):
         from app.services import sync
@@ -253,7 +487,7 @@ class TestDiffManifests:
         assert "file.md" in conflicts
 
     def test_timestamps_outside_tolerance_client_newer(self, vault_settings):
-        """Timestamps >2 seconds apart, client newer → push"""
+        """Different hashes, both sides exist → conflict regardless of timestamps"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-01-15T12:00:05Z"},
@@ -266,12 +500,12 @@ class TestDiffManifests:
             },
         }
         to_push, to_pull, conflicts = sync.diff_manifests(client, server)
-        assert "file.md" in to_push
+        assert to_push == []
         assert to_pull == []
-        assert conflicts == []
+        assert "file.md" in conflicts
 
     def test_timestamps_outside_tolerance_server_newer(self, vault_settings):
-        """Timestamps >2 seconds apart, server newer → pull"""
+        """Different hashes, both sides exist → conflict regardless of timestamps"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:old", "last_modified": "2026-01-15T12:00:00Z"},
@@ -285,8 +519,8 @@ class TestDiffManifests:
         }
         to_push, to_pull, conflicts = sync.diff_manifests(client, server)
         assert to_push == []
-        assert "file.md" in to_pull
-        assert conflicts == []
+        assert to_pull == []
+        assert "file.md" in conflicts
 
     def test_tolerance_boundary_exactly_2_seconds(self, vault_settings):
         """Exactly 2 seconds difference → conflict (within tolerance)"""
@@ -307,7 +541,7 @@ class TestDiffManifests:
         assert "file.md" in conflicts
 
     def test_tolerance_boundary_just_over_2_seconds(self, vault_settings):
-        """Just over 2 seconds → push (outside tolerance)"""
+        """Different hashes, both sides exist → conflict regardless of timestamp difference"""
         from app.services import sync
         client = [
             {"path": "file.md", "content_hash": "sha256:new", "last_modified": "2026-01-15T12:00:02.1Z"},
@@ -320,9 +554,9 @@ class TestDiffManifests:
             },
         }
         to_push, to_pull, conflicts = sync.diff_manifests(client, server)
-        assert "file.md" in to_push
+        assert to_push == []
         assert to_pull == []
-        assert conflicts == []
+        assert "file.md" in conflicts
 
     def test_tolerance_with_custom_setting(self, vault_settings):
         """Test with custom tolerance setting"""
@@ -365,10 +599,11 @@ class TestDiffManifests:
         }
         to_push, to_pull, conflicts = sync.diff_manifests(client, server)
         assert "client_only.md" in to_push
-        assert "client_newer.md" in to_push
         assert "server_only.md" in to_pull
-        assert "server_newer.md" in to_pull
-        assert conflicts == []
+        assert "client_newer.md" in conflicts
+        assert "server_newer.md" in conflicts
+        assert len(to_push) == 1  # only client_only.md
+        assert len(to_pull) == 1  # only server_only.md
 
 
 class TestPushFile:
@@ -433,9 +668,9 @@ class TestPushFile:
         result_path, is_conflict, version = sync.push_file("version_test.md", client_update, mtime3, base_version=1)
         
         assert is_conflict
-        assert "_conflict_" in result_path
-        assert version is None
-        # Server version should be preserved
+        assert result_path == "version_test.md"  # Returns original path
+        assert version == 2  # Returns current server version
+        # Server version should be preserved (no overwrite on conflict)
         assert (tmp_vault / "version_test.md").read_bytes() == server_update
 
     def test_push_version_mismatch_even_with_newer_timestamp(self, vault_settings, tmp_vault):
@@ -457,8 +692,8 @@ class TestPushFile:
         )
         
         assert is_conflict
-        assert "_conflict_" in result_path
-        assert version is None
+        assert result_path == "file.md"  # Returns original path
+        assert version == 2  # Returns current server version
 
     def test_push_identical_hash_returns_current_version(self, vault_settings, tmp_vault):
         from app.services import sync
@@ -496,7 +731,7 @@ class TestPushFile:
         )
         
         assert is_conflict
-        assert "_conflict_" in result_path
+        assert result_path == "file.md"  # Returns original path
 
     def test_push_overwrites_when_client_newer(self, vault_settings, tmp_vault):
         from app.services import sync
@@ -519,8 +754,8 @@ class TestPushFile:
         different_data = b"# Different content from client"
         result_path, is_conflict, version = sync.push_file("readme.md", different_data, server_mtime)
         assert is_conflict
-        assert "_conflict_" in result_path
-        assert version is None
+        assert result_path == "readme.md"  # Returns original path
+        assert version is not None  # Returns current server version
         assert (tmp_vault / "readme.md").read_text(encoding="utf-8") == "# JARVIS Vault"
 
     def test_push_conflict_within_tolerance(self, vault_settings, tmp_vault):
@@ -534,8 +769,8 @@ class TestPushFile:
         different_data = b"# Different content from client"
         result_path, is_conflict, version = sync.push_file("readme.md", different_data, client_mtime)
         assert is_conflict
-        assert "_conflict_" in result_path
-        assert version is None
+        assert result_path == "readme.md"  # Returns original path
+        assert version is not None  # Returns current server version
         assert (tmp_vault / "readme.md").read_text(encoding="utf-8") == "# JARVIS Vault"
 
     def test_push_overwrites_outside_tolerance(self, vault_settings, tmp_vault):
@@ -562,8 +797,8 @@ class TestPushFile:
         assert version == 1
         assert (tmp_vault / "Deep" / "Nested" / "file.md").exists()
 
-    def test_push_conflict_file_gets_version_tracking(self, vault_settings, tmp_vault):
-        """Conflict files should also get version tracking"""
+    def test_push_conflict_preserves_version_tracking(self, vault_settings, tmp_vault):
+        """On conflict, original file's version tracking is unchanged"""
         from app.services import sync
         from app.services.version_tracker import VersionTracker
         
@@ -571,8 +806,8 @@ class TestPushFile:
         sync.push_file("file.md", b"# V1", datetime(2026, 1, 1, tzinfo=timezone.utc))
         sync.push_file("file.md", b"# V2", datetime(2026, 2, 1, tzinfo=timezone.utc), base_version=1)
         
-        # Create conflict
-        conflict_path, is_conflict, _ = sync.push_file(
+        # Attempt conflicting push
+        result_path, is_conflict, version = sync.push_file(
             "file.md",
             b"# Conflict",
             datetime(2026, 3, 1, tzinfo=timezone.utc),
@@ -580,11 +815,12 @@ class TestPushFile:
         )
         
         assert is_conflict
+        assert result_path == "file.md"
+        assert version == 2  # Returns current server version
         
-        # Conflict file should have version tracking
+        # Original file's version should be unchanged
         tracker = VersionTracker()
-        conflict_version = tracker.get_version(conflict_path)
-        assert conflict_version == 1
+        assert tracker.get_version("file.md") == 2
 
 
 class TestPullFile:
@@ -717,7 +953,7 @@ class TestSyncPushEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert len(data["conflicts"]) == 1
-        assert "_conflict_" in data["conflicts"][0]["path"]
+        assert data["conflicts"][0]["path"] == "readme.md"  # Returns original path
         assert data["accepted"] == []
 
 
@@ -731,6 +967,34 @@ class TestSyncPullEndpoint:
         assert response.status_code == 200
         assert response.content == b"# JARVIS Vault"
         assert "Content-Disposition" in response.headers
+
+    def test_pull_includes_version_header(self, client, auth_headers, tmp_vault):
+        """X-File-Version header must be present with a valid integer version."""
+        # First push a file so it has a known version in the tracker
+        meta = json.dumps({
+            "path": "versioned_pull.md",
+            "content_hash": sha256hex(b"# Versioned content"),
+            "last_modified": "2026-02-25T12:00:00Z",
+        })
+        push_resp = client.post(
+            "/sync/push",
+            data={"metadata": meta},
+            files={"file": ("versioned_pull.md", io.BytesIO(b"# Versioned content"), "application/octet-stream")},
+            headers=auth_headers,
+        )
+        assert push_resp.status_code == 200
+        pushed_version = push_resp.json()["accepted"][0]["version"]
+
+        # Now pull and verify the header
+        response = client.post(
+            "/sync/pull",
+            json={"path": "versioned_pull.md"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert "X-File-Version" in response.headers
+        header_version = int(response.headers["X-File-Version"])
+        assert header_version == pushed_version
 
     def test_pull_nonexistent_returns_404(self, client, auth_headers):
         response = client.post(

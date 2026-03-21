@@ -42,10 +42,23 @@ class SyncRepository {
   /// Build a manifest from local SQLite file entries.
   Future<List<Map<String, dynamic>>> buildLocalManifest() async {
     final files = await _explorerRepo.getAllFiles();
-    return files
-        .where((f) => f.isFile && f.contentHash != null)
-        .map((f) => f.toManifestEntry())
-        .toList();
+
+    // Determine which paths have local changes (pending or failed mutations).
+    final pendingPaths = <String>{};
+    final pending = await _db.getPendingMutations();
+    final failed = await _db.getFailedMutations();
+    for (final m in pending) {
+      pendingPaths.add(m.path);
+    }
+    for (final m in failed) {
+      pendingPaths.add(m.path);
+    }
+
+    return files.where((f) => f.isFile && f.contentHash != null).map((f) {
+      final entry = f.toManifestEntry();
+      entry['has_local_changes'] = pendingPaths.contains(f.path);
+      return entry;
+    }).toList();
   }
 
   /// Full sync flow: process mutation queue → manifest diff → push → pull.
@@ -54,8 +67,10 @@ class SyncRepository {
       int pushed = 0;
       int pulled = 0;
       final conflictPaths = <String>[];
-      // FIX Bug C: track paths fully handled in Phase 1 so Phase 3 skips them.
+      // Track paths handled in Phase 1 so Phase 3 skips them.
       final processedPaths = <String>{};
+      // Track paths that already have a conflict row to prevent duplicates.
+      final conflictedPaths = <String>{};
 
       // PHASE 1: Process mutation queue first
       final pendingMutations = await _db.getPendingMutations();
@@ -96,6 +111,12 @@ class SyncRepository {
               continue;
             }
 
+            log(
+              '[PUSH:PHASE1] Pushing mutation mutationId=${mutation.id} '
+              'path=${mutation.path} baseVersion=${mutation.baseVersion}',
+              name: 'SyncRepository',
+            );
+
             final pushResult = await _pushFile(
               mutation.path,
               file,
@@ -103,18 +124,35 @@ class SyncRepository {
               mutation.baseVersion,
             );
 
+            log(
+              '[PUSH:PHASE1:RESULT] mutationId=${mutation.id} path=${mutation.path} '
+              'is_conflict=${pushResult['is_conflict']} result=$pushResult',
+              name: 'SyncRepository',
+            );
+
             if (pushResult['is_conflict'] == true) {
-              // Mark mutation as failed with conflict file path
-              final conflictPath =
-                  pushResult['conflict_file_path'] as String? ?? '';
-              if (conflictPath.isNotEmpty) {
-                await _db.markMutationConflict(mutation.id, conflictPath);
-              } else {
-                await _db.markMutationFailed(mutation.id);
-              }
-              conflictPaths.add(pushResult['path'] as String);
+              // Read local content BEFORE we do anything else
+              final localContent = await file.readAsString();
+              final serverVer = pushResult['server_version'] as int? ?? 1;
+              log(
+                '[PUSH:PHASE1:CONFLICT] mutationId=${mutation.id} '
+                'path=${mutation.path} serverVersion=$serverVer',
+                name: 'SyncRepository',
+              );
+              await _db.markMutationAsConflict(
+                mutation.id,
+                localContent,
+                serverVer,
+              );
+              conflictPaths.add(mutation.path);
+              conflictedPaths.add(mutation.path);
             } else {
               // Success - remove from queue and update last_synced + server_version
+              log(
+                '[PUSH:PHASE1:SUCCESS] mutationId=${mutation.id} path=${mutation.path} '
+                'newVersion=${pushResult['version']}',
+                name: 'SyncRepository',
+              );
               await _db.removeMutation(mutation.id);
               final newVersion = pushResult['version'] as int;
               await _db.upsertEntry(
@@ -143,7 +181,17 @@ class SyncRepository {
 
       // PHASE 2: Build local manifest and send to server
       final localManifest = await buildLocalManifest();
+      log(
+        '[SYNC:P2] LOCAL MANIFEST — files=${localManifest.length} '
+        'entries=${localManifest.map((e) => "${e['path']}:v${e['serverVersion']}").join(", ")}',
+        name: 'SyncRepository',
+      );
+
       final diffResponse = await _postManifest(localManifest);
+      log(
+        '[SYNC:P2] MANIFEST DIFF RESPONSE raw=$diffResponse',
+        name: 'SyncRepository',
+      );
 
       // FIX: Null-safe JSON parsing - server may omit empty arrays
       final toPush = ((diffResponse['to_push'] as List?) ?? [])
@@ -152,9 +200,18 @@ class SyncRepository {
       final toPull = ((diffResponse['to_pull'] as List?) ?? [])
           .map((e) => e['path'] as String)
           .toList();
-      final conflicts = ((diffResponse['conflicts'] as List?) ?? [])
+      // Parse conflicts with server version for each path.
+      final conflictEntries = ((diffResponse['conflicts'] as List?) ?? [])
+          .cast<Map<String, dynamic>>();
+      final conflicts = conflictEntries
           .map((e) => e['path'] as String)
           .toList();
+      // Map from conflict path → server version (for correct baseVersion).
+      final conflictServerVersions = <String, int>{};
+      for (final e in conflictEntries) {
+        final v = e['version'];
+        if (v != null) conflictServerVersions[e['path'] as String] = v as int;
+      }
 
       log(
         '[SYNC] MANIFEST diff — toPush:${toPush.length} '
@@ -163,51 +220,63 @@ class SyncRepository {
         name: 'SyncRepository',
       );
 
-      // FIX Bug B: persist each manifest-diff conflict as a synthetic failed
-      // mutation row so the UI can display it and resolution flows are reachable.
-      // Only create a row when no existing row (pending or failed) covers the path.
-      for (final conflictPath in conflicts) {
-        conflictPaths.add(conflictPath);
+      // Persist manifest-diff conflicts as synthetic mutation rows.
+      // Skip paths already conflicted in Phase 1 to prevent duplicates.
+      for (final cp in conflicts) {
+        if (conflictedPaths.contains(cp)) {
+          log(
+            '[SYNC:P2] skip $cp (already conflicted in Phase 1)',
+            name: 'SyncRepository',
+          );
+          continue;
+        }
 
-        // Check for any existing mutation row for this path (pending or failed).
-        // IMPORTANT: Query DB again here (not using cached lists from start of sync)
-        // because Phase 1 may have modified the mutation queue.
+        // Double-check DB for any existing row for this path.
         final currentPending = await _db.getPendingMutations();
         final currentFailed = await _db.getFailedMutations();
-        
-        final pendingForPath = currentPending.any((m) => m.path == conflictPath);
-        final failedForPath = currentFailed.any((m) => m.path == conflictPath);
+        final hasRow =
+            currentPending.any((m) => m.path == cp) ||
+            currentFailed.any((m) => m.path == cp);
 
-        if (!pendingForPath && !failedForPath) {
-          // No existing row — create a conflict placeholder.
-          final entry = await _explorerRepo.getEntry(conflictPath);
-          final baseVer = entry?.serverVersion ?? 1;
-          final syntheticId =
-              'manifest-conflict-${DateTime.now().millisecondsSinceEpoch}'
-              '-${conflictPath.hashCode.abs()}';
-
-          await _db.enqueueMutation(
-            id: syntheticId,
-            path: conflictPath,
-            operation: 'update',
-            timestamp: DateTime.now().toUtc().toIso8601String(),
-            baseVersion: baseVer,
-          );
-          // Immediately mark failed (conflict placeholder — never auto-pushed).
-          await _db.markMutationFailed(syntheticId);
-
+        if (hasRow) {
+          // Row already exists — count it (it's a real conflict from Phase 1)
+          conflictPaths.add(cp);
           log(
-            '[SYNC:P2] manifest conflict persisted — path=$conflictPath '
-            'id=$syntheticId baseVersion=$baseVer',
+            '[SYNC:P2] skip $cp (existing mutation row)',
             name: 'SyncRepository',
           );
-        } else {
-          log(
-            '[SYNC:P2] manifest conflict already has mutation row — '
-            'path=$conflictPath (skipCreate)',
-            name: 'SyncRepository',
-          );
+          continue;
         }
+
+        // Read local content for snapshot
+        String localSnapshot = '';
+        final entry = await _explorerRepo.getEntry(cp);
+        if (entry?.localPath != null) {
+          final f = File(entry!.localPath!);
+          if (f.existsSync()) localSnapshot = await f.readAsString();
+        }
+
+        final baseVer = conflictServerVersions[cp] ?? entry?.serverVersion ?? 1;
+        final syntheticId =
+            'conflict-${DateTime.now().millisecondsSinceEpoch}'
+            '-${cp.hashCode.abs()}';
+
+        await _db.enqueueMutation(
+          id: syntheticId,
+          path: cp,
+          operation: 'update',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          baseVersion: baseVer,
+        );
+        // Mark as conflict with local snapshot
+        await _db.markMutationAsConflict(syntheticId, localSnapshot, baseVer);
+        conflictedPaths.add(cp);
+        conflictPaths.add(cp); // Only count after row is persisted
+
+        log(
+          '[SYNC:P2] conflict persisted path=$cp id=$syntheticId',
+          name: 'SyncRepository',
+        );
       }
 
       // PHASE 3: Push remaining files (from manifest diff)
@@ -216,6 +285,14 @@ class SyncRepository {
         if (processedPaths.contains(path)) {
           log(
             '[SYNC:P3] skipping path=$path (already handled in Phase 1)',
+            name: 'SyncRepository',
+          );
+          continue;
+        }
+        // Guard: never auto-push a path the server flagged as conflicted.
+        if (conflictedPaths.contains(path)) {
+          log(
+            '[SYNC:P3] skipping path=$path (flagged as conflict)',
             name: 'SyncRepository',
           );
           continue;
@@ -320,7 +397,7 @@ class SyncRepository {
       final cacheEntry = await _db.getEntry(path);
       final sqliteServerVersion = cacheEntry?.serverVersion ?? 'null';
       log(
-        '[PUSH] path=$path baseVersion=$baseVersion '
+        '[PUSH:PRE] path=$path baseVersion=$baseVersion '
         'sqliteServerVersion=$sqliteServerVersion',
         name: 'SyncRepository',
       );
@@ -335,6 +412,11 @@ class SyncRepository {
         'base_version': baseVersion,
       });
 
+      log(
+        '[PUSH:PAYLOAD] path=$path metadata=$metadata',
+        name: 'SyncRepository',
+      );
+
       final formData = FormData.fromMap({
         'metadata': metadata,
         'file': MultipartFile.fromBytes(bytes, filename: p.basename(path)),
@@ -343,39 +425,40 @@ class SyncRepository {
       final response = await _apiClient.dio.post('/sync/push', data: formData);
       final data = response.data as Map<String, dynamic>;
 
-      // FIX: Null-safe JSON parsing
+      log('[PUSH:RESPONSE] raw=$data', name: 'SyncRepository');
+
+      // Parse conflict response
       final conflicts = (data['conflicts'] as List?) ?? [];
       if (conflicts.isNotEmpty) {
-        final conflictEntry = conflicts.first;
-        final conflictFilePath = conflictEntry['path'] as String? ?? '';
+        final conflictEntry = conflicts.first as Map<String, dynamic>;
+        final serverVersion = conflictEntry['version'] as int? ?? 1;
         log(
-          '[PUSH] response — isConflict:true conflictPath:$conflictFilePath '
-          'version:null raw:$data',
+          '[PUSH:CONFLICT] path=$path serverVersion=$serverVersion',
           name: 'SyncRepository',
         );
         return {
           'is_conflict': true,
           'path': path,
-          'conflict_file_path': conflictFilePath,
+          'server_version': serverVersion,
         };
       }
 
       // Extract new version from successful push
-      final pushed = (data['pushed'] as List?) ?? [];
-      if (pushed.isNotEmpty) {
-        final pushEntry = pushed.first as Map<String, dynamic>;
+      final accepted = (data['accepted'] as List?) ?? [];
+      if (accepted.isNotEmpty) {
+        final pushEntry = accepted.first as Map<String, dynamic>;
         final newVersion = pushEntry['version'] ?? baseVersion + 1;
         log(
-          '[PUSH] response — isConflict:false conflictPath:null '
-          'version:$newVersion raw:$data',
+          '[PUSH:SUCCESS] path=$path baseVersion=$baseVersion '
+          'newVersion=$newVersion',
           name: 'SyncRepository',
         );
         return {'is_conflict': false, 'path': path, 'version': newVersion};
       }
 
       log(
-        '[PUSH] response — isConflict:false conflictPath:null '
-        'version:${baseVersion + 1} raw:$data (empty pushed list)',
+        '[PUSH:SUCCESS:EMPTY] path=$path baseVersion=$baseVersion '
+        'version:${baseVersion + 1} (empty pushed list)',
         name: 'SyncRepository',
       );
       return {'is_conflict': false, 'path': path, 'version': baseVersion + 1};
@@ -455,6 +538,26 @@ class SyncRepository {
     }
   }
 
+  /// Fetch file content from the server without saving to disk.
+  /// Used by the conflict detail screen to display the remote version.
+  Future<String?> fetchRemoteContent(String path) async {
+    try {
+      final response = await _apiClient.dio.post(
+        '/sync/pull',
+        data: {'path': path},
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final bytes = response.data as List<int>;
+      return utf8.decode(bytes);
+    } on DioException catch (e) {
+      log(
+        '[FETCH_REMOTE] Failed to fetch remote content for path=$path: $e',
+        name: 'SyncRepository',
+      );
+      return null;
+    }
+  }
+
   /// DELETE /files/{path} — delete file on server.
   Future<void> _deleteFile(String path) async {
     try {
@@ -465,56 +568,122 @@ class SyncRepository {
   }
 
   // ---------------------------------------------------------------------------
+  // Testing Utilities
+  // ---------------------------------------------------------------------------
+
+  /// Nuclear reset: wipe server vault, local mirror, SQLite cache, and
+  /// mutation queue. Used for testing the sync pipeline from a clean state.
+  Future<void> resetEverything() async {
+    try {
+      // 1. Wipe server vault + version tracker
+      await _apiClient.dio.post('/files/reset');
+      log('[RESET] Server vault wiped', name: 'SyncRepository');
+
+      // 2. Delete local mirror directory
+      final mirror = await _mirrorDir();
+      if (mirror.existsSync()) {
+        mirror.deleteSync(recursive: true);
+        log('[RESET] Local mirror deleted', name: 'SyncRepository');
+      }
+
+      // 3. Clear SQLite file cache
+      await _db.deleteAllEntries();
+      log('[RESET] SQLite file cache cleared', name: 'SyncRepository');
+
+      // 4. Clear mutation queue
+      await _db.clearAllMutations();
+      log('[RESET] Mutation queue cleared', name: 'SyncRepository');
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// Create a file on the server and pull it to the local mirror.
+  /// Returns the server-assigned path.
+  Future<String> createFileOnServer(String path, String content) async {
+    try {
+      final response = await _apiClient.dio.post(
+        '/files/$path',
+        data: {'content': content, 'type': 'file'},
+      );
+      final data = response.data as Map<String, dynamic>;
+      final serverPath = data['path'] as String;
+
+      log(
+        '[CREATE] File created on server: $serverPath',
+        name: 'SyncRepository',
+      );
+
+      // Pull it locally so it appears immediately in the explorer
+      await _pullFile(serverPath);
+
+      return serverPath;
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// Create a directory on the server with a .gitkeep placeholder so
+  /// it appears on mobile (which infers directories from file paths).
+  Future<String> createFolderOnServer(String path) async {
+    try {
+      // 1. Create the directory on the server
+      final response = await _apiClient.dio.post(
+        '/files/$path',
+        data: {'content': '', 'type': 'directory'},
+      );
+      final data = response.data as Map<String, dynamic>;
+      final serverPath = data['path'] as String;
+
+      // 2. Create a .gitkeep inside so the folder is visible on mobile
+      final keepPath = '$serverPath/.gitkeep';
+      await _apiClient.dio.post(
+        '/files/$keepPath',
+        data: {'content': '', 'type': 'file'},
+      );
+
+      // 3. Pull the .gitkeep locally so the directory shows in explorer
+      await _pullFile(keepPath);
+
+      log(
+        '[CREATE] Folder created on server: $serverPath (with .gitkeep)',
+        name: 'SyncRepository',
+      );
+
+      return serverPath;
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Conflict Resolution
   // ---------------------------------------------------------------------------
 
-  /// Keep-local resolution: re-queue the failed mutation with the latest
-  /// server version so the next sync will push the local content.
-  /// Does NOT push immediately — sync remains centralized in [performSync].
-  Future<void> resolveKeepLocal(String mutationId) async {
+  /// Unified conflict resolution.
+  /// Writes [finalContent] to the local mirror, updates SQLite, and
+  /// resets the mutation to 'pending' so the next sync pushes it.
+  Future<void> resolveConflict(String mutationId, String finalContent) async {
     final mutation = await _db.getMutationById(mutationId);
     if (mutation == null) return;
 
-    // Fetch the current server version for this file from the local cache
-    final cacheEntry = await _db.getEntry(mutation.path);
-    final latestServerVersion =
-        cacheEntry?.serverVersion ?? mutation.baseVersion;
+    // 1. Get server version — use the mutation's stored baseVersion (which
+    //    came from the manifest conflict response) as a reliable source.
+    //    Fall back to fetching from server if needed.
+    int serverVersion = mutation.baseVersion;
+    final fetchedVersion = await _fetchServerVersion(mutation.path);
+    if (fetchedVersion > serverVersion) {
+      serverVersion = fetchedVersion;
+    }
 
-    await _db.updateMutationBaseVersion(mutationId, latestServerVersion);
-  }
-
-  /// Accept-remote resolution: fetch the conflict file's content from the
-  /// server, overwrite the local mirror at the original path, update SQLite,
-  /// then remove the failed mutation.
-  /// Does NOT delete the conflict file from the server.
-  ///
-  /// For Phase 1 conflicts: pulls from conflictFilePath
-  /// For Phase 2 conflicts (no conflictFilePath): pulls from original path
-  Future<void> resolveAcceptRemote(String mutationId) async {
-    final mutation = await _db.getMutationById(mutationId);
-    if (mutation == null) return;
-
-    final conflictFilePath = mutation.conflictFilePath;
-    
-    // Determine which path to pull from
-    final pathToPull = (conflictFilePath != null && conflictFilePath.isNotEmpty)
-        ? conflictFilePath  // Phase 1: pull from conflict file
-        : mutation.path;     // Phase 2: pull from original path
-
-    // Pull the content from the server
-    final response = await _apiClient.dio.post(
-      '/sync/pull',
-      data: {'path': pathToPull},
-      options: Options(responseType: ResponseType.bytes),
+    log(
+      '[CONFLICT:RESOLVE] id=$mutationId path=${mutation.path} '
+      'mutationBaseVersion=${mutation.baseVersion} fetchedVersion=$fetchedVersion '
+      'usingVersion=$serverVersion',
+      name: 'SyncRepository',
     );
 
-    final bytes = response.data as List<int>;
-    final versionHeader = response.headers.value('X-File-Version');
-    final serverVersion = versionHeader != null
-        ? int.tryParse(versionHeader) ?? 1
-        : 1;
-
-    // Write content to the local mirror at the *original* path (not conflict path)
+    // 2. Write final content to local mirror
     final mirror = await _mirrorDir();
     final localFile = File(
       p.join(
@@ -522,72 +691,58 @@ class SyncRepository {
         mutation.path.replaceAll('/', Platform.pathSeparator),
       ),
     );
-    final parent = localFile.parent;
-    if (!parent.existsSync()) parent.createSync(recursive: true);
-    await localFile.writeAsBytes(bytes);
+    localFile.parent.createSync(recursive: true);
+    await localFile.writeAsString(finalContent);
 
-    // Update SQLite: hash, serverVersion, localPath for the *original* path
+    // 3. Update SQLite cache
+    final bytes = utf8.encode(finalContent);
     final hash = sha256Hex(bytes);
-    final name = p.basename(mutation.path);
     final now = nowUtcIso8601();
-    final stat = localFile.statSync();
-    final mtime = toUtcIso8601(stat.modified);
 
     await _db.upsertEntry(
       FileCacheEntriesCompanion(
         path: drift.Value(mutation.path),
-        name: drift.Value(name),
+        name: drift.Value(p.basename(mutation.path)),
         type: const drift.Value('file'),
         sizeBytes: drift.Value(bytes.length),
-        lastModified: drift.Value(mtime),
+        lastModified: drift.Value(now),
         contentHash: drift.Value(hash),
         localPath: drift.Value(localFile.path),
-        lastSynced: drift.Value(now),
         serverVersion: drift.Value(serverVersion),
       ),
     );
 
-    // Remove the failed mutation — no push needed, remote is now canonical
-    await _db.removeMutation(mutationId);
+    // 4. Reset mutation to pending with correct base version
+    await _db.updateMutationBaseVersion(mutationId, serverVersion);
+
+    log(
+      '[CONFLICT:RESOLVED] id=$mutationId path=${mutation.path} '
+      'baseVersion=$serverVersion',
+      name: 'SyncRepository',
+    );
   }
 
-  /// Manual-edit resolution: the user has provided merged content.
-  /// Overwrites the local file + SQLite, then re-queues the mutation with
-  /// the latest server version via [resolveKeepLocal].
-  Future<void> resolveManualEdit(
-    String mutationId,
-    String mergedContent,
-  ) async {
-    final mutation = await _db.getMutationById(mutationId);
-    if (mutation == null) return;
-
-    final cacheEntry = await _db.getEntry(mutation.path);
-    if (cacheEntry == null || cacheEntry.localPath == null) return;
-
-    // Write merged content to local mirror
-    final localFile = File(cacheEntry.localPath!);
-    await localFile.writeAsString(mergedContent);
-
-    // Update SQLite with new hash and size
-    final bytes = localFile.readAsBytesSync();
-    final hash = sha256Hex(bytes);
-    final mtime = nowUtcIso8601();
-
-    await _db.upsertEntry(
-      FileCacheEntriesCompanion(
-        path: drift.Value(mutation.path),
-        name: drift.Value(cacheEntry.name),
-        type: const drift.Value('file'),
-        sizeBytes: drift.Value(bytes.length),
-        lastModified: drift.Value(mtime),
-        contentHash: drift.Value(hash),
-        localPath: drift.Value(cacheEntry.localPath),
-        lastSynced: drift.Value(cacheEntry.lastSynced),
-        serverVersion: drift.Value(cacheEntry.serverVersion),
-      ),
-    );
-
-    // Re-queue with fresh base_version — no immediate push
-    await resolveKeepLocal(mutationId);
+  /// Fetch the current server version for a file path via pull headers.\n  /// Returns 0 on failure so the caller can detect the failure and use a\n  /// better fallback (e.g. mutation.baseVersion) instead of a wrong version.
+  Future<int> _fetchServerVersion(String path) async {
+    try {
+      final response = await _apiClient.dio.post(
+        '/sync/pull',
+        data: {'path': path},
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final versionHeader = response.headers.value('X-File-Version');
+      if (versionHeader != null) {
+        final parsed = int.tryParse(versionHeader);
+        if (parsed != null && parsed > 0) return parsed;
+      }
+      log(
+        '[FETCH_VERSION] Missing or invalid X-File-Version header for path=$path',
+        name: 'SyncRepository',
+      );
+      return 0;
+    } catch (e) {
+      log('[FETCH_VERSION] Failed for path=$path: $e', name: 'SyncRepository');
+      return 0;
+    }
   }
 }

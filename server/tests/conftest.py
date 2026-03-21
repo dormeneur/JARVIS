@@ -39,7 +39,8 @@ def vault_settings(tmp_vault: Path):
         with patch("app.config.settings", test_settings), \
              patch("app.services.vault.settings", test_settings), \
              patch("app.services.auth.settings", test_settings), \
-             patch("app.services.sync.settings", test_settings):
+             patch("app.services.sync.settings", test_settings), \
+             patch("app.services.version_tracker.settings", test_settings):
             yield test_settings
 
 
