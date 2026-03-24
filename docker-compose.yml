@@ -11,4 +11,56 @@ services:
     volumes:
       - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS
     env_file: .env
+    depends_on:
+      chromadb:
+        condition: service_started
+    networks:
+      - jarvis-internal
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  brain:
+    build:
+      context: ./brain
+      dockerfile: Dockerfile
+    container_name: jv-brain
+    volumes:
+      - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS:ro
+    env_file: .env
+    depends_on:
+      chromadb:
+        condition: service_started
+    networks:
+      - jarvis-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/brain/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: jv-chromadb
+    volumes:
+      - chroma-data:/chroma/chroma
+    networks:
+      - jarvis-internal
+    restart: unless-stopped
+
+volumes:
+  chroma-data:
+    name: jarvis-chroma-data
+
+networks:
+  jarvis-internal:
+    name: jarvis-internal
+    driver: bridge
