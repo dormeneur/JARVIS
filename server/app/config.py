@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     jwt_expiry_hours: int = 720
     max_devices: int = 5
     sync_timestamp_tolerance_seconds: int = 2
+    brain_url: str = "http://jv-brain:8001"
 
     model_config = {"env_prefix": "JARVIS_"}
 

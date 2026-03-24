@@ -1,0 +1,173 @@
+"""Context assembler service for building LLM prompts."""
+
+import os
+import logging
+from typing import List, Tuple, Optional
+
+from app.models.ask_models import Source
+from app.services.document_loader import DocumentLoader
+from app.services.text_chunker import TextChunker
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Constants
+MAX_CONTEXT_TOKENS = 2048
+SYSTEM_PROMPT = """You are JARVIS, a personal AI assistant. You answer questions using ONLY
+the provided context from the user's personal knowledge vault. If the
+context doesn't contain enough information to answer, say so clearly."""
+
+class ContextAssembler:
+    """Service to assemble LLM prompts from retrieved chunks and attachments."""
+    
+    def __init__(
+        self,
+        text_chunker: TextChunker,
+        document_loader: DocumentLoader
+    ):
+        self.chunker = text_chunker
+        self.loader = document_loader
+
+    def assemble_prompt(
+        self, 
+        query: str, 
+        retrieved_sources: List[Source], 
+        attachments: List[str]
+    ) -> Tuple[str, List[Source]]:
+        """Construct the prompt and return the final used sources.
+        
+        Args:
+            query: The user's question
+            retrieved_sources: Chunks from the vector store (includes content)
+            attachments: List of specific file paths to include
+            
+        Returns:
+            Tuple of (formatted_prompt_string, list_of_used_sources)
+        """
+        used_sources = []
+        context_parts = []
+        current_tokens = 0
+        
+        # 1. Process attachments first (highest priority)
+        if attachments:
+            for path in attachments:
+                content = self._load_attachment(path)
+                if not content:
+                    logger.warning(f"Attachment not found or unreadable: {path}")
+                    continue
+                
+                # Format the context block
+                block = f"[Source: {path}]\n{content}\n"
+                
+                # Truncate if it exceeds remaining budget
+                block_tokens = self.chunker._count_tokens(block)
+                if current_tokens + block_tokens > MAX_CONTEXT_TOKENS:
+                    remaining = MAX_CONTEXT_TOKENS - current_tokens
+                    if remaining > 50:  # Only add if we have a reasonable amount of tokens left
+                        truncated_content = self._truncate_to_tokens(content, remaining - 20)
+                        block = f"[Source: {path}]\n{truncated_content}...\n"
+                        context_parts.append(block)
+                        used_sources.append(Source(path=path, chunk=0, score=1.0))
+                    # Budget exhausted, stop processing any more context
+                    current_tokens = MAX_CONTEXT_TOKENS
+                    break
+                else:
+                    context_parts.append(block)
+                    current_tokens += block_tokens
+                    used_sources.append(Source(path=path, chunk=0, score=1.0))
+        
+        # 2. Process retrieved chunks (fill remaining budget)
+        for source in retrieved_sources:
+            if current_tokens >= MAX_CONTEXT_TOKENS:
+                break
+                
+            content = getattr(source, 'content', '')
+            if not content:
+                continue
+                
+            # If the file is already fully included via attachments, skip the retrieved chunk
+            if any(s.path == source.path and s.score == 1.0 for s in used_sources):
+                continue
+                
+            block = f"[Source: {source.path}]\n{content}\n"
+            block_tokens = self.chunker._count_tokens(block)
+            
+            if current_tokens + block_tokens > MAX_CONTEXT_TOKENS:
+                remaining = MAX_CONTEXT_TOKENS - current_tokens
+                if remaining > 50:
+                    truncated_content = self._truncate_to_tokens(content, remaining - 20)
+                    block = f"[Source: {source.path}]\n{truncated_content}...\n"
+                    context_parts.append(block)
+                    
+                    # Store clean Source for API return (remove content payload)
+                    clean_source = Source(path=source.path, chunk=source.chunk, score=source.score)
+                    used_sources.append(clean_source)
+                current_tokens = MAX_CONTEXT_TOKENS
+                break
+            else:
+                context_parts.append(block)
+                current_tokens += block_tokens
+                clean_source = Source(path=source.path, chunk=source.chunk, score=source.score)
+                used_sources.append(clean_source)
+                
+        # 3. Assemble final prompt
+        context_text = "\n".join(context_parts)
+        if not context_text:
+            context_text = "No relevant context found."
+            
+        prompt = f"""{SYSTEM_PROMPT}
+
+=== CONTEXT ===
+{context_text}
+=== END CONTEXT ===
+
+User Question: {query}
+
+Answer:"""
+
+        return prompt, used_sources
+
+    def _load_attachment(self, path: str) -> Optional[str]:
+        """Read a file directly for attachment context.
+        
+        Args:
+            path: Vault-relative path
+            
+        Returns:
+            File content as text, or None if failed
+        """
+        full_path = os.path.join(settings.vault_path, path)
+        try:
+            # We reuse the document loader's parsing logic for various formats
+            # by temporarily creating a generator for just this file if possible,
+            # but for simplicity, we'll try reading it as text directly or let the loader handle it.
+            
+            # Simple text fallback if loader is too complex to invoke for 1 file
+            # In a real impl, we'd use `loader._extract_content(full_path, ext)`
+            if os.path.exists(full_path):
+                ext = os.path.splitext(full_path)[1].lower()
+                return self.loader._extract_content(full_path, ext)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to load attachment {path}: {e}")
+            return None
+
+    def _truncate_to_tokens(self, text: str, max_tokens: int) -> str:
+        """Truncate text to fit within a specific token count.
+        
+        Args:
+            text: Original text
+            max_tokens: Maximum allowed tokens
+            
+        Returns:
+            Truncated text
+        """
+        if max_tokens <= 0:
+            return ""
+            
+        tokens = self.chunker.encoding.encode(text)
+        if len(tokens) <= max_tokens:
+            return text
+            
+        truncated_tokens = tokens[:max_tokens]
+        return self.chunker.encoding.decode(truncated_tokens)

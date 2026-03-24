@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.errors import AuthError, VaultError, auth_error_handler, vault_error_handler
-from app.routers import auth, files, health, sync
+from app.routers import auth, files, health, sync, ask
 from app.services import auth as auth_service
 
 
@@ -49,3 +49,4 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(sync.router)
 app.include_router(files.router)
+app.include_router(ask.router)

@@ -7,6 +7,7 @@ import 'package:jarvis_mobile/features/sync/presentation/conflict_provider.dart'
 import 'package:jarvis_mobile/features/sync/presentation/sync_provider.dart';
 import 'package:jarvis_mobile/features/sync/presentation/sync_summary_dialog.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_screen.dart';
+import 'package:jarvis_mobile/features/chat/presentation/chat_screen.dart';
 import 'package:jarvis_mobile/shared/models/file_entry.dart';
 import 'package:jarvis_mobile/shared/utils/date_utils.dart';
 
@@ -233,18 +234,35 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
             ),
           ],
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: syncState.status == SyncStatus.syncing
-              ? null
-              : () => _triggerSync(context, ref),
-          icon: syncState.status == SyncStatus.syncing
-              ? const SizedBox(
-                  height: 18,
-                  width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.sync),
-          label: const Text('Sync'),
+        floatingActionButton: Column(
+          mainAxisAlignment: MainAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            FloatingActionButton(
+              heroTag: 'chat_fab',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ChatScreen()),
+                );
+              },
+              child: const Icon(Icons.chat_bubble_outline),
+            ),
+            const SizedBox(height: 16),
+            FloatingActionButton.extended(
+              heroTag: 'sync_fab',
+              onPressed: syncState.status == SyncStatus.syncing
+                  ? null
+                  : () => _triggerSync(context, ref),
+              icon: syncState.status == SyncStatus.syncing
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.sync),
+              label: const Text('Sync'),
+            ),
+          ],
         ),
       ),
     );

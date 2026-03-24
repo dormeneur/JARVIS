@@ -7,18 +7,53 @@ Pipeline components added in subsequent steps.
 import logging
 
 import httpx
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
 
 from app.config import settings
+from app.routers import debug, ask
+from app.services.document_loader import DocumentLoader
+from app.services.text_chunker import TextChunker
+from app.services.embedding_pipeline import EmbeddingPipeline
+from app.services.vector_store import VectorStore
+from app.services.incremental_indexer import IncrementalIndexer
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger("jv-brain")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize services
+    app.state.document_loader = DocumentLoader(settings.vault_path)
+    app.state.text_chunker = TextChunker()
+    app.state.embedding_pipeline = EmbeddingPipeline(settings.ollama_url)
+    app.state.vector_store = VectorStore(settings.vectordb_url)
+    
+    app.state.indexer = IncrementalIndexer(
+        app.state.document_loader,
+        app.state.text_chunker,
+        app.state.embedding_pipeline,
+        app.state.vector_store
+    )
+    
+    # Start background indexing
+    app.state.indexer.start_background_indexing()
+    
+    yield
+    
+    # Shutdown
+    await app.state.embedding_pipeline.close()
 
 app = FastAPI(
     title="JARVIS Brain",
     description="Local AI retrieval and reasoning pipeline",
     version="0.1.0",
+    lifespan=lifespan
 )
+
+# Register routers
+app.include_router(debug.router)
+app.include_router(ask.router)
 
 
 @app.get("/brain/status")
@@ -46,5 +81,5 @@ async def brain_status():
         "status": "ok" if (ollama_ok and chromadb_ok) else "degraded",
         "ollama": "reachable" if ollama_ok else "unreachable",
         "chromadb": "reachable" if chromadb_ok else "unreachable",
-        "indexing": False,
+        "indexing": getattr(app.state, "indexer", None).is_indexing if hasattr(app.state, "indexer") else False,
     }

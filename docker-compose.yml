@@ -48,7 +48,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.5.23
     container_name: jv-chromadb
     volumes:
       - chroma-data:/chroma/chroma
