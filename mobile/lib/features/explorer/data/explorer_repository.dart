@@ -118,18 +118,38 @@ class ExplorerRepository {
   /// Get a single entry by path.
   Future<FileEntry?> getEntry(String path) async {
     final row = await _db.getEntry(path);
-    if (row == null) return null;
-    return FileEntry(
-      path: row.path,
-      name: row.name,
-      type: row.type,
-      sizeBytes: row.sizeBytes,
-      lastModified: row.lastModified,
-      contentHash: row.contentHash,
-      localPath: row.localPath,
-      lastSynced: row.lastSynced,
-      serverVersion: row.serverVersion,
-    );
+    if (row != null) {
+      return FileEntry(
+        path: row.path,
+        name: row.name,
+        type: row.type,
+        sizeBytes: row.sizeBytes,
+        lastModified: row.lastModified,
+        contentHash: row.contentHash,
+        localPath: row.localPath,
+        lastSynced: row.lastSynced,
+        serverVersion: row.serverVersion,
+      );
+    }
+
+    // Try to infer directory if no explicit row was found
+    final prefix = path.isEmpty ? '' : '$path/';
+    if (prefix.isNotEmpty) {
+      final allFiles = await _db.getAllFiles();
+      for (final file in allFiles) {
+        if (file.path.startsWith(prefix)) {
+          return FileEntry(
+            path: path,
+            name: path.split('/').last,
+            type: 'directory',
+            lastModified: DateTime.now().toUtc().toIso8601String(),
+            serverVersion: 1, // Default server version for inferred folders
+          );
+        }
+      }
+    }
+
+    return null;
   }
 
   /// Get all file entries (for building manifest).
@@ -155,5 +175,167 @@ class ExplorerRepository {
   /// Clear all cached entries.
   Future<void> clearAll() async {
     await _db.deleteAllEntries();
+  }
+
+  /// Get all child file paths for a given folder path.
+  ///
+  /// Returns a list of paths for all direct children (files and folders)
+  /// of the specified folder.
+  Future<List<String>> getChildrenPaths(String folderPath) async {
+    final allFiles = await _db.getAllFiles();
+    final prefix = folderPath.isEmpty ? '' : '$folderPath/';
+    final children = <String>[];
+
+    for (final file in allFiles) {
+      if (prefix.isNotEmpty && !file.path.startsWith(prefix)) continue;
+
+      final remainder = prefix.isEmpty
+          ? file.path
+          : file.path.substring(prefix.length);
+
+      // Only include direct children (no additional slashes in remainder)
+      if (!remainder.contains('/')) {
+        children.add(file.path);
+      }
+    }
+
+    return children;
+  }
+
+  /// Get all child file entries for a given folder path.
+  ///
+  /// Returns a list of FileEntry objects for all direct children (files and folders)
+  /// of the specified folder.
+  Future<List<FileEntry>> getChildren(String folderPath) async {
+    final allFiles = await _db.getAllFiles();
+    final prefix = folderPath.isEmpty ? '' : '$folderPath/';
+    final children = <FileEntry>[];
+
+    for (final file in allFiles) {
+      if (prefix.isNotEmpty && !file.path.startsWith(prefix)) continue;
+
+      final remainder = prefix.isEmpty
+          ? file.path
+          : file.path.substring(prefix.length);
+
+      // Only include direct children (no additional slashes in remainder)
+      if (!remainder.contains('/')) {
+        children.add(FileEntry(
+          path: file.path,
+          name: file.name,
+          type: file.type,
+          sizeBytes: file.sizeBytes,
+          lastModified: file.lastModified,
+          contentHash: file.contentHash,
+          localPath: file.localPath,
+          lastSynced: file.lastSynced,
+          serverVersion: file.serverVersion,
+        ));
+      }
+    }
+
+    return children;
+  }
+
+  /// Get the total count of all descendants (files and subfolders) for a given folder path.
+  /// Used for UI feedback when deleting or moving folders.
+  Future<int> getDescendantCount(String folderPath) async {
+    final allFiles = await _db.getAllFiles();
+    final prefix = folderPath.isEmpty ? '' : '$folderPath/';
+    int count = 0;
+    for (final file in allFiles) {
+      if (prefix.isNotEmpty && file.path.startsWith(prefix)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// Filter a list of paths to only include folder paths.
+  ///
+  /// Returns a list containing only the paths that represent folders
+  /// (type == 'directory').
+  Future<List<String>> getFolderPaths(List<String> paths) async {
+    final folders = <String>[];
+
+    for (final path in paths) {
+      final entry = await _db.getEntry(path);
+      if (entry != null && entry.type == 'directory') {
+        folders.add(path);
+      }
+    }
+
+    return folders;
+  }
+
+  /// Get all file names in a given path.
+  ///
+  /// Returns a set of file names (not full paths) for all direct children
+  /// in the specified folder. Used for checking name conflicts.
+  Future<Set<String>> getFileNamesInPath(String path) async {
+    final allFiles = await _db.getAllFiles();
+    final prefix = path.isEmpty ? '' : '$path/';
+    final names = <String>{};
+
+    for (final file in allFiles) {
+      if (prefix.isNotEmpty && !file.path.startsWith(prefix)) continue;
+
+      final remainder = prefix.isEmpty
+          ? file.path
+          : file.path.substring(prefix.length);
+
+      // Only include direct children (no additional slashes in remainder)
+      if (!remainder.contains('/')) {
+        names.add(file.name);
+      }
+    }
+
+    return names;
+  }
+
+
+  /// Search for files matching a query across all directories.
+  ///
+  /// Searches file names case-insensitively, returning matching entries
+  /// sorted by relevance (exact match first, then starts-with, then contains).
+  Future<List<FileEntry>> searchFiles(String query) async {
+    if (query.trim().isEmpty) return [];
+
+    final allFiles = await _db.getAllFiles();
+    final lowerQuery = query.toLowerCase();
+    final matches = <FileEntry>[];
+
+    for (final file in allFiles) {
+      if (file.name.toLowerCase().contains(lowerQuery)) {
+        matches.add(FileEntry(
+          path: file.path,
+          name: file.name,
+          type: file.type,
+          sizeBytes: file.sizeBytes,
+          lastModified: file.lastModified,
+          contentHash: file.contentHash,
+          localPath: file.localPath,
+          lastSynced: file.lastSynced,
+          serverVersion: file.serverVersion,
+        ));
+      }
+    }
+
+    // Sort by relevance: exact > starts-with > contains, then alphabetical
+    matches.sort((a, b) {
+      final aLower = a.name.toLowerCase();
+      final bLower = b.name.toLowerCase();
+      final aExact = aLower == lowerQuery;
+      final bExact = bLower == lowerQuery;
+      if (aExact && !bExact) return -1;
+      if (!aExact && bExact) return 1;
+      final aStarts = aLower.startsWith(lowerQuery);
+      final bStarts = bLower.startsWith(lowerQuery);
+      if (aStarts && !bStarts) return -1;
+      if (!aStarts && bStarts) return 1;
+      return aLower.compareTo(bLower);
+    });
+
+    return matches;
   }
 }

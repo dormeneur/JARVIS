@@ -1,0 +1,5 @@
+Analyzing mobile...                                             
+
+   info - Use the null-aware marker '?' rather than a null check via an 'if' - lib\features\explorer\presentation\explorer_screen.dart:565:9 - use_null_aware_elements
+   info - Don't use 'BuildContext's across async gaps - lib\features\explorer\presentation\explorer_screen.dart:615:28 - use_build_context_synchronously
+

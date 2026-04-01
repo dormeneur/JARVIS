@@ -530,7 +530,7 @@ All tasks reference specific requirements and correctness properties from the de
   - Handle DioException for offline state
   - _Requirements: 12.2, 12.12, 12.13, 12.14_
 
-- [~] 25. Implement chat history persistence with Drift *(SKIPPED for MVP)*
+- [ ] 25. Implement chat history persistence with Drift *(SKIPPED for MVP)*
   - Chat history persistence deferred — current implementation uses in-memory message list
   - _Requirements: 12.3, 12.8, 12.9, 12.10, 12.11, 12.17, 12.18, 15.2, 15.3_
 
@@ -557,9 +557,9 @@ All tasks reference specific requirements and correctness properties from the de
   - Source links displayed below responses with bullet points
   - _Requirements: 12.6, 12.7_
 
-  - [~] 28.1 Write property test for chat history *(SKIPPED — no Drift persistence)*
+  - [ ] 28.1 Write property test for chat history *(SKIPPED — no Drift persistence)*
 
-  - [~] 28.2 Write widget tests for mobile UI *(SKIPPED for MVP)*
+  - [ ] 28.2 Write widget tests for mobile UI *(SKIPPED for MVP)*
 
 - [x] 29. Verification checkpoint for Step 12
   - Launch Flutter app and navigate to AI Chat screen ✅
@@ -579,7 +579,7 @@ All tasks reference specific requirements and correctness properties from the de
   - Verify Phase 2 files remain unmodified (sync engine, conflict resolution) ✅
   - _Requirements: Core requirements satisfied_
 
-  - [~] 30.1 Run complete test suite *(SKIPPED for MVP — manual verification performed)*
+  - [ ] 30.1 Run complete test suite *(SKIPPED for MVP — manual verification performed)*
 
 - [x] 31. Final checkpoint - System ready for MVP
   - Core RAG pipeline functional ✅

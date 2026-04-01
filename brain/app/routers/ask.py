@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from app.models.ask_models import IndexStatus, AskRequest, AskResponse, AskOptions, Source
+from app.models.ask_models import IndexStatus, AskRequest, AskResponse, AskOptions, Source, ExtractPdfRequest, ExtractPdfResponse
+from app.config import settings
+from pathlib import Path
 import logging
 import json
+import fitz
 
 from app.services.retriever import Retriever
 from app.services.context_assembler import ContextAssembler
@@ -31,13 +34,21 @@ async def generate_rag_stream(request_data: AskRequest, app_state):
     
     # 1. Retrieve context
     retriever = Retriever(embedder, store)
+    
+    # If attachments are present, scope the vector search strictly to those files.
+    # Otherwise, use the filter_paths from options.
+    search_filters = attachments if attachments else options.filter_paths
+    
     retrieved_sources = await retriever.retrieve(
         query=query,
         top_k=options.top_k,
-        filter_paths=options.filter_paths
+        filter_paths=search_filters
     )
     
-    logger.info(f"Retrieved {len(retrieved_sources)} sources from vector store.")
+    if attachments:
+        logger.info(f"Scoped RAG limited to {len(attachments)} attached files. Retrieved {len(retrieved_sources)} chunks.")
+    else:
+        logger.info(f"Global RAG retrieved {len(retrieved_sources)} sources from vector store.")
     
     # 2. Assemble prompt
     assembler = ContextAssembler(chunker, loader)
@@ -129,3 +140,43 @@ async def get_index_status(request: Request):
     """Get the current status of the indexer."""
     indexer = request.app.state.indexer
     return indexer.get_status()
+
+
+@router.post("/brain/extract-pdf", response_model=ExtractPdfResponse)
+async def extract_pdf(req: ExtractPdfRequest):
+    """Extract specific pages of a PDF to Markdown."""
+    full_path = Path(settings.vault_path) / req.path
+    
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    if full_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="File is not a PDF")
+
+    try:
+        doc = fitz.open(full_path)
+        total_pages = len(doc)
+        
+        start = max(1, req.start_page)
+        end = req.end_page if req.end_page is not None else total_pages
+        end = min(total_pages, end)
+        
+        if start > end:
+            raise HTTPException(status_code=400, detail="Invalid page range")
+            
+        text_parts = []
+        for i in range(start - 1, end):
+            text_parts.append(f"## Page {i + 1}\n\n" + doc[i].get_text() + "\n")
+            
+        doc.close()
+        
+        markdown_text = "\n".join(text_parts)
+        
+        return ExtractPdfResponse(
+            markdown=markdown_text,
+            pages_extracted=(end - start + 1),
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"Failed to extract PDF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -18,6 +18,9 @@ dependencies:
   crypto: ^3.0.6
   path: ^1.9.1
   flutter_markdown: ^0.7.4
+  file_picker: ^10.3.10
+  flutter_pdfview: ^1.4.4
+  docx_to_text: ^1.0.1
 
 dev_dependencies:
   flutter_test:

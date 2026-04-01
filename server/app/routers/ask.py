@@ -106,3 +106,19 @@ async def ask_reindex(device=Depends(get_current_device)):
     except Exception as e:
         logger.error(f"Failed to trigger re-indexing: {e}")
         raise HTTPException(status_code=503, detail="AI indexing service offline")
+
+@router.post("/ask/extract-pdf")
+async def ask_extract_pdf(request: Request, device=Depends(get_current_device)):
+    """Extract specific pages of a PDF via AI Brain."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/extract-pdf"
+    try:
+        payload = await request.json()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+    except Exception as e:
+        logger.error(f"Failed to extract PDF via brain: {e}")
+        raise HTTPException(status_code=503, detail="AI indexing service offline")

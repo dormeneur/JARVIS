@@ -40,7 +40,7 @@ class VectorStore:
         )
         logger.info(f"Connected to ChromaDB at {host}:{port}, collection '{COLLECTION_NAME}'")
 
-    async def upsert_chunks(self, chunks: List[Chunk], embeddings: List[List[float]], last_modified: str) -> None:
+    async def upsert_chunks(self, chunks: List[Chunk], embeddings: List[List[float]], last_modified: str, summary: str = "") -> None:
         """Insert or update chunks with their embeddings.
         
         Args:
@@ -61,7 +61,8 @@ class VectorStore:
                 "source_path": c.source_path,
                 "chunk_index": c.chunk_index,
                 "content_hash": c.content_hash,
-                "last_modified": last_modified
+                "last_modified": last_modified,
+                "summary": summary
             }
             for c in chunks
         ]

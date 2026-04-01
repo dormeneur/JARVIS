@@ -44,6 +44,22 @@ class IndexStatus(BaseModel):
     
     total_files_indexed: int
     total_chunks: int
-    last_index_run: str  # ISO 8601 timestamp
+    last_index_run: Optional[str] = None  # ISO 8601 timestamp
     pending_files: int
     index_health: str  # "healthy", "indexing", "error"
+
+
+class ExtractPdfRequest(BaseModel):
+    """Request model for extracting text from specific PDF pages."""
+    
+    path: str = Field(..., description="Vault-relative path to the PDF file")
+    start_page: int = Field(default=1, description="1-indexed start page")
+    end_page: Optional[int] = Field(default=None, description="1-indexed end page (inclusive). If None, extracts to the end.")
+
+
+class ExtractPdfResponse(BaseModel):
+    """Response model for PDF text extraction."""
+    
+    markdown: str = Field(..., description="Extracted text formatted as Markdown")
+    pages_extracted: int = Field(..., description="Number of pages successfully extracted")
+    total_pages: int = Field(..., description="Total pages in the document")

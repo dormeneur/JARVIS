@@ -2,6 +2,7 @@
 
 import os
 import logging
+from pathlib import Path
 from typing import List, Tuple, Optional
 
 from app.models.ask_models import Source
@@ -115,7 +116,19 @@ class ContextAssembler:
         if not context_text:
             context_text = "No relevant context found."
             
-        prompt = f"""{SYSTEM_PROMPT}
+        # Inject Memory/global_index.md if it exists
+        memory_index = ""
+        memory_path = Path(settings.vault_path) / "Memory" / "global_index.md"
+        if memory_path.exists():
+            try:
+                # We do not want to blow up the token count unnecessarily, but the table of contents is critical.
+                raw_memory = memory_path.read_text(encoding="utf-8")
+                truncated_memory = self._truncate_to_tokens(raw_memory, 1000) # Ensure it doesn't take up the whole prompt
+                memory_index = f"\n\n=== GLOBAL MEMORY INDEX ===\n(Here is a list of all files in the user's vault. You can use this to know what documents exist, or ask the user for them.)\n{truncated_memory}\n=== END GLOBAL MEMORY ===\n"
+            except Exception as e:
+                logger.warning(f"Failed to read global memory index: {e}")
+            
+        prompt = f"""{SYSTEM_PROMPT}{memory_index}
 
 === CONTEXT ===
 {context_text}
@@ -131,23 +144,21 @@ Answer:"""
         """Read a file directly for attachment context.
         
         Args:
-            path: Vault-relative path
+            path: Vault-relative path (e.g. 'General/profile')
             
         Returns:
             File content as text, or None if failed
         """
-        full_path = os.path.join(settings.vault_path, path)
+        full_path = Path(settings.vault_path) / path
+        logger.info(f"Loading attachment: {path} -> {full_path}")
         try:
-            # We reuse the document loader's parsing logic for various formats
-            # by temporarily creating a generator for just this file if possible,
-            # but for simplicity, we'll try reading it as text directly or let the loader handle it.
-            
-            # Simple text fallback if loader is too complex to invoke for 1 file
-            # In a real impl, we'd use `loader._extract_content(full_path, ext)`
-            if os.path.exists(full_path):
-                ext = os.path.splitext(full_path)[1].lower()
-                return self.loader._extract_content(full_path, ext)
-            return None
+            if full_path.exists():
+                content = self.loader._extract_content(full_path)
+                logger.info(f"Attachment loaded: {path} ({len(content) if content else 0} chars)")
+                return content
+            else:
+                logger.warning(f"Attachment file not found: {full_path}")
+                return None
         except Exception as e:
             logger.error(f"Failed to load attachment {path}: {e}")
             return None

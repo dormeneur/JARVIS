@@ -3,6 +3,13 @@ import 'package:jarvis_mobile/core/network/api_client.dart';
 import 'package:jarvis_mobile/core/network/api_exceptions.dart';
 import 'package:jarvis_mobile/core/storage/secure_storage.dart';
 
+/// Enum representing the outcome of token validation.
+enum TokenValidationResult {
+  valid,
+  invalid,
+  unreachable,
+}
+
 /// Handles device registration, token storage, and validation.
 class AuthRepository {
   final ApiClient _apiClient;
@@ -103,21 +110,26 @@ class AuthRepository {
   }
 
   /// Validate the stored token by calling GET /auth/me.
-  Future<bool> validateToken() async {
+  Future<TokenValidationResult> validateToken() async {
     try {
       await _apiClient.init();
       final jwt = await _secureStorage.getJwt();
-      if (jwt == null || jwt.isEmpty) return false;
+      if (jwt == null || jwt.isEmpty) return TokenValidationResult.invalid;
 
       final url = await _secureStorage.getServerUrl();
-      if (url == null || url.isEmpty) return false;
+      if (url == null || url.isEmpty) return TokenValidationResult.invalid;
 
       final response = await _apiClient.dio.get('/auth/me');
-      return response.statusCode == 200;
-    } on DioException {
-      return false;
+      return response.statusCode == 200
+          ? TokenValidationResult.valid
+          : TokenValidationResult.invalid;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
+        return TokenValidationResult.invalid;
+      }
+      return TokenValidationResult.unreachable;
     } catch (_) {
-      return false;
+      return TokenValidationResult.unreachable;
     }
   }
 

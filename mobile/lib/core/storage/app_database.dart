@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:jarvis_mobile/features/chat/data/chat_messages_table.dart';
 
 part 'app_database.g.dart';
 
@@ -44,7 +45,7 @@ class MutationQueue extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-@DriftDatabase(tables: [FileCacheEntries, MutationQueue])
+@DriftDatabase(tables: [FileCacheEntries, MutationQueue, ChatMessages])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
@@ -52,7 +53,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration {
@@ -81,6 +82,9 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 5) {
           await m.addColumn(mutationQueue, mutationQueue.localContentSnapshot);
+        }
+        if (from < 6) {
+          await m.createTable(chatMessages);
         }
       },
     );
@@ -208,6 +212,19 @@ class AppDatabase extends _$AppDatabase {
     return (delete(mutationQueue)..where((m) => m.id.equals(id))).go();
   }
 
+  /// Remove all mutations for a specific path.
+  Future<void> removeMutationsForPath(String path) {
+    return (delete(mutationQueue)..where((m) => m.path.equals(path))).go();
+  }
+
+  /// Remove all mutations for a specific folder path prefix (e.g., when deleting a folder).
+  Future<void> removeMutationsForPathPrefix(String folderPath) {
+    final prefix = folderPath.isEmpty ? '' : '$folderPath/';
+    if (prefix.isEmpty) return clearAllMutations();
+    
+    return (delete(mutationQueue)..where((m) => m.path.like('$prefix%'))).go();
+  }
+
   /// Mark a mutation as failed and increment retry count.
   Future<void> markMutationFailed(String id) async {
     final mutation = await (select(
@@ -295,6 +312,42 @@ class AppDatabase extends _$AppDatabase {
 
   /// Clear all mutations (use with caution).
   Future<void> clearAllMutations() => delete(mutationQueue).go();
+
+  // --- Chat History Operations ---
+
+  /// Insert a chat message (user query + AI response pair).
+  Future<int> insertChatMessage({
+    required String query,
+    required String response,
+    String? sources,
+    String? attachments,
+    required String timestamp,
+  }) {
+    return into(chatMessages).insert(
+      ChatMessagesCompanion.insert(
+        query: query,
+        response: response,
+        sources: Value(sources),
+        attachments: Value(attachments),
+        timestamp: timestamp,
+      ),
+    );
+  }
+
+  /// Get all chat messages ordered by timestamp (newest last).
+  Future<List<ChatMessage>> getAllChatMessages() {
+    return (select(chatMessages)
+          ..orderBy([(m) => OrderingTerm.asc(m.timestamp)]))
+        .get();
+  }
+
+  /// Delete a single chat message by ID.
+  Future<void> deleteChatMessage(int id) {
+    return (delete(chatMessages)..where((m) => m.id.equals(id))).go();
+  }
+
+  /// Clear all chat history.
+  Future<void> clearChatHistory() => delete(chatMessages).go();
 }
 
 LazyDatabase _openConnection() {

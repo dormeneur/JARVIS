@@ -10,6 +10,9 @@ from app.services.document_loader import DocumentLoader
 from app.services.text_chunker import TextChunker
 from app.services.embedding_pipeline import EmbeddingPipeline
 from app.services.vector_store import VectorStore
+from app.services.ollama_client import OllamaClient
+from app.config import settings
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +104,18 @@ class IncrementalIndexer:
                 else:
                     pass_new += 1
                     
+                # Generate summary for new/modified files via local LLM
+                summary = ""
+                try:
+                    logger.info(f"Generating summary for {doc.path}...")
+                    client = OllamaClient(self.embedder.ollama_url)
+                    prompt = f"Write exactly one short sentence summarizing this document. Do not include introductory text, just the summary:\n\n{doc.content[:3000]}"
+                    summary_raw, _ = await client.generate(prompt)
+                    summary = summary_raw.replace('\n', ' ').strip()
+                except Exception as e:
+                    logger.warning(f"Failed to generate summary for {doc.path}: {e}")
+                    summary = "Summary unavailable."
+                    
                 # Process the file
                 chunks = self.chunker.chunk_document(doc)
                 if chunks:
@@ -108,7 +123,8 @@ class IncrementalIndexer:
                     await self.store.upsert_chunks(
                         chunks=chunks, 
                         embeddings=embeddings, 
-                        last_modified=doc.last_modified.isoformat() if hasattr(doc.last_modified, 'isoformat') else str(doc.last_modified)
+                        last_modified=doc.last_modified.isoformat() if hasattr(doc.last_modified, 'isoformat') else str(doc.last_modified),
+                        summary=summary
                     )
                     pass_chunks += len(chunks)
                     self.chunks_created += len(chunks)
@@ -123,6 +139,10 @@ class IncrementalIndexer:
                     await self.store.delete_by_path(path)
                     pass_deleted += 1
                     self.files_deleted += 1
+                    
+            # Generate Global Memory Index if things changed
+            if pass_new > 0 or pass_modified > 0 or pass_deleted > 0:
+                await self._update_global_memory()
                     
             self.total_files = len(disk_paths)
             self.last_index_time = datetime.now(timezone.utc)
@@ -162,3 +182,31 @@ class IncrementalIndexer:
             return "unchanged"
             
         return "modified"
+
+    async def _update_global_memory(self) -> None:
+        """Fetch all path summaries from Chroma and compile a global index."""
+        try:
+            logger.info("Updating global memory index...")
+            metadatas = await self.store.get_all_metadata()
+            path_summaries = {}
+            for meta in metadatas:
+                path = meta.get("source_path")
+                summary = meta.get("summary", "Summary unavailable.")
+                if path and path not in path_summaries:
+                    path_summaries[path] = summary
+                    
+            if not path_summaries:
+                return
+                
+            memory_dir = Path(settings.vault_path) / "Memory"
+            memory_dir.mkdir(parents=True, exist_ok=True)
+            index_path = memory_dir / "global_index.md"
+            
+            content = ["# AI Global Memory Index\n", "This file contains a persistent map of all documents inside the vault.\n\n"]
+            for path in sorted(path_summaries.keys()):
+                content.append(f"- **{path}**: {path_summaries[path]}")
+                
+            index_path.write_text("\n".join(content), encoding="utf-8")
+            logger.info("Successfully updated Memory/global_index.md")
+        except Exception as e:
+            logger.error(f"Failed to update global memory: {e}")

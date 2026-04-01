@@ -31,7 +31,7 @@ services:
       dockerfile: Dockerfile
     container_name: jv-brain
     volumes:
-      - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS:ro
+      - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS
     env_file: .env
     depends_on:
       chromadb:

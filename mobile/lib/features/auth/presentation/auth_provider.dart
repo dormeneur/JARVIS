@@ -79,8 +79,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
 
     await _apiClient.init();
-    final isValid = await _authRepo.validateToken();
-    if (!isValid) {
+    final validationResult = await _authRepo.validateToken();
+    if (validationResult == TokenValidationResult.invalid) {
       state = const AuthState.unauthenticated(
         error: 'Session expired. Please log in again.',
       );

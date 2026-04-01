@@ -16,32 +16,32 @@ class ChatRepository {
 
   /// Streams the AI response by parsing NDJSON chunks from the backend.
   /// Yields text fragments continuously, and finally a JSON string with sources.
-  Stream<String> askJarvis(String query) async* {
+  Stream<String> askJarvis(String query, {List<String>? attachments}) async* {
     try {
+      final body = <String, dynamic>{
+        'query': query,
+        'options': {'stream': true},
+      };
+      if (attachments != null && attachments.isNotEmpty) {
+        body['attachments'] = attachments;
+      }
+
       final response = await _apiClient.dio.post(
         '/ask',
-        data: {
-          'query': query,
-          'options': {'stream': true}
-        },
+        data: body,
         options: Options(
           responseType: ResponseType.stream,
           receiveTimeout: const Duration(seconds: 120),
         ),
       );
 
-      print('[JARVIS-CHAT] Got response with status: ${response.statusCode}');
       final stream = response.data.stream as Stream;
-
-      // Decode the stream from bytes to strings, then split by newline for NDJSON
       final stringStream = stream
           .map((chunk) => List<int>.from(chunk))
           .transform(utf8.decoder)
           .transform(const LineSplitter());
 
-      print('[JARVIS-CHAT] Starting to read lines from stream...');
       await for (final line in stringStream) {
-        print('[JARVIS-CHAT] Received line: $line');
         if (line.trim().isEmpty) continue;
 
         try {
@@ -51,20 +51,30 @@ class ChatRepository {
           } else if (data.containsKey('error')) {
             yield jsonEncode({'error': data['error']});
           } else if (data.containsKey('answer')) {
-            // Final response payload containing the full answer and sources
             yield jsonEncode(data);
           }
-        } catch (e) {
-          // Ignore parse errors for partial chunks; Dio's stream usually gives complete lines
-          // due to the LineSplitter, so errors here are unexpected
+        } catch (_) {
+          // Ignore parse errors for partial chunks
         }
       }
     } on DioException catch (e) {
-      print('[JARVIS-CHAT] DioException: ${e.type} - ${e.message}');
       yield jsonEncode({'error': 'Network error: ${e.message}'});
     } catch (e) {
-      print('[JARVIS-CHAT] Exception: $e');
       yield jsonEncode({'error': 'Error: $e'});
+    }
+  }
+
+  /// Check if the AI backend is available.
+  Future<bool> checkAiStatus() async {
+    try {
+      final response = await _apiClient.dio.get(
+        '/ask/status',
+        options: Options(receiveTimeout: const Duration(seconds: 5)),
+      );
+      final data = response.data;
+      return data['ollama'] == 'reachable';
+    } catch (_) {
+      return false;
     }
   }
 
