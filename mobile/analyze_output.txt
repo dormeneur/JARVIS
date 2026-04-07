@@ -1,8 +1,11 @@
 Analyzing mobile...                                             
 
-   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\features\sync\presentation\conflict_detail_screen.dart:104:28 - use_build_context_synchronously
-   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\features\sync\presentation\conflict_detail_screen.dart:107:37 - use_build_context_synchronously
-   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\features\sync\presentation\conflict_detail_screen.dart:111:28 - use_build_context_synchronously
-   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\features\sync\presentation\conflict_detail_screen.dart:117:20 - use_build_context_synchronously
+   info - The imported package 'shared_preferences' isn't a dependency of the importing package - lib\features\chat\presentation\widgets\file_creation_worker.dart:3:8 - depend_on_referenced_packages
+  error - Target of URI doesn't exist: 'package:shared_preferences/shared_preferences.dart' - lib\features\chat\presentation\widgets\file_creation_worker.dart:3:8 - uri_does_not_exist
+  error - Undefined name 'syncRepositoryProvider' - lib\features\chat\presentation\widgets\file_creation_worker.dart:9:30 - undefined_identifier
+   info - 'ProviderRef' is deprecated and shouldn't be used. will be removed in 3.0.0. Use Ref instead - lib\features\chat\presentation\widgets\file_creation_worker.dart:15:9 - deprecated_member_use
+  error - The method 'createFolder' isn't defined for the type 'SyncRepository' - lib\features\chat\presentation\widgets\file_creation_worker.dart:25:25 - undefined_method
+  error - The method 'createAndUploadFile' isn't defined for the type 'SyncRepository' - lib\features\chat\presentation\widgets\file_creation_worker.dart:28:25 - undefined_method
+  error - Undefined name 'SharedPreferences' - lib\features\chat\presentation\widgets\file_creation_worker.dart:44:25 - undefined_identifier
 
-4 issues found. (ran in 2.1s)
+7 issues found. (ran in 2.3s)

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
+import 'package:jarvis_mobile/features/settings/presentation/settings_provider.dart';
 
 /// Settings screen — shows device info, server URL, and logout.
 class SettingsScreen extends ConsumerWidget {
@@ -47,6 +48,15 @@ class SettingsScreen extends ConsumerWidget {
             value: showHidden,
             onChanged: (value) {
               ref.read(showHiddenFilesProvider.notifier).state = value;
+            },
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.bug_report_outlined),
+            title: const Text('Dry-Run Mode'),
+            subtitle: const Text('Preview AI file manifestations without execution'),
+            value: ref.watch(dryRunModeProvider),
+            onChanged: (value) {
+              ref.read(dryRunModeProvider.notifier).toggle(value);
             },
           ),
           const Divider(),

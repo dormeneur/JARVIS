@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 
 from app.config import settings
-from app.routers import debug, ask
+from app.routers import debug, ask, generate
 from app.services.document_loader import DocumentLoader
 from app.services.text_chunker import TextChunker
 from app.services.embedding_pipeline import EmbeddingPipeline
@@ -54,6 +54,7 @@ app = FastAPI(
 # Register routers
 app.include_router(debug.router)
 app.include_router(ask.router)
+app.include_router(generate.router)
 
 
 @app.get("/brain/status")

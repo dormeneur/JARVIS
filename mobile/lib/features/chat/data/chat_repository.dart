@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/network/api_client.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
+import 'file_manifest_model.dart';
 
 final chatRepositoryProvider = Provider<ChatRepository>((ref) {
   final apiClient = ref.watch(apiClientProvider);
@@ -88,6 +89,40 @@ class ChatRepository {
       return 'error: ${e.message}';
     } catch (e) {
       return 'error: $e';
+    }
+  }
+
+  /// Generate a scaffolded manifest of files from a natural language prompt.
+  Future<List<FileManifestItem>> generateFiles(String prompt, {String directory = "."}) async {
+    final body = {
+      'prompt': prompt,
+      'current_directory': directory,
+    };
+    try {
+      final response = await _apiClient.dio.post('/ask/generate-files', data: body);
+      final dataList = response.data as List;
+      return dataList.map((item) => FileManifestItem.fromJson(item)).toList();
+    } on DioException catch (e) {
+      throw Exception('Network error: ${e.response?.data?['detail'] ?? e.message}');
+    } catch (e) {
+      throw Exception('Failed to generate files: $e');
+    }
+  }
+
+  /// Dry-run a scaffolded manifest of files from a natural language prompt without execution intent.
+  Future<List<FileManifestItem>> previewFiles(String prompt, {String directory = "."}) async {
+    final body = {
+      'prompt': prompt,
+      'current_directory': directory,
+    };
+    try {
+      final response = await _apiClient.dio.post('/ask/generate-files/dry-run', data: body);
+      final dataList = response.data as List;
+      return dataList.map((item) => FileManifestItem.fromJson(item)).toList();
+    } on DioException catch (e) {
+      throw Exception('Network error: ${e.response?.data?['detail'] ?? e.message}');
+    } catch (e) {
+      throw Exception('Failed to preview files: $e');
     }
   }
 }

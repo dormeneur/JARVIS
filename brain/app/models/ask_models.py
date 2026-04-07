@@ -63,3 +63,18 @@ class ExtractPdfResponse(BaseModel):
     markdown: str = Field(..., description="Extracted text formatted as Markdown")
     pages_extracted: int = Field(..., description="Number of pages successfully extracted")
     total_pages: int = Field(..., description="Total pages in the document")
+
+
+class GenerateFileManifestItem(BaseModel):
+    """A single file or folder to be created by the AI."""
+    
+    path: str = Field(..., description="Relative path including filename")
+    content: str = Field(default="", description="Text content for the file")
+    type: str = Field(default="file", description="'file' or 'directory'")
+
+
+class GenerateFilesRequest(BaseModel):
+    """Request model for natural language file generation."""
+    
+    prompt: str = Field(..., description="Natural language request to create files")
+    current_directory: str = Field(default=".", description="Context directory where files should be created")
