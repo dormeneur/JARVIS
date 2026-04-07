@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
+import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 import 'package:jarvis_mobile/features/sync/presentation/conflict_detail_screen.dart';
 import 'package:jarvis_mobile/features/sync/presentation/conflict_provider.dart';
 
@@ -62,13 +63,13 @@ class ConflictListScreen extends ConsumerWidget {
   }
 }
 
-class _ConflictTile extends StatelessWidget {
+class _ConflictTile extends ConsumerWidget {
   final MutationQueueData mutation;
 
   const _ConflictTile({required this.mutation});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final fileName = mutation.path.split('/').last;
 
@@ -101,7 +102,11 @@ class _ConflictTile extends StatelessWidget {
           ),
         ],
       ),
-      trailing: const Icon(Icons.chevron_right),
+      trailing: IconButton(
+        icon: Icon(Icons.delete_outline, color: theme.colorScheme.error),
+        tooltip: 'Delete from all devices',
+        onPressed: () => _confirmDelete(context, ref),
+      ),
       isThreeLine: true,
       onTap: () {
         Navigator.of(context).push(
@@ -110,6 +115,47 @@ class _ConflictTile extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  void _confirmDelete(BuildContext context, WidgetRef ref) async {
+    final fileName = mutation.path.split('/').last;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete from all devices?'),
+        content: Text(
+          'Permanently delete "$fileName" from the server '
+          'and this device to clear this conflict.\n\nThis cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            child: const Text('Delete Everywhere'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final notifier = ref.read(conflictNotifierProvider.notifier);
+    await notifier.deleteConflict(mutation.id);
+    ref.invalidate(directoryEntriesProvider);
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('File deleted from all devices.'),
+        duration: Duration(seconds: 2),
+      ),
     );
   }
 

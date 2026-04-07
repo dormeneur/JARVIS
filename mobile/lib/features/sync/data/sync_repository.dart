@@ -745,4 +745,35 @@ class SyncRepository {
       return 0;
     }
   }
+
+  /// Nuclear conflict resolution: delete the file from both the server and
+  /// local device, then remove the mutation from the queue entirely.
+  Future<void> deleteConflictedFile(String mutationId) async {
+    final mutation = await _db.getMutationById(mutationId);
+    if (mutation == null) return;
+
+    final path = mutation.path;
+    log('[CONFLICT:DELETE] id=$mutationId path=$path', name: 'SyncRepository');
+
+    // 1. Delete from server (ignore 404 — may already be gone)
+    try {
+      await _deleteFile(path);
+    } catch (_) {}
+
+    // 2. Delete local mirror file
+    final mirror = await _mirrorDir();
+    final localFile = File(
+      p.join(mirror.path, path.replaceAll('/', Platform.pathSeparator)),
+    );
+    if (localFile.existsSync()) localFile.deleteSync();
+
+    // 3. Remove from SQLite cache
+    await _explorerRepo.removeEntry(path);
+
+    // 4. Remove all mutations for this path (covers the conflict row + any
+    //    other pending mutations referencing the same file)
+    await _db.removeMutationsForPath(path);
+
+    log('[CONFLICT:DELETED] path=$path', name: 'SyncRepository');
+  }
 }

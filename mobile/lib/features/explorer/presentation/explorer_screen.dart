@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -27,6 +28,7 @@ import 'package:jarvis_mobile/features/chat/presentation/chat_screen.dart';
 import 'package:jarvis_mobile/core/network/server_connection_provider.dart';
 import 'package:jarvis_mobile/shared/models/file_entry.dart';
 import 'package:jarvis_mobile/shared/utils/date_utils.dart';
+import 'package:jarvis_mobile/shared/utils/file_type_utils.dart';
 
 /// Main file explorer screen — displays files and directories in a list
 /// with breadcrumb navigation, context menus, and selection support.
@@ -119,6 +121,9 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
                   ),
                 ],
               ),
+            // Offline warning banner
+            if (connectionState == ServerConnectionState.offline && !isSelectionMode)
+              _buildOfflineBanner(context),
             // Clipboard indicator
             if (clipboardState.isNotEmpty && !isSelectionMode)
               _buildClipboardBanner(context, clipboardState),
@@ -308,13 +313,17 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
           icon: _buildConnectionIcon(connectionState),
           tooltip: _getConnectionTooltip(connectionState),
           onPressed: () {
-            ref.read(serverConnectionProvider.notifier).checkNow();
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Checking server connection...'),
-                duration: Duration(seconds: 1),
-              ),
-            );
+            if (connectionState == ServerConnectionState.offline) {
+              _showOfflineDialog(context);
+            } else {
+              ref.read(serverConnectionProvider.notifier).checkNow();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Checking server connection...'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            }
           },
         ),
         // Conflict badge
@@ -420,6 +429,137 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // Offline Banner & Dialog
+  // ---------------------------------------------------------------------------
+
+  Widget _buildOfflineBanner(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: theme.colorScheme.errorContainer.withValues(alpha: 0.7),
+      child: Row(
+        children: [
+          Icon(
+            Icons.cloud_off_outlined,
+            size: 18,
+            color: theme.colorScheme.onErrorContainer,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Server unreachable — check Tailscale & Docker',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onErrorContainer,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _showOfflineDialog(context),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            child: Text(
+              'Details',
+              style: TextStyle(
+                color: theme.colorScheme.onErrorContainer,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showOfflineDialog(BuildContext context) {
+    final theme = Theme.of(context);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.cloud_off_outlined, size: 24),
+            SizedBox(width: 10),
+            Text('Server Offline'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'JARVIS cannot reach the server. Common causes:',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            _checklistItem(theme, Icons.vpn_key_outlined, 'Tailscale VPN',
+                'Must be connected on both phone and laptop'),
+            const SizedBox(height: 8),
+            _checklistItem(theme, Icons.dns_outlined, 'Docker Containers',
+                'Run "docker compose up" on your laptop'),
+            const SizedBox(height: 8),
+            _checklistItem(theme, Icons.wifi_off_outlined, 'Network Firewall',
+                'Some WiFi networks block Tailscale (e.g. hostel WiFi)'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Dismiss'),
+          ),
+          FilledButton.icon(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              // Try to deep-link into the Tailscale app
+              final tailscaleUri = Uri.parse('tailscale://');
+              if (await canLaunchUrl(tailscaleUri)) {
+                await launchUrl(tailscaleUri);
+              } else {
+                // Fallback: open Tailscale on Play Store
+                final storeUri = Platform.isAndroid
+                    ? Uri.parse('https://play.google.com/store/apps/details?id=com.tailscale.ipn')
+                    : Uri.parse('https://apps.apple.com/app/tailscale/id1470499037');
+                await launchUrl(storeUri, mode: LaunchMode.externalApplication);
+              }
+            },
+            icon: const Icon(Icons.open_in_new, size: 18),
+            label: const Text('Open Tailscale'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _checklistItem(
+      ThemeData theme, IconData icon, String title, String subtitle) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: theme.colorScheme.primary),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  )),
+              Text(subtitle,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  )),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Clipboard Banner
   // ---------------------------------------------------------------------------
 
@@ -474,6 +614,36 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // Open File (routes to Editor or Viewer based on type)
+  // ---------------------------------------------------------------------------
+
+  void _openFile(BuildContext context, FileEntry entry) {
+    if (entry.localPath == null) return;
+    final mode = fileOpenMode(entry.name);
+    switch (mode) {
+      case FileOpenMode.editor:
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => EditorScreen(filePath: entry.path),
+          ),
+        );
+      case FileOpenMode.viewer:
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => FileViewerScreen(
+              localPath: entry.localPath!,
+              fileName: entry.name,
+            ),
+          ),
+        );
+      case FileOpenMode.unsupported:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cannot open .${fileExtension(entry.name)} files')),
+        );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Search
   // ---------------------------------------------------------------------------
 
@@ -489,11 +659,7 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
         },
         onOpen: (entry) {
           if (entry.localPath != null) {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => EditorScreen(filePath: entry.path),
-              ),
-            );
+            _openFile(context, entry);
           }
         },
       ),
@@ -519,11 +685,7 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
     switch (result) {
       case 'open':
         if (entry.localPath != null) {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => EditorScreen(filePath: entry.path),
-            ),
-          );
+          _openFile(context, entry);
         }
       case 'rename':
         _showRenameDialog(context, ref, entry);
@@ -562,7 +724,7 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
       final payload = {
         'path': entry.path,
         'start_page': start,
-        if (end != null) 'end_page': end,
+        'end_page': ?end,
       };
 
       final response = await apiClient.dio.post(
@@ -1288,25 +1450,8 @@ class _FileTile extends ConsumerWidget {
     } else if (entry.isDirectory) {
       ref.read(currentDirectoryProvider.notifier).state = entry.path;
     } else if (entry.localPath != null) {
-      final ext = entry.name.contains('.') ? entry.name.split('.').last.toLowerCase() : '';
-      final textExtensions = ['md', 'txt', 'log', 'json', 'yaml', 'yml', 'xml', 'toml', 'dart', 'py', 'js', 'ts', 'java', 'kt', 'swift', 'rs', 'go', 'c', 'cpp', 'h'];
-      
-      if (textExtensions.contains(ext) || ext.isEmpty) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => EditorScreen(filePath: entry.path),
-          ),
-        );
-      } else {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => FileViewerScreen(
-              localPath: entry.localPath!,
-              fileName: entry.name,
-            ),
-          ),
-        );
-      }
+      final explorerState = context.findAncestorStateOfType<_ExplorerScreenState>();
+      explorerState?._openFile(context, entry);
     }
   }
 
@@ -1357,6 +1502,9 @@ class _FileTile extends ConsumerWidget {
         return Icons.image_outlined;
       case 'pdf':
         return Icons.picture_as_pdf_outlined;
+      case 'docx':
+      case 'doc':
+        return Icons.description_outlined;
       case 'zip':
       case 'tar':
       case 'gz':

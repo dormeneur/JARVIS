@@ -1,0 +1,8 @@
+Analyzing mobile...                                             
+
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\features\sync\presentation\conflict_detail_screen.dart:104:28 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\features\sync\presentation\conflict_detail_screen.dart:107:37 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\features\sync\presentation\conflict_detail_screen.dart:111:28 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\features\sync\presentation\conflict_detail_screen.dart:117:20 - use_build_context_synchronously
+
+4 issues found. (ran in 2.1s)

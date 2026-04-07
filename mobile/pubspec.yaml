@@ -21,6 +21,7 @@ dependencies:
   file_picker: ^10.3.10
   flutter_pdfview: ^1.4.4
   docx_to_text: ^1.0.1
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

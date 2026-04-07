@@ -36,6 +36,18 @@ class ConflictNotifier extends StateNotifier<AsyncValue<void>> {
       state = AsyncValue.error(e, st);
     }
   }
+
+  /// Nuclear option: delete the conflicted file from all devices.
+  Future<void> deleteConflict(String mutationId) async {
+    state = const AsyncValue.loading();
+    try {
+      final syncRepo = _ref.read(syncRepositoryProvider);
+      await syncRepo.deleteConflictedFile(mutationId);
+      state = const AsyncValue.data(null);
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
 }
 
 final conflictNotifierProvider =
