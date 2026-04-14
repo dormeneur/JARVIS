@@ -35,6 +35,7 @@ class AuthState {
   final String? deviceId;
   final String? deviceName;
   final String? serverUrl;
+  final bool isSecretsAuthorized;
   final String? error;
 
   const AuthState({
@@ -42,6 +43,7 @@ class AuthState {
     this.deviceId,
     this.deviceName,
     this.serverUrl,
+    this.isSecretsAuthorized = false,
     this.error,
   });
 
@@ -52,11 +54,13 @@ class AuthState {
     required String deviceId,
     required String deviceName,
     required String serverUrl,
+    bool isSecretsAuthorized = false,
   }) : this(
          status: AuthStatus.authenticated,
          deviceId: deviceId,
          deviceName: deviceName,
          serverUrl: serverUrl,
+         isSecretsAuthorized: isSecretsAuthorized,
        );
 }
 
@@ -91,10 +95,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
     final deviceName = await _secureStorage.getDeviceName() ?? '';
     final serverUrl = await _secureStorage.getServerUrl() ?? '';
 
+    final deviceInfo = await _authRepo.listDevices().then((list) => list.firstWhere((d) => d['device_id'] == deviceId));
+    final isAuth = deviceInfo['is_secrets_authorized'] as bool? ?? false;
+
     state = AuthState.authenticated(
       deviceId: deviceId,
       deviceName: deviceName,
       serverUrl: serverUrl,
+      isSecretsAuthorized: isAuth,
     );
   }
 
@@ -115,6 +123,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         deviceId: await _secureStorage.getDeviceId() ?? '',
         deviceName: deviceName,
         serverUrl: serverUrl,
+        isSecretsAuthorized: true, // First device is always authorized
       );
     } catch (e) {
       state = AuthState.unauthenticated(error: e.toString());
@@ -138,6 +147,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         deviceId: await _secureStorage.getDeviceId() ?? '',
         deviceName: deviceName,
         serverUrl: serverUrl,
+        isSecretsAuthorized: false, // Additional devices are not authorized by default
       );
     } catch (e) {
       state = AuthState.unauthenticated(error: e.toString());
@@ -158,10 +168,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
         deviceName: deviceName,
         deviceSecret: deviceSecret,
       );
+      final deviceId = await _secureStorage.getDeviceId();
+      final devices = await _authRepo.listDevices();
+      final device = devices.firstWhere((d) => d['device_id'] == deviceId);
+      
       state = AuthState.authenticated(
-        deviceId: await _secureStorage.getDeviceId() ?? '',
+        deviceId: deviceId ?? '',
         deviceName: deviceName,
         serverUrl: serverUrl,
+        isSecretsAuthorized: device['is_secrets_authorized'] as bool? ?? false,
       );
     } catch (e) {
       state = AuthState.unauthenticated(error: e.toString());

@@ -31,6 +31,7 @@ async def register_device(body: RegisterRequest) -> RegistrationResponse:
         device_id=device_id,
         device_name=body.device_name,
         device_secret=device_secret,
+        is_secrets_authorized=True,
     )
 
 
@@ -48,6 +49,7 @@ async def register_additional_device(
         device_id=device_id,
         device_name=body.device_name,
         device_secret=device_secret,
+        is_secrets_authorized=False,
     )
 
 
@@ -65,11 +67,13 @@ async def reconnect_device(body: ReconnectRequest) -> TokenResponse:
         device_name=body.device_name,
         device_secret=body.device_secret,
     )
+    device = auth.get_device(device_id)
     return TokenResponse(
         access_token=token,
         expires_at=expires,
         device_id=device_id,
         device_name=body.device_name,
+        is_secrets_authorized=device.get("is_secrets_authorized", False) if device else False,
     )
 
 
@@ -85,6 +89,7 @@ async def refresh_token(current: dict = Depends(get_current_device)) -> TokenRes
         expires_at=expires,
         device_id=current["device_id"],
         device_name=current["device_name"],
+        is_secrets_authorized=current.get("is_secrets_authorized", False),
     )
 
 
@@ -106,7 +111,23 @@ async def get_current_device_info(
         device_id=device["device_id"],
         device_name=device["device_name"],
         registered_at=device["registered_at"],
+        is_secrets_authorized=device.get("is_secrets_authorized", False),
     )
+
+
+@router.post("/authorize_secrets")
+async def authorize_secrets(
+    device_id: str,
+    authorized: bool = True,
+    current: dict = Depends(get_current_device),
+) -> dict:
+    if not current.get("is_secrets_authorized"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Only secrets-authorized devices can authorize others")
+    
+    auth.authorize_secrets(device_id, authorized)
+    status_str = "authorized" if authorized else "revoked"
+    return {"message": f"Device {device_id} secrets access {status_str}"}
 
 
 @router.get("/devices", response_model=DeviceListResponse)

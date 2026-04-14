@@ -138,10 +138,10 @@ stateDiagram-v2
 | Search | ✅ Local full-text search |
 
 ### Change Queue
-- All offline mutations stored in SQLite `change_queue` table
-- Each entry: `{action, path, timestamp, payload_hash}`
+- All offline mutations stored in SQLite `MutationQueue` table
+- Each entry: `{action, path, timestamp, localContentSnapshot}`
 - On reconnect, queue replayed in order through sync protocol
-- Failed items retry with exponential backoff
+- Conflicts marked as `failed` for manual resolution UI
 
 ---
 
@@ -163,12 +163,12 @@ CREATE TABLE file_cache (
 );
 
 -- Pending changes for offline queue
-CREATE TABLE change_queue (
+CREATE TABLE MutationQueue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     action TEXT NOT NULL,        -- 'create', 'update', 'delete', 'move'
     path TEXT NOT NULL,
     timestamp TEXT NOT NULL,
-    payload_ref TEXT,            -- Local file reference if applicable
+    localContentSnapshot TEXT,   -- Local content for conflict resolution
     status TEXT DEFAULT 'pending' -- 'pending', 'syncing', 'failed'
 );
 

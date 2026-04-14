@@ -8,4 +8,5 @@ class ChatMessages extends Table {
   TextColumn get sources => text().nullable()(); // JSON-encoded list
   TextColumn get attachments => text().nullable()(); // JSON-encoded list of paths
   TextColumn get timestamp => text()(); // ISO8601 UTC
+  TextColumn get sessionId => text()(); // UUID of the session
 }

@@ -13,10 +13,17 @@ class AskOptions(BaseModel):
     stream: bool = Field(default=True, description="Stream response tokens")
 
 
+class Message(BaseModel):
+    role: str
+    content: str
+
+
 class AskRequest(BaseModel):
     """Request model for AI queries."""
     
     query: str = Field(..., description="Natural language query")
+    current_directory: str = Field(default=".", description="Context directory relative to vault")
+    chat_history: List[Message] = Field(default_factory=list, description="Chat turns")
     attachments: List[str] = Field(default_factory=list, description="File paths to include as context")
     options: Optional[AskOptions] = Field(default_factory=AskOptions)
 

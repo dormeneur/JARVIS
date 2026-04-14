@@ -17,4 +17,5 @@ def get_current_device(authorization: str = Header(...)) -> dict:
         "device_id": payload["sub"],
         "device_name": payload["device_name"],
         "jti": payload["jti"],
+        "is_secrets_authorized": payload.get("is_secrets_authorized", False),
     }

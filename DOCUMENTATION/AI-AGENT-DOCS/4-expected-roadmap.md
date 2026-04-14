@@ -45,7 +45,7 @@ Below are 2 levels of chunking + small 3rd-level sub-tasks for each smaller chun
 * 2.3 Upload/download + streaming
 
   * implement chunked upload and secure download endpoint
-  * add file conflict handling (auto-rename with `_conflict`)
+  * add file conflict handling (SQLite MutationQueue with local snapshot)
 * 2.4 Backup & export
 
   * endpoint to export JARVIS archive (zip) for migration

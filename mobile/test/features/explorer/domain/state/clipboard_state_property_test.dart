@@ -345,12 +345,18 @@ void main() {
                   'Original "$path" should not exist after paste-cut');
         }
 
-        // Verify move mutations were queued
+        // Verify decomposed mutations were queued (delete + update/create)
         final mutations = await database.getPendingMutations();
-        final moveMutations =
-            mutations.where((m) => m.operation == 'move').toList();
-        expect(moveMutations.length, fileCount,
-            reason: 'Should have $fileCount move mutations');
+        
+        // Count delete operations (one for each moved file)
+        final deleteCount = mutations.where((m) => m.operation == 'delete').length;
+        expect(deleteCount, fileCount,
+            reason: 'Should have $fileCount delete mutations for moved files');
+            
+        // Count update operations (one for each moved file at new location)
+        final updateCount = mutations.where((m) => m.operation == 'update').length;
+        expect(updateCount, fileCount,
+            reason: 'Should have $fileCount update mutations for moved files');
 
         // Clean up
         await database.deleteAllEntries();

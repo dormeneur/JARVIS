@@ -7,11 +7,9 @@ from app.services.version_tracker import VersionTracker
 
 
 @pytest.fixture
-def temp_db():
+def temp_db(tmp_path):
     """Create a temporary database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test_versions.db"
-        yield db_path
+    return tmp_path / "test_versions.db"
 
 
 class TestVersionTracker:

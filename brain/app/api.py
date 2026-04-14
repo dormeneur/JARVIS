@@ -11,12 +11,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 
 from app.config import settings
-from app.routers import debug, ask, generate
+from app.routers import debug, ask, generate, chat
+from app.services.history_db import init_db
 from app.services.document_loader import DocumentLoader
 from app.services.text_chunker import TextChunker
 from app.services.embedding_pipeline import EmbeddingPipeline
 from app.services.vector_store import VectorStore
 from app.services.incremental_indexer import IncrementalIndexer
+from app.services.fs_tree import refresh_fs_tree
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger("jv-brain")
@@ -38,7 +40,17 @@ async def lifespan(app: FastAPI):
     
     # Start background indexing
     app.state.indexer.start_background_indexing()
-    
+
+    # Initialize history database
+    init_db()
+
+    # Build initial filesystem tree snapshot for LLM context
+    try:
+        tree = refresh_fs_tree()
+        logger.info(f"Built initial fs_tree snapshot with {len(tree)} paths")
+    except Exception as e:
+        logger.warning(f"Failed to build initial fs_tree: {e}")
+
     yield
     
     # Shutdown
@@ -55,6 +67,7 @@ app = FastAPI(
 app.include_router(debug.router)
 app.include_router(ask.router)
 app.include_router(generate.router)
+app.include_router(chat.router)
 
 
 @app.get("/brain/status")

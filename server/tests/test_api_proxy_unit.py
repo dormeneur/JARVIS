@@ -10,7 +10,7 @@ from app.routers.ask import ask_status, ask_index_status, ask_reindex
 @pytest.mark.asyncio
 async def test_ask_status_forwarding():
     with patch("httpx.AsyncClient.get") as mock_get:
-        mock_resp = AsyncMock()
+        mock_resp = MagicMock()
         mock_resp.json.return_value = {"status": "ok"}
         mock_resp.raise_for_status.return_value = None
         mock_get.return_value = mock_resp
@@ -32,7 +32,7 @@ async def test_ask_index_status_error():
 @pytest.mark.asyncio
 async def test_ask_reindex():
     with patch("httpx.AsyncClient.post") as mock_post:
-        mock_resp = AsyncMock()
+        mock_resp = MagicMock()
         mock_resp.json.return_value = {"status": "indexing_started"}
         mock_resp.raise_for_status.return_value = None
         mock_post.return_value = mock_resp

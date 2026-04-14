@@ -625,23 +625,25 @@ void main() {
           reason: 'File should exist at new path "$newPath"',
         );
 
-        // Verify mutation was queued
+        // Verify mutations were queued (decomposed into delete and update)
         final mutations = await database.getPendingMutations();
         expect(
-          mutations.isNotEmpty,
-          isTrue,
-          reason: 'At least one mutation should be queued',
+          mutations.length,
+          greaterThanOrEqualTo(2),
+          reason: 'At least two mutations should be queued (delete + update)',
         );
 
-        final moveMutation = mutations.firstWhere(
-          (m) => m.operation == 'move' && m.path == newPath,
-          orElse: () => throw StateError('Move mutation not found'),
+        final deleteMutation = mutations.firstWhere(
+          (m) => m.operation == 'delete' && m.path == filePath,
+          orElse: () => throw StateError('Delete mutation for old path "$filePath" not found'),
         );
-        expect(
-          moveMutation.operation,
-          'move',
-          reason: 'Mutation should be a move operation',
+        expect(deleteMutation.operation, 'delete');
+
+        final updateMutation = mutations.firstWhere(
+          (m) => (m.operation == 'update' || m.operation == 'create') && m.path == newPath,
+          orElse: () => throw StateError('Update mutation for new path "$newPath" not found'),
         );
+        expect(updateMutation.path, newPath);
 
         // Clean up for next iteration
         await database.deleteAllEntries();
@@ -1082,24 +1084,25 @@ void main() {
         // Verify mutation count equals successful move count
         final mutations = await database.getPendingMutations();
         final moveMutations =
-            mutations.where((m) => m.operation == 'move').toList();
+            mutations.toList();
 
         expect(
           moveMutations.length,
-          batchSize,
+          batchSize * 2,
           reason:
-              'Iteration $i: Move mutation count (${ moveMutations.length}) should equal batch size ($batchSize)',
+              'Iteration $i: Mutation count (${moveMutations.length}) should equal double batch size (${batchSize * 2})',
         );
 
-        // Verify each moved file has a corresponding mutation
-        for (final successId in result.successfulIds) {
-          final hasMutation =
-              moveMutations.any((m) => m.path == successId);
-          expect(
-            hasMutation,
-            isTrue,
-            reason: 'Successful move to "$successId" should have a mutation',
-          );
+        // Verify each moved file has corresponding delete and update mutations
+        for (final filePath in filePaths) {
+          final fileName = filePath.split('/').last;
+          final newPath = '$targetFolderPath/$fileName';
+          
+          final hasDelete = moveMutations.any((m) => m.operation == 'delete' && m.path == filePath);
+          final hasUpdate = moveMutations.any((m) => (m.operation == 'update' || m.operation == 'create') && m.path == newPath);
+          
+          expect(hasDelete, isTrue, reason: 'Missing delete mutation for $filePath');
+          expect(hasUpdate, isTrue, reason: 'Missing update mutation for $newPath');
         }
 
         // Clean up
@@ -1885,12 +1888,13 @@ void main() {
         expect(renamedFile?.name, newName,
             reason: 'Name should be updated to "$newName"');
 
-        // Verify mutation was queued
+        // Verify mutations were queued (decomposed into delete + update)
         final mutations = await database.getPendingMutations();
-        final updateMutations =
-            mutations.where((m) => m.operation == 'update').toList();
-        expect(updateMutations.isNotEmpty, isTrue,
-            reason: 'An update mutation should be queued');
+        final deleteMutation = mutations.any((m) => m.operation == 'delete' && m.path == filePath);
+        final updateMutation = mutations.any((m) => m.operation == 'update' && m.path == newPath);
+        
+        expect(deleteMutation, isTrue, reason: 'A delete mutation should be queued');
+        expect(updateMutation, isTrue, reason: 'An update mutation should be queued');
 
         // Clean up
         await database.deleteAllEntries();

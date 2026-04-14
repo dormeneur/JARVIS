@@ -22,6 +22,8 @@ async def generate_rag_stream(request_data: AskRequest, app_state):
     """Generator function that yields NDJSON lines for the StreamingResponse."""
     query = request_data.query
     attachments = request_data.attachments or []
+    chat_history = request_data.chat_history or []
+    current_directory = request_data.current_directory or "."
     options = request_data.options or AskOptions()
     logger.info(f"generate_rag_stream started. Query: {query}, Options: {options}")
     
@@ -55,7 +57,9 @@ async def generate_rag_stream(request_data: AskRequest, app_state):
     prompt, final_sources = assembler.assemble_prompt(
         query=query,
         retrieved_sources=retrieved_sources,
-        attachments=attachments
+        attachments=attachments,
+        chat_history=chat_history,
+        current_directory=current_directory
     )
     
     logger.info(f"Prompt assembled ({len(prompt)} chars). Opening stream from Ollama...")
@@ -89,7 +93,7 @@ async def generate_rag_stream(request_data: AskRequest, app_state):
     yield final_response.model_dump_json() + "\n"
 
 
-@router.post("/brain/ask")
+@router.post("/brain/ai/query")
 async def ask_brain(req: AskRequest, request: Request):
     """Query the AI knowledge base using RAG."""
     # Check if streaming is requested

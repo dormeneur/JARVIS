@@ -6,6 +6,7 @@ import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:jarvis_mobile/features/chat/data/chat_messages_table.dart';
+import 'package:jarvis_mobile/features/chat/data/chat_sessions_table.dart';
 
 part 'app_database.g.dart';
 
@@ -45,7 +46,21 @@ class MutationQueue extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-@DriftDatabase(tables: [FileCacheEntries, MutationQueue, ChatMessages])
+/// Table for storing encrypted secrets client-side.
+class SecretEntries extends Table {
+  TextColumn get id => text()(); // UUID
+  TextColumn get label => text()();
+  TextColumn get encryptedBlob => text()(); // Base64 encoded
+  TextColumn get iv => text()(); // Base64 encoded
+  TextColumn get salt => text()(); // Base64 encoded
+  TextColumn get createdAt => text()(); // ISO8601 UTC string
+  TextColumn get updatedAt => text()(); // ISO8601 UTC string
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DriftDatabase(tables: [FileCacheEntries, MutationQueue, ChatMessages, ChatSessions, SecretEntries])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
@@ -53,7 +68,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration {
@@ -85,6 +100,27 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 6) {
           await m.createTable(chatMessages);
+        }
+        if (from < 7) {
+          await m.createTable(secretEntries);
+        }
+        if (from < 8) {
+          await m.createTable(chatSessions);
+          await m.addColumn(chatMessages, chatMessages.sessionId);
+          
+          // Seed a default session if there are existing messages
+          const legacySessionId = 'legacy-conversation-id';
+          final now = DateTime.now().toUtc().toIso8601String();
+          
+          await customStatement('''
+            INSERT INTO chat_sessions (id, title, created_at, last_active_at)
+            SELECT '$legacySessionId', 'Legacy Conversation', '$now', '$now'
+            WHERE EXISTS (SELECT 1 FROM chat_messages LIMIT 1)
+          ''');
+          
+          await customStatement('''
+            UPDATE chat_messages SET session_id = '$legacySessionId' WHERE session_id IS NULL
+          ''');
         }
       },
     );
@@ -248,11 +284,16 @@ class AppDatabase extends _$AppDatabase {
     String localSnapshot,
     int serverVersion,
   ) async {
+    final mutation = await (select(
+      mutationQueue,
+    )..where((m) => m.id.equals(id))).getSingleOrNull();
+
     await (update(mutationQueue)..where((m) => m.id.equals(id))).write(
       MutationQueueCompanion(
         status: const Value('failed'),
         localContentSnapshot: Value(localSnapshot),
         baseVersion: Value(serverVersion),
+        retryCount: Value((mutation?.retryCount ?? 0) + 1),
       ),
     );
   }
@@ -319,6 +360,7 @@ class AppDatabase extends _$AppDatabase {
   Future<int> insertChatMessage({
     required String query,
     required String response,
+    required String sessionId,
     String? sources,
     String? attachments,
     required String timestamp,
@@ -327,11 +369,20 @@ class AppDatabase extends _$AppDatabase {
       ChatMessagesCompanion.insert(
         query: query,
         response: response,
+        sessionId: sessionId,
         sources: Value(sources),
         attachments: Value(attachments),
         timestamp: timestamp,
       ),
     );
+  }
+
+  /// Get all chat messages for a specific session ordered by timestamp.
+  Future<List<ChatMessage>> getChatMessages(String sessionId) {
+    return (select(chatMessages)
+          ..where((m) => m.sessionId.equals(sessionId))
+          ..orderBy([(m) => OrderingTerm.asc(m.timestamp)]))
+        .get();
   }
 
   /// Get all chat messages ordered by timestamp (newest last).
@@ -341,6 +392,33 @@ class AppDatabase extends _$AppDatabase {
         .get();
   }
 
+  // --- Chat Session Operations ---
+
+  /// Get all chat sessions ordered by last active time (newest first).
+  Future<List<ChatSession>> getAllChatSessions() {
+    return (select(chatSessions)
+          ..orderBy([(s) => OrderingTerm.desc(s.lastActiveAt)]))
+        .get();
+  }
+
+  /// Get a single chat session by ID.
+  Future<ChatSession?> getChatSession(String id) {
+    return (select(chatSessions)..where((s) => s.id.equals(id))).getSingleOrNull();
+  }
+
+  /// Create or update a chat session.
+  Future<void> upsertChatSession(ChatSessionsCompanion session) {
+    return into(chatSessions).insertOnConflictUpdate(session);
+  }
+
+  /// Delete a chat session and all its messages.
+  Future<void> deleteChatSession(String id) async {
+    await transaction(() async {
+      await (delete(chatMessages)..where((m) => m.sessionId.equals(id))).go();
+      await (delete(chatSessions)..where((s) => s.id.equals(id))).go();
+    });
+  }
+
   /// Delete a single chat message by ID.
   Future<void> deleteChatMessage(int id) {
     return (delete(chatMessages)..where((m) => m.id.equals(id))).go();
@@ -348,6 +426,31 @@ class AppDatabase extends _$AppDatabase {
 
   /// Clear all chat history.
   Future<void> clearChatHistory() => delete(chatMessages).go();
+
+  // --- Secrets Operations ---
+
+  /// Insert or update a secret entry
+  Future<void> upsertSecret(SecretEntriesCompanion entry) {
+    return into(secretEntries).insertOnConflictUpdate(entry);
+  }
+
+  /// Get all secrets ordered by label
+  Future<List<SecretEntry>> getAllSecrets() {
+    return (select(secretEntries)..orderBy([(s) => OrderingTerm.asc(s.label)])).get();
+  }
+
+  /// Get a single secret by ID
+  Future<SecretEntry?> getSecretById(String id) {
+    return (select(secretEntries)..where((s) => s.id.equals(id))).getSingleOrNull();
+  }
+
+  /// Delete a secret by ID
+  Future<void> deleteSecret(String id) {
+    return (delete(secretEntries)..where((s) => s.id.equals(id))).go();
+  }
+
+  /// Clear all secrets
+  Future<void> clearAllSecrets() => delete(secretEntries).go();
 }
 
 LazyDatabase _openConnection() {

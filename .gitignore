@@ -10,3 +10,6 @@ dist/
 build/
 .venv/
 venv/
+
+# Hypothesis tests
+.hypothesis/

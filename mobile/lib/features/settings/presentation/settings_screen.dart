@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_provider.dart';
+import 'package:jarvis_mobile/features/settings/presentation/device_management_screen.dart';
 
 /// Settings screen — shows device info, server URL, and logout.
 class SettingsScreen extends ConsumerWidget {
@@ -38,6 +39,18 @@ class SettingsScreen extends ConsumerWidget {
             leading: const Icon(Icons.fingerprint),
             title: const Text('Device ID'),
             subtitle: Text(authState.deviceId ?? 'Unknown'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.manage_accounts_outlined),
+            title: const Text('Device Management'),
+            subtitle: const Text('Authorized devices for Secrets'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const DeviceManagementScreen()),
+              );
+            },
           ),
           const Divider(),
           _SectionHeader('Explorer'),

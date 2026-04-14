@@ -2,9 +2,13 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:drift/drift.dart' as drift;
+import 'package:uuid/uuid.dart';
 import '../data/chat_repository.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
+import 'package:jarvis_mobile/core/storage/app_database.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_provider.dart';
+import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 import 'widgets/file_creation_modal.dart';
 
 class ChatMessage {
@@ -53,19 +57,66 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _isGenerating = false;
   bool _isReindexing = false;
   bool? _aiAvailable; // null = checking, true = online, false = offline
+  String? _currentSessionId;
+  String? _activeSessionId; // The session that can be texted
 
   @override
   void initState() {
     super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    await _ensureSessionExists();
     _loadChatHistory();
     _checkAiStatus();
   }
 
-  Future<void> _loadChatHistory() async {
+  Future<void> _ensureSessionExists() async {
     final db = ref.read(appDatabaseProvider);
-    final history = await db.getAllChatMessages();
-    if (mounted && history.isNotEmpty) {
+    final sessions = await db.getAllChatSessions();
+    if (sessions.isEmpty) {
+      await _startNewChat();
+    } else {
+      _currentSessionId = sessions.first.id;
+      _activeSessionId = _currentSessionId;
+    }
+  }
+
+  Future<void> _startNewChat() async {
+    final sessionId = const Uuid().v4();
+    final now = DateTime.now().toUtc().toIso8601String();
+    final db = ref.read(appDatabaseProvider);
+
+    await db.upsertChatSession(ChatSessionsCompanion.insert(
+      id: sessionId,
+      title: 'New Conversation',
+      createdAt: now,
+      lastActiveAt: now,
+    ));
+
+    setState(() {
+      _currentSessionId = sessionId;
+      _activeSessionId = sessionId;
+      _messages.clear();
+    });
+  }
+
+  Future<void> _selectSession(String sessionId) async {
+    setState(() {
+      _currentSessionId = sessionId;
+      _messages.clear();
+    });
+    await _loadChatHistory();
+  }
+
+  Future<void> _loadChatHistory() async {
+    if (_currentSessionId == null) return;
+    final db = ref.read(appDatabaseProvider);
+    final history = await db.getChatMessages(_currentSessionId!);
+    if (mounted) {
       setState(() {
+        _messages.clear();
         for (final msg in history) {
           _messages.add(ChatMessage(
             role: 'user',
@@ -120,11 +171,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     _scrollToBottom();
 
+    final currentDir = ref.read(currentDirectoryProvider);
+    final directory = currentDir.isNotEmpty ? currentDir : '.';
+
+    final allHistory = _messages
+        .where((m) => !m.isStreaming)
+        .map((m) => {'role': m.role, 'content': m.text})
+        .toList();
+    final recentHistory = allHistory.length > 10 ? allHistory.sublist(allHistory.length - 10) : allHistory;
+
     final repo = ref.read(chatRepositoryProvider);
     try {
       await for (final chunk in repo.askJarvis(
         query,
         attachments: sentAttachments.isNotEmpty ? sentAttachments : null,
+        chatHistory: recentHistory,
+        currentDirectory: directory,
       )) {
         if (!mounted) break;
 
@@ -199,11 +261,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     final repo = ref.read(chatRepositoryProvider);
     final isDryRun = ref.read(dryRunModeProvider);
+    final currentDir = ref.read(currentDirectoryProvider);
+    final directory = currentDir.isNotEmpty ? currentDir : '.';
 
     try {
       final manifest = isDryRun 
-         ? await repo.previewFiles(query)
-         : await repo.generateFiles(query);
+         ? await repo.previewFiles(query, directory: directory)
+         : await repo.generateFiles(query, directory: directory);
          
       if (!mounted) return;
 
@@ -237,18 +301,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _saveChatPair(String query, List<String> attachments) async {
-    if (_messages.length < 2) return;
+    if (_messages.length < 2 || _currentSessionId == null) return;
     final assistant = _messages[_messages.length - 1];
     if (assistant.role != 'assistant' || assistant.text.isEmpty) return;
 
     final db = ref.read(appDatabaseProvider);
+    final timestamp = DateTime.now().toUtc().toIso8601String();
+
+    // If first message, generate title
+    final session = await db.getChatSession(_currentSessionId!);
+    if (session != null && session.title == 'New Conversation') {
+      final newTitle = query.length > 60 ? '${query.substring(0, 57)}...' : query;
+      await db.upsertChatSession(ChatSessionsCompanion(
+        id: drift.Value(_currentSessionId!),
+        title: drift.Value(newTitle),
+        lastActiveAt: drift.Value(timestamp),
+      ));
+    } else {
+      await db.upsertChatSession(ChatSessionsCompanion(
+        id: drift.Value(_currentSessionId!),
+        lastActiveAt: drift.Value(timestamp),
+      ));
+    }
+
     await db.insertChatMessage(
       query: query,
       response: assistant.text,
+      sessionId: _currentSessionId!,
       sources:
           assistant.sources != null ? jsonEncode(assistant.sources) : null,
       attachments: attachments.isNotEmpty ? jsonEncode(attachments) : null,
-      timestamp: DateTime.now().toUtc().toIso8601String(),
+      timestamp: timestamp,
+    );
+
+    // Sync to backend history
+    final repo = ref.read(chatRepositoryProvider);
+    await repo.syncMessageToBrain(
+      sessionId: _currentSessionId!,
+      query: query,
+      response: assistant.text,
+      timestamp: timestamp,
     );
   }
 
@@ -267,27 +359,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  Future<void> _clearHistory() async {
+  Future<void> _deleteCurrentSession() async {
+    if (_currentSessionId == null) return;
+    
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Clear Chat History'),
+        title: const Text('Delete Conversation'),
         content:
-            const Text('This will delete all saved messages. Continue?'),
+            const Text('This will delete all messages in this conversation. Continue?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Clear', style: TextStyle(color: Colors.red))),
+              child: const Text('Delete', style: TextStyle(color: Colors.red))),
         ],
       ),
     );
     if (confirmed == true && mounted) {
       final db = ref.read(appDatabaseProvider);
-      await db.clearChatHistory();
-      setState(() => _messages.clear());
+      final repo = ref.read(chatRepositoryProvider);
+      
+      final idToDelete = _currentSessionId!;
+      await db.deleteChatSession(idToDelete);
+      await repo.deleteSession(idToDelete);
+      
+      await _initializeApp();
     }
   }
 
@@ -375,15 +474,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
+      drawer: _buildHistoryDrawer(context),
       appBar: AppBar(
         title: Row(
           children: [
-            const Text('JARVIS AI'),
+            const Text('JARVIS'),
             const SizedBox(width: 8),
             _buildStatusChip(theme),
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.add_comment_outlined),
+            tooltip: 'New Chat',
+            onPressed: _startNewChat,
+          ),
           IconButton(
             icon: _isReindexing
                 ? const SizedBox(
@@ -397,12 +502,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
           PopupMenuButton<String>(
             onSelected: (value) {
-              if (value == 'clear') _clearHistory();
+              if (value == 'delete') _deleteCurrentSession();
               if (value == 'status') _checkAiStatus();
             },
             itemBuilder: (_) => [
               const PopupMenuItem(
-                  value: 'clear', child: Text('Clear History')),
+                  value: 'delete', child: Text('Delete Session', style: TextStyle(color: Colors.red))),
               const PopupMenuItem(
                   value: 'status', child: Text('Refresh Status')),
             ],
@@ -548,8 +653,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     },
                   ),
           ),
-          // Input area
-          Padding(
+          // Input area (only shown for active session)
+          if (_currentSessionId == _activeSessionId)
+            Padding(
             padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
@@ -588,6 +694,98 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       : _sendMessage,
                 ),
               ],
+            ),
+          )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              color: theme.colorScheme.surfaceContainerHigh,
+              width: double.infinity,
+              child: Center(
+                child: Text('Viewing past session (Read-only)',
+                    style: theme.textTheme.labelMedium
+                        ?.copyWith(color: theme.colorScheme.outline)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryDrawer(BuildContext context) {
+    final theme = Theme.of(context);
+    final db = ref.watch(appDatabaseProvider);
+
+    return Drawer(
+      child: Column(
+        children: [
+          DrawerHeader(
+            decoration: BoxDecoration(color: theme.colorScheme.primaryContainer),
+            child: Center(
+                child: Text('Chat History',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                        color: theme.colorScheme.onPrimaryContainer))),
+          ),
+          ListTile(
+            leading: const Icon(Icons.add),
+            title: const Text('New Chat'),
+            onTap: () {
+              Navigator.pop(context);
+              _startNewChat();
+            },
+          ),
+          const Divider(),
+          Expanded(
+            child: StreamBuilder<List<ChatSession>>(
+              stream: db.select(db.chatSessions).watch(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final sessions = snapshot.data!;
+                if (sessions.isEmpty) {
+                  return const Center(child: Text('No history yet'));
+                }
+                return ListView.builder(
+                  itemCount: sessions.length,
+                  itemBuilder: (context, index) {
+                    final session = sessions[index];
+                    final isSelected = session.id == _currentSessionId;
+                    return ListTile(
+                      selected: isSelected,
+                      leading: Icon(Icons.chat_bubble_outline,
+                          color: isSelected ? theme.colorScheme.primary : null),
+                      title: Text(session.title,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(
+                          session.lastActiveAt.substring(0, 10),
+                          style: theme.textTheme.labelSmall),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _selectSession(session.id);
+                      },
+                      onLongPress: () {
+                        // Quick delete option
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Delete Session?'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                              TextButton(onPressed: () async {
+                                Navigator.pop(ctx);
+                                await db.deleteChatSession(session.id);
+                                ref.read(chatRepositoryProvider).deleteSession(session.id);
+                                if (session.id == _currentSessionId) _initializeApp();
+                              }, child: const Text('Delete', style: TextStyle(color: Colors.red))),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
             ),
           ),
         ],

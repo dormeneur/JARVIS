@@ -752,11 +752,11 @@ void main() {
       expect(newFile!.name, 'file.txt');
       expect(newFile.path, 'target/file.txt');
 
-      // Verify: Mutation was enqueued
+      // Verify: Mutations were enqueued (decomposed delete + update)
       final mutations = await db.getPendingMutations();
-      expect(mutations.isNotEmpty, isTrue);
-      expect(mutations.first.operation, 'delete');
-      expect(['target/file.txt', 'source/file.txt'].contains(mutations.first.path), isTrue);
+      expect(mutations.length, 2);
+      expect(mutations.any((m) => m.operation == 'delete' && m.path == 'source/file.txt'), isTrue);
+      expect(mutations.any((m) => m.operation == 'update' && m.path == 'target/file.txt'), isTrue);
     });
 
     test('moveFile returns error for non-existent source file', () async {
@@ -1084,11 +1084,10 @@ void main() {
       expect(await repository.getEntry('parent/child/file2.txt'), isNull);
       expect(await repository.getEntry('parent/file3.txt'), isNull);
 
-      // Verify: Mutation was enqueued
+      // Verify: Mutations were enqueued (decomposed)
       final mutations = await db.getPendingMutations();
-      expect(mutations.isNotEmpty, isTrue);
-      expect(mutations.first.operation, 'delete');
-      expect(mutations.first.path, 'target/parent');
+      expect(mutations.any((m) => m.operation == 'delete' && m.path == 'parent'), isTrue);
+      expect(mutations.any((m) => m.operation == 'update' && m.path == 'target/parent'), isTrue);
     });
   });
 
@@ -1175,10 +1174,11 @@ void main() {
       expect(await repository.getEntry('source/file2.txt'), isNull);
       expect(await repository.getEntry('source/file3.txt'), isNull);
 
-      // Verify: Mutations were enqueued for all files
+      // Verify: Mutations were enqueued for all files (decomposed delete + update)
       final mutations = await db.getPendingMutations();
-      expect(mutations.isNotEmpty, isTrue);
-      expect(mutations.every((m) => m.operation == 'move'), isTrue);
+      expect(mutations, hasLength(6)); // 3 files * 2 mutations each
+      expect(mutations.any((m) => m.operation == 'delete' && m.path == 'source/file1.txt'), isTrue);
+      expect(mutations.any((m) => m.operation == 'update' && m.path == 'target/file1.txt'), isTrue);
     });
 
     test('moveFiles handles partial success with name conflicts', () async {
@@ -2215,11 +2215,11 @@ void main() {
       expect(newFile!.name, 'newname.txt');
       expect(newFile.path, 'folder/newname.txt');
 
-      // Verify: Update mutation was enqueued
+      // Verify: Mutations were enqueued (decomposed delete + update)
       final mutations = await db.getPendingMutations();
-      expect(mutations.isNotEmpty, isTrue);
-      expect(['update', 'delete'].contains(mutations.first.operation), isTrue);
-      expect(mutations.first.path, 'folder/newname.txt');
+      expect(mutations.length, 2);
+      expect(mutations.any((m) => m.operation == 'delete' && m.path == 'folder/oldname.txt'), isTrue);
+      expect(mutations.any((m) => m.operation == 'update' && m.path == 'folder/newname.txt'), isTrue);
     });
 
     test('renameFile successfully renames a file in root', () async {

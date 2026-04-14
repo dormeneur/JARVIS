@@ -38,7 +38,7 @@ gantt
 
 ---
 
-## Phase 1: Scaffold & Core Backend
+## Phase 1: Scaffold & Core Backend (✅ Complete)
 
 ### Goal
 A working Dockerized backend that can list, read, create, update, and delete files in `/JARVIS`, accessible over localhost.
@@ -67,7 +67,7 @@ A working Dockerized backend that can list, read, create, update, and delete fil
 
 ---
 
-## Phase 2: Mobile MVP & Sync Engine
+## Phase 2: Mobile MVP & Sync Engine (✅ Complete)
 
 ### Goal
 A Flutter app that browses the vault, edits markdown, works offline, and syncs selectively with the server.
@@ -83,7 +83,7 @@ A Flutter app that browses the vault, edits markdown, works offline, and syncs s
 | 2.6 | **Selective sync toggle** | Per-folder sync enable/disable in UI |
 | 2.7 | **Sync manifest exchange** | `POST /sync/manifest` implementation on both sides |
 | 2.8 | **Push/Pull transfer** | Files transfer both directions with hash verification |
-| 2.9 | **Conflict detection** | True conflicts surfaced with `_conflict` suffix files |
+| 2.9 | **Conflict detection** | True conflicts surfaced in SQLite `MutationQueue` |
 | 2.10 | **Offline queue** | Changes queued in SQLite; replayed on reconnect |
 | 2.11 | **Tailscale integration** | App connects to server over Tailscale only |
 
@@ -100,7 +100,7 @@ A Flutter app that browses the vault, edits markdown, works offline, and syncs s
 
 ---
 
-## Phase 3: AI Integration
+## Phase 3: AI Integration (🟡 In Progress)
 
 ### Goal
 The user can ask questions from the mobile app and get answers grounded in their vault files.

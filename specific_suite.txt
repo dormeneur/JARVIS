@@ -1,0 +1,52 @@
+C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pytest_asyncio\plugin.py:247: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.14.2, pytest-8.3.4, pluggy-1.6.0 -- C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default' -> database=DirectoryBasedExampleDatabase(WindowsPath('B:/DEV/JARVIS/.hypothesis/examples'))
+rootdir: B:\DEV\JARVIS\brain
+configfile: pytest.ini
+plugins: anyio-4.12.1, hypothesis-6.122.3, langsmith-0.7.30, asyncio-1.3.0, cov-6.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 111 items / 104 deselected / 7 selected
+
+brain\tests\test_fs_tree.py::test_build_fs_tree PASSED                   [ 14%]
+brain\tests\test_fs_tree.py::test_build_fs_tree_respects_cap PASSED      [ 28%]
+brain\tests\test_fs_tree.py::test_build_fs_tree_skips_hidden PASSED      [ 42%]
+brain\tests\test_fs_tree.py::test_build_fs_tree_empty_dir PASSED         [ 57%]
+brain\tests\test_fs_tree.py::test_build_fs_tree_nonexistent PASSED       [ 71%]
+brain\tests\test_fs_tree.py::test_persist_and_load_roundtrip PASSED      [ 85%]
+brain\tests\test_fs_tree.py::test_load_fs_tree_missing PASSED            [100%]
+
+============================== warnings summary ===============================
+<frozen importlib._bootstrap>:491
+<frozen importlib._bootstrap>:491
+  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:491
+<frozen importlib._bootstrap>:491
+  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:491
+  <frozen importlib._bootstrap>:491: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\langchain_core\_api\deprecation.py:25
+  C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\langchain_core\_api\deprecation.py:25: UserWarning: Core Pydantic V1 functionality isn't compatible with Python 3.14 or greater.
+    from pydantic.v1.fields import FieldInfo as FieldInfoV1
+
+C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\chromadb\telemetry\opentelemetry\__init__.py:128
+  C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\chromadb\telemetry\opentelemetry\__init__.py:128: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(f):
+
+C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\fastapi\routing.py:233: 33 warnings
+  C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\fastapi\routing.py:233: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    is_coroutine = asyncio.iscoroutinefunction(dependant.call)
+
+C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\starlette\_utils.py:39: 43 warnings
+  C:\Users\Aditya\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\starlette\_utils.py:39: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(obj) or (callable(obj) and asyncio.iscoroutinefunction(obj.__call__))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=============== 7 passed, 104 deselected, 83 warnings in 4.86s ================

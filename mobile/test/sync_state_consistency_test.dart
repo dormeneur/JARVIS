@@ -945,9 +945,9 @@ void main() {
       );
       expect(result.conflicts, 1);
 
-      final mutation = await db.getMutationById('c-conflict-001');
-      expect(mutation!.status, 'failed');
-      expect(mutation.conflictFilePath, 'conflict_file_c.md');
+      final mutations = await db.getFailedMutations();
+      expect(mutations.first.status, 'failed');
+      expect(mutations.first.localContentSnapshot, 'conflicting data');
     });
 
     test(

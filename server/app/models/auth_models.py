@@ -25,6 +25,7 @@ class TokenResponse(BaseModel):
     expires_at: datetime
     device_id: str
     device_name: str
+    is_secrets_authorized: bool = False
 
 
 class RegistrationResponse(BaseModel):
@@ -35,6 +36,7 @@ class RegistrationResponse(BaseModel):
     device_id: str
     device_name: str
     device_secret: str
+    is_secrets_authorized: bool = False
 
 
 class RevokeRequest(BaseModel):
@@ -45,6 +47,7 @@ class DeviceInfo(BaseModel):
     device_id: str
     device_name: str
     registered_at: datetime
+    is_secrets_authorized: bool = False
 
 
 class DeviceListResponse(BaseModel):

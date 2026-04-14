@@ -87,6 +87,14 @@ class FileCreationWorker {
 
     // Refresh UI
     _ref.invalidate(directoryEntriesProvider);
+
+    // Notify brain to rebuild its filesystem tree snapshot
+    try {
+      final apiClient = _ref.read(apiClientProvider);
+      await apiClient.dio.post('/ask/refresh-fs-tree');
+    } catch (_) {
+      // Non-critical — next generation will just use a slightly stale snapshot
+    }
   }
 
   Future<void> _logUndoBatch(String batchId, List<String> paths) async {

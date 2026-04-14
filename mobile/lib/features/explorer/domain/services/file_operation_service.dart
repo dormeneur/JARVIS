@@ -815,7 +815,7 @@ class FileOperationService {
               ),
             );
 
-            // Enqueue mutations for descendant
+            // Enqueue delete for old descendant and update for new descendant
             await _database.removeMutationsForPath(descendant.path);
             await _database.enqueueMutation(
               id: 'del-${DateTime.now().millisecondsSinceEpoch}-${descendant.path.hashCode}',
@@ -852,7 +852,7 @@ class FileOperationService {
             ),
           );
 
-          // Enqueue delete for old path and update for new path
+          // Enqueue delete for old file and update for new file
           await _database.removeMutationsForPath(filePath);
           await _database.enqueueMutation(
             id: 'del-${DateTime.now().millisecondsSinceEpoch}-${filePath.hashCode}',

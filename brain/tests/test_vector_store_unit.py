@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from brain.app.services.vector_store import VectorStore, EXPECTED_DIMENSIONS
+from brain.app.services.vector_store import VectorStore, EMBEDDING_DIMENSION
 from brain.app.services.text_chunker import Chunk
 
 @pytest.fixture
@@ -27,14 +27,14 @@ async def test_upsert_mismatched_lengths(mock_chroma_client):
     chunk = Chunk("id", "path", 0, 1, "content", "hash")
     
     with pytest.raises(ValueError, match="Mismatched chunks"):
-        await store.upsert_chunks([chunk], [], "timestamp")
+        await store.upsert_chunks([chunk], [[0.1]*768, [0.2]*768], "timestamp")
 
 @pytest.mark.asyncio
 async def test_query_filtering(mock_chroma_client):
     store = VectorStore("http://fake:8000")
     mock_chroma_client.query.return_value = {"ids": [["id1"]], "distances": [[0.1]]}
     
-    emb = [0.1] * EXPECTED_DIMENSIONS
+    emb = [0.1] * EMBEDDING_DIMENSION
     
     # 1 filter
     await store.query(emb, top_k=5, filter_paths=["file1.md"])

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration constants
 SUPPORTED_EXTENSIONS = [".md", ".txt", ".pdf", ".json", ".csv", ".docx"]
-MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_MB = 1
 EXCLUDED_FOLDERS = ["Secrets", "system", ".system", ".git", "__pycache__", "node_modules"]
 EXCLUDED_FILES = [".gitkeep", "file_versions.db", "devices.json"]
 
@@ -68,18 +68,23 @@ class DocumentLoader:
                 continue
     
     def _walk_vault(self) -> Generator[Path, None, None]:
-        """Walk vault directory recursively.
+        """Walk vault directory recursively, pruning excluded folders.
         
         Yields:
             Path objects for each file
         """
+        import os
         if not self.vault_path.exists():
             logger.warning(f"Vault path does not exist: {self.vault_path}")
             return
         
-        for file_path in self.vault_path.rglob("*"):
-            if file_path.is_file():
-                yield file_path
+        vault_root = str(self.vault_path)
+        for root, dirs, files in os.walk(vault_root):
+            # Prune excluded directories in-place to prevent os.walk from entering them
+            dirs[:] = [d for d in dirs if d not in EXCLUDED_FOLDERS]
+            
+            for file in files:
+                yield Path(root) / file
     
     def _should_skip(self, path: Path) -> bool:
         """Check if file should be excluded.

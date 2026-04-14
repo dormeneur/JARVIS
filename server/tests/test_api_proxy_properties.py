@@ -13,8 +13,8 @@ from hypothesis import given, settings, strategies as st
 from fastapi import Request, HTTPException
 from app.routers.ask import ask_jarvis, ask_status
 
-@pytest.fixture
-def mock_request():
+# Remove function-scoped fixture to avoid Hypothesis health check errors
+def get_mock_request():
     req = AsyncMock(spec=Request)
     req.json.return_value = {"query": "test"}
     return req
@@ -22,8 +22,9 @@ def mock_request():
 @settings(max_examples=10)
 @given(auth_valid=st.booleans())
 @pytest.mark.asyncio
-async def test_property_31_authentication(mock_request, auth_valid):
+async def test_property_31_authentication(auth_valid):
     """Property 31: API Proxy Authentication"""
+    mock_request = get_mock_request()
     
     # In FastAPI, Depends() handles the auth before the handler runs,
     # but for unit testing the handler itself, we just check that it
@@ -45,8 +46,9 @@ async def test_property_31_authentication(mock_request, auth_valid):
 @settings(max_examples=20)
 @given(url_path=st.text(min_size=1, max_size=10))
 @pytest.mark.asyncio
-async def test_property_32_forwarding(mock_request, url_path):
+async def test_property_32_forwarding(url_path):
     """Property 32: API Proxy Forwarding"""
+    mock_request = get_mock_request()
     
     with patch("httpx.AsyncClient.stream") as mock_stream, \
          patch("app.routers.ask.settings") as mock_settings:

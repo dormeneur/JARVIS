@@ -41,13 +41,13 @@ async def proxy_stream(payload: dict, url: str) -> AsyncGenerator[bytes, None]:
         await client.aclose()
 
 
-@router.post("/ask")
+@router.post("/ask/ai/query")
 async def ask_jarvis(
     request: Request,
     device=Depends(get_current_device),
 ):
     """Proxy questions to the JARVIS Brain service (Streaming)."""
-    brain_ask_url = f"{settings.brain_url.rstrip('/')}/brain/ask"
+    brain_ask_url = f"{settings.brain_url.rstrip('/')}/brain/ai/query"
     
     # Pre-read the body BEFORE creating the generator
     # StreamingResponse runs generators lazily, so req.json() would fail inside one
@@ -153,4 +153,69 @@ async def ask_generate_files_dry_run(request: Request, device=Depends(get_curren
         raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except Exception as e:
         logger.error(f"Failed to generate files via brain dry-run: {e}")
+        raise HTTPException(status_code=503, detail="AI service offline")
+
+@router.post("/ask/refresh-fs-tree")
+async def ask_refresh_fs_tree(device=Depends(get_current_device)):
+    """Trigger filesystem tree snapshot rebuild in Brain."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/refresh-fs-tree"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to refresh fs-tree via brain: {e}")
+        raise HTTPException(status_code=503, detail="AI service offline")
+
+@router.get("/ask/chat/sessions")
+async def ask_get_sessions(device=Depends(get_current_device)):
+    """Get all chat sessions via brain."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/chat/sessions"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch sessions from brain: {e}")
+        raise HTTPException(status_code=503, detail="AI service offline")
+
+@router.get("/ask/chat/sessions/{session_id}")
+async def ask_get_session_history(session_id: str, device=Depends(get_current_device)):
+    """Get full message history for a session via brain."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/chat/sessions/{session_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch history from brain: {e}")
+        raise HTTPException(status_code=503, detail="AI service offline")
+
+@router.delete("/ask/chat/sessions/{session_id}")
+async def ask_delete_session(session_id: str, device=Depends(get_current_device)):
+    """Delete a session via brain."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/chat/sessions/{session_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.delete(url)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to delete session in brain: {e}")
+        raise HTTPException(status_code=503, detail="AI service offline")
+
+@router.post("/ask/chat/sync")
+async def ask_sync_message(msg: dict, device=Depends(get_current_device)):
+    """Sync message pair to brain history."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/chat/sync"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url, json=msg)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to sync message to brain: {e}")
         raise HTTPException(status_code=503, detail="AI service offline")

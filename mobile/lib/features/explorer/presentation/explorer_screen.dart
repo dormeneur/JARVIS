@@ -25,6 +25,7 @@ import 'package:jarvis_mobile/features/sync/presentation/sync_provider.dart';
 import 'package:jarvis_mobile/features/sync/presentation/sync_summary_dialog.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_screen.dart';
 import 'package:jarvis_mobile/features/chat/presentation/chat_screen.dart';
+import 'package:jarvis_mobile/features/secrets/presentation/secrets_screen.dart';
 import 'package:jarvis_mobile/core/network/server_connection_provider.dart';
 import 'package:jarvis_mobile/shared/models/file_entry.dart';
 import 'package:jarvis_mobile/shared/utils/date_utils.dart';
@@ -41,7 +42,6 @@ class ExplorerScreen extends ConsumerStatefulWidget {
 
 class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
   DateTime? _lastBackPress;
-  String? _previousDir;
 
   @override
   Widget build(BuildContext context) {
@@ -53,14 +53,6 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
     final clipboardState = ref.watch(clipboardStateProvider);
     final connectionState = ref.watch(serverConnectionProvider);
     final theme = Theme.of(context);
-
-    // Clear selection when navigating to a different folder
-    if (_previousDir != null && _previousDir != currentDir) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(selectionStateProvider.notifier).clear();
-      });
-    }
-    _previousDir = currentDir;
 
     final isSelectionMode = selectionState.isSelectionMode;
 
@@ -102,6 +94,7 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
         appBar: isSelectionMode
             ? const SelectionAppBar()
             : _buildAppBar(context, currentDir, conflictCount, clipboardState, syncState, connectionState),
+        drawer: _buildDrawer(context),
         body: Column(
           children: [
             // Breadcrumb navigation bar
@@ -1309,6 +1302,92 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
       case ServerConnectionState.offline:
         return 'Offline - Tap to reconnect';
     }
+  }
+
+  Widget _buildDrawer(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Drawer(
+      child: Column(
+        children: [
+          DrawerHeader(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer,
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(
+                    'JARVIS',
+                    style: theme.textTheme.headlineMedium?.copyWith(
+                      color: theme.colorScheme.onPrimaryContainer,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Personal Vault',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.folder_outlined),
+            title: const Text('Vault Files'),
+            selected: true,
+            onTap: () => Navigator.pop(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.security),
+            title: const Text('Secrets Vault'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SecretsScreen()),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.chat_bubble_outline),
+            title: const Text('Chat with JARVIS'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ChatScreen()),
+              );
+            },
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.settings_outlined),
+            title: const Text('Settings'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              );
+            },
+          ),
+          const Spacer(),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text(
+              'v0.1.0',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

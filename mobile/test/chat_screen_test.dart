@@ -11,7 +11,11 @@ import 'package:drift/native.dart';
 
 class MockChatRepository extends Mock implements ChatRepository {
   @override
-  Stream<String> askJarvis(String query, {List<String>? attachments}) {
+  Stream<String> askJarvis(String query, {
+    List<String>? attachments,
+    List<Map<String, dynamic>>? chatHistory,
+    String currentDirectory = '',
+  }) {
     if (query == 'error') {
       return Stream.error('Forced error');
     }

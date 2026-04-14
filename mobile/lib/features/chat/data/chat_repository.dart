@@ -17,18 +17,22 @@ class ChatRepository {
 
   /// Streams the AI response by parsing NDJSON chunks from the backend.
   /// Yields text fragments continuously, and finally a JSON string with sources.
-  Stream<String> askJarvis(String query, {List<String>? attachments}) async* {
+  Stream<String> askJarvis(String query, {List<String>? attachments, List<Map<String, dynamic>>? chatHistory, String currentDirectory = "."}) async* {
     try {
       final body = <String, dynamic>{
         'query': query,
+        'current_directory': currentDirectory,
         'options': {'stream': true},
       };
       if (attachments != null && attachments.isNotEmpty) {
         body['attachments'] = attachments;
       }
+      if (chatHistory != null && chatHistory.isNotEmpty) {
+        body['chat_history'] = chatHistory;
+      }
 
       final response = await _apiClient.dio.post(
-        '/ask',
+        '/ask/ai/query',
         data: body,
         options: Options(
           responseType: ResponseType.stream,
@@ -123,6 +127,57 @@ class ChatRepository {
       throw Exception('Network error: ${e.response?.data?['detail'] ?? e.message}');
     } catch (e) {
       throw Exception('Failed to preview files: $e');
+    }
+  }
+
+  // --- Chat Session & History Backend Sync ---
+
+  /// Get all chat sessions from the backend.
+  Future<List<dynamic>> getSessions() async {
+    try {
+      final response = await _apiClient.dio.get('/ask/chat/sessions');
+      return response.data as List<dynamic>;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Get full message history for a session from the backend.
+  Future<List<dynamic>> getSessionHistory(String sessionId) async {
+    try {
+      final response = await _apiClient.dio.get('/ask/chat/sessions/$sessionId');
+      return response.data as List<dynamic>;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Delete a session and its history from the backend.
+  Future<void> deleteSession(String sessionId) async {
+    try {
+      await _apiClient.dio.delete('/ask/chat/sessions/$sessionId');
+    } catch (_) {}
+  }
+
+  /// Sync a message pair to the brain history backend.
+  Future<void> syncMessageToBrain({
+    required String sessionId,
+    required String query,
+    required String response,
+    required String timestamp,
+  }) async {
+    try {
+      await _apiClient.dio.post(
+        '/ask/chat/sync',
+        data: {
+          'session_id': sessionId,
+          'query': query,
+          'response': response,
+          'timestamp': timestamp,
+        },
+      );
+    } catch (e) {
+      // Non-critical, just logs error
     }
   }
 }

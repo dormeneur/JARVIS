@@ -32,6 +32,13 @@ async def sync_manifest(
         validate_path(entry.path)
 
     server_manifest = sync.build_server_manifest()
+    
+    # Filter out Secrets if device is not authorized
+    if not _device.get("is_secrets_authorized", False):
+        server_manifest = {
+            p: e for p, e in server_manifest.items()
+            if not p.startswith("Secrets/")
+        }
 
     client_entries = [
         {
@@ -64,6 +71,10 @@ async def sync_push(
 ) -> PushResponse:
     meta = PushMetadata.model_validate_json(metadata)
     validate_path(meta.path)
+    
+    if meta.path.startswith("Secrets/") and not _device.get("is_secrets_authorized", False):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Unauthorized to push to Secrets directory")
 
     file_data = b""
     if file is not None:
@@ -94,6 +105,10 @@ async def sync_pull(
     _device: dict = Depends(get_current_device),
 ) -> StreamingResponse:
     validate_path(body.path)
+    
+    if body.path.startswith("Secrets/") and not _device.get("is_secrets_authorized", False):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Unauthorized to pull from Secrets directory")
     filename, file_size, stream = await sync.pull_file(body.path)
 
     # Look up current server version for this file

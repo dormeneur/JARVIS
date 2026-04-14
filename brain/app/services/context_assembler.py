@@ -3,7 +3,7 @@
 import os
 import logging
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Any, List, Tuple, Optional
 
 from app.models.ask_models import Source
 from app.services.document_loader import DocumentLoader
@@ -33,7 +33,9 @@ class ContextAssembler:
         self, 
         query: str, 
         retrieved_sources: List[Source], 
-        attachments: List[str]
+        attachments: List[str],
+        chat_history: Optional[List[Any]] = None,
+        current_directory: str = "."
     ) -> Tuple[str, List[Source]]:
         """Construct the prompt and return the final used sources.
         
@@ -41,10 +43,13 @@ class ContextAssembler:
             query: The user's question
             retrieved_sources: Chunks from the vector store (includes content)
             attachments: List of specific file paths to include
+            chat_history: List of Message objects containing previous turns
+            current_directory: User's current working directory
             
         Returns:
             Tuple of (formatted_prompt_string, list_of_used_sources)
         """
+        chat_history = chat_history or []
         used_sources = []
         context_parts = []
         current_tokens = 0
@@ -128,12 +133,28 @@ class ContextAssembler:
             except Exception as e:
                 logger.warning(f"Failed to read global memory index: {e}")
             
+        # 4. Process Chat History (last 10 turns max)
+        history_parts = []
+        # Take the last 10 turns (this avoids massive token blooms)
+        recent_history = chat_history[-10:] if chat_history else []
+        for msg in recent_history:
+            role_name = "User" if msg.role == "user" else "JARVIS"
+            # Ensure safe access whether it's dict or pydantic BaseModel
+            content = getattr(msg, 'content', None) or (msg.get('content') if isinstance(msg, dict) else str(msg))
+            history_parts.append(f"{role_name}: {content}")
+        
+        history_text = "\n".join(history_parts)
+        if history_text:
+            history_text = f"\n=== CHAT HISTORY ===\n{history_text}\n=== END CHAT HISTORY ===\n"
+            
         prompt = f"""{SYSTEM_PROMPT}{memory_index}
+
+Current Directory: {current_directory}
 
 === CONTEXT ===
 {context_text}
 === END CONTEXT ===
-
+{history_text}
 User Question: {query}
 
 Answer:"""

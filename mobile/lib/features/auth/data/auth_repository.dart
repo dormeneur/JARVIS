@@ -155,4 +155,27 @@ class AuthRepository {
     final url = await _secureStorage.getServerUrl();
     return jwt != null && jwt.isNotEmpty && url != null && url.isNotEmpty;
   }
+
+  /// Fetch list of all registered devices.
+  Future<List<Map<String, dynamic>>> listDevices() async {
+    try {
+      final response = await _apiClient.dio.get('/auth/devices');
+      final data = response.data as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['devices']);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// Authorize a device for secrets access.
+  Future<void> authorizeSecrets(String deviceId) async {
+    try {
+      await _apiClient.dio.post(
+        '/auth/authorize_secrets',
+        queryParameters: {'device_id': deviceId},
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
 }

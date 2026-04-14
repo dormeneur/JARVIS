@@ -6,7 +6,7 @@
 
 * **Vault (jv-vault)** — single `/JARVIS` folder (markdown + media). Source of truth.
 * **API (jv-api)** — FastAPI Docker service exposing secure file operations (list/create/read/update/delete).
-* **Sync Engine (jv-sync)** — selective two-way sync, timestamp/hash conflict resolution, `_conflict` fallback.
+* **Sync Engine (jv-sync)** — selective two-way sync, timestamp/hash conflict resolution, SQLite-managed conflicts.
 * **Mobile Client (jv-app)** — Flutter file-manager UI, offline mirror, local metadata (SQLite), selective sync toggles.
 * **AI Layer (jv-brain)** — local LLM (Ollama) + vector index (pgvector or Chroma) for RAG and contextual QA.
 * **Secrets Service (jv-secrets)** — AES-256 encrypted folder with PBKDF2 key derivation; mobile decrypt locally.

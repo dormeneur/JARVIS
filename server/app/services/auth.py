@@ -62,7 +62,12 @@ def get_device_count() -> int:
 def get_all_devices() -> list[dict]:
     devices = _load_devices()
     return [
-        {"device_id": did, "device_name": d["device_name"], "registered_at": d["registered_at"]}
+        {
+            "device_id": did,
+            "device_name": d["device_name"],
+            "registered_at": d["registered_at"],
+            "is_secrets_authorized": d.get("is_secrets_authorized", False),
+        }
         for did, d in devices.items()
     ]
 
@@ -72,10 +77,14 @@ def get_device(device_id: str) -> dict | None:
     info = devices.get(device_id)
     if info is None:
         return None
-    return {"device_id": device_id, **info}
+    return {
+        "device_id": device_id,
+        "is_secrets_authorized": info.get("is_secrets_authorized", False),
+        **info
+    }
 
 
-def _add_device(device_name: str) -> tuple[str, str]:
+def _add_device(device_name: str, is_secrets_authorized: bool = False) -> tuple[str, str]:
     """Add a new device and return (device_id, device_secret)."""
     devices = _load_devices()
     if len(devices) >= settings.max_devices:
@@ -87,6 +96,7 @@ def _add_device(device_name: str) -> tuple[str, str]:
         "device_name": device_name,
         "device_secret": device_secret,
         "registered_at": datetime.now(tz=timezone.utc).isoformat(),
+        "is_secrets_authorized": is_secrets_authorized,
     }
     _save_devices(devices)
     return device_id, device_secret
@@ -97,6 +107,14 @@ def remove_device(device_id: str) -> None:
     if device_id not in devices:
         raise DeviceNotFoundError(device_id)
     del devices[device_id]
+    _save_devices(devices)
+
+
+def authorize_secrets(device_id: str, authorized: bool) -> None:
+    devices = _load_devices()
+    if device_id not in devices:
+        raise DeviceNotFoundError(device_id)
+    devices[device_id]["is_secrets_authorized"] = authorized
     _save_devices(devices)
 
 
@@ -204,6 +222,7 @@ def decode_token(token: str) -> dict:
     if device_id not in devices:
         raise InvalidTokenError("Device is no longer registered")
 
+    payload["is_secrets_authorized"] = devices[device_id].get("is_secrets_authorized", False)
     return payload
 
 
@@ -214,7 +233,7 @@ def register_first_device(device_name: str, setup_secret: str) -> tuple[str, str
     """Register first device. Returns (device_id, device_secret, token, expires)."""
     _validate_setup_secret(setup_secret)
 
-    device_id, device_secret = _add_device(device_name)
+    device_id, device_secret = _add_device(device_name, is_secrets_authorized=True)
     _consume_setup_secret()
 
     token, expires = create_token(device_id, device_name)

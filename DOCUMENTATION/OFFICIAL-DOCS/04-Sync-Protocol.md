@@ -101,8 +101,8 @@ Decision Matrix:
 #### Conflict Resolution Strategy
 
 1. **Server version preserved** at original path
-2. **Client version saved** as `{filename}_conflict_{timestamp}.{ext}`
-3. Both versions appear in the user's file browser
+2. **Client version saved** locally in SQLite `MutationQueue` via `localContentSnapshot`
+3. Conflict badge appears in the user's file browser leading to a 2-step resolution UI (Compare/Edit)
 4. User manually resolves by keeping one and deleting the other
 5. Mobile app shows conflict badge on affected files
 

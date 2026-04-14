@@ -121,7 +121,7 @@ This document defines the complete system architecture for JARVIS — a private,
 ### Request Flow: Sync
 1. `jv-app` sends metadata manifest (path, hash, timestamp) to `jv-api /sync/push`
 2. `jv-api` compares with server-side metadata
-3. Conflicts resolved via timestamp + hash; unresolvable conflicts get `_conflict` suffix
+3. Conflicts resolved via timestamp + hash; unresolvable conflicts recorded in SQLite MutationQueue
 4. Changed files transferred in both directions
 5. Both sides update metadata
 
@@ -170,7 +170,7 @@ This document defines the complete system architecture for JARVIS — a private,
 | Server offline | Mobile app works offline; AI unavailable | Offline queue; sync on reconnect |
 | Ollama OOM | AI queries fail | Return graceful error; API continues serving files |
 | VectorDB corrupt | AI retrieval degraded | Re-index from `/JARVIS` files (no data loss) |
-| Sync conflict | Both sides modified same file | `_conflict` suffix rename; user resolves manually |
+| Sync conflict | Both sides modified same file | Stored in SQLite MutationQueue; user resolves in app |
 | Disk full | Write operations fail | Health check endpoint monitors disk; alert in app |
 
 ---
