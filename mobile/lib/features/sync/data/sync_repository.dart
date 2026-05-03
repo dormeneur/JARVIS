@@ -88,6 +88,9 @@ class SyncRepository {
             'op=${mutation.operation} baseVersion=${mutation.baseVersion}',
             name: 'SyncRepository',
           );
+
+          // (Stale Secrets/ mutation guard removed - it was swallowing valid new mutations)
+
           if (mutation.operation == 'delete') {
             // Delete file on server
             await _deleteFile(mutation.path);

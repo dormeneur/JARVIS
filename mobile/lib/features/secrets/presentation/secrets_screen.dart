@@ -47,6 +47,13 @@ class _SecretsScreenState extends ConsumerState<SecretsScreen> {
           ],
         ),
         body: _buildBody(context, state),
+        floatingActionButton: state.isUnlocked
+            ? FloatingActionButton(
+                onPressed: () => _showAddSecretDialog(context),
+                tooltip: 'Add Secret',
+                child: const Icon(Icons.add),
+              )
+            : null,
       ),
     );
   }

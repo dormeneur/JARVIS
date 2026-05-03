@@ -1,6 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:drift/drift.dart';
+import 'package:jarvis_mobile/core/network/api_client.dart';
+import 'package:jarvis_mobile/core/network/api_exceptions.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
 import 'package:jarvis_mobile/features/secrets/domain/crypto_service.dart';
 import 'package:path/path.dart' as p;
@@ -11,12 +15,15 @@ import 'package:jarvis_mobile/shared/utils/date_utils.dart';
 class SecretsRepository {
   final AppDatabase _db;
   final CryptoService _cryptoService;
+  final ApiClient _apiClient;
 
   SecretsRepository({
     required AppDatabase db,
     required CryptoService cryptoService,
+    required ApiClient apiClient,
   }) : _db = db,
-       _cryptoService = cryptoService;
+       _cryptoService = cryptoService,
+       _apiClient = apiClient;
 
   Future<Directory> _mirrorDir() async {
     final docsDir = await getApplicationDocumentsDirectory();
@@ -109,11 +116,11 @@ class SecretsRepository {
 
   Future<void> deleteSecret(String id) async {
     final filePath = 'Secrets/$id.jvs';
-    
-    // 1. Remove from SecretEntries
+
+    // 1. Remove from SecretEntries (local SQLite)
     await _db.deleteSecret(id);
 
-    // 2. Remove from FileCacheEntries
+    // 2. Remove from FileCacheEntries and delete physical file
     final entry = await _db.getEntry(filePath);
     final baseVersion = entry?.serverVersion ?? 1;
 
@@ -125,13 +132,39 @@ class SecretsRepository {
     }
     await _db.deleteEntry(filePath);
 
-    // 3. Enqueue delete mutation
-    await _db.enqueueMutation(
-      id: 'del-sec-${DateTime.now().millisecondsSinceEpoch}-$id',
-      path: filePath,
-      operation: 'delete',
-      timestamp: nowUtcIso8601(),
-      baseVersion: baseVersion,
-    );
+    // Cancel any pending mutations for this path to prevent stale re-upload.
+    await _db.removeMutationsForPath(filePath);
+
+    // 3. Try to delete from server immediately (best-effort, server-first).
+    // If the server is reachable, delete synchronously — this prevents the
+    // stale conflict loop that occurs when a delete mutation sits in the
+    // queue and the manifest diff sees the file as conflicted.
+    // If the server is unreachable, fall back to queuing a mutation.
+    bool serverDeleted = false;
+    try {
+      final response = await _apiClient.dio.delete('/files/$filePath');
+      debugPrint('[SecretsRepo] Server DELETE $filePath → ${response.statusCode}');
+      serverDeleted = true;
+    } on DioException catch (e) {
+      debugPrint('[SecretsRepo] Server DELETE failed: ${e.response?.statusCode} ${e.message}');
+      final mapped = mapDioError(e);
+      if (mapped.statusCode == 404) {
+        serverDeleted = true;
+      }
+    } catch (e) {
+      debugPrint('[SecretsRepo] Server DELETE unexpected error: $e');
+    }
+    debugPrint('[SecretsRepo] serverDeleted=$serverDeleted');
+
+    if (!serverDeleted) {
+      // 4. Fallback: enqueue delete mutation for offline deletion.
+      await _db.enqueueMutation(
+        id: 'del-sec-${DateTime.now().millisecondsSinceEpoch}-$id',
+        path: filePath,
+        operation: 'delete',
+        timestamp: nowUtcIso8601(),
+        baseVersion: baseVersion,
+      );
+    }
   }
 }

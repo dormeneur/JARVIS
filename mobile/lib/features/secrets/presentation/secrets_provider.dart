@@ -45,7 +45,8 @@ class SecretsState {
 final secretsProvider = StateNotifierProvider<SecretsNotifier, SecretsState>((ref) {
   final db = ref.watch(appDatabaseProvider);
   final crypto = CryptoService();
-  final repo = SecretsRepository(db: db, cryptoService: crypto);
+  final apiClient = ref.watch(apiClientProvider);
+  final repo = SecretsRepository(db: db, cryptoService: crypto, apiClient: apiClient);
   return SecretsNotifier(repo, crypto);
 });
 

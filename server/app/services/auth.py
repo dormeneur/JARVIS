@@ -66,7 +66,8 @@ def get_all_devices() -> list[dict]:
             "device_id": did,
             "device_name": d["device_name"],
             "registered_at": d["registered_at"],
-            "is_secrets_authorized": d.get("is_secrets_authorized", False),
+            # Legacy devices missing the key default to True
+            "is_secrets_authorized": d.get("is_secrets_authorized", True) if "is_secrets_authorized" not in d else d["is_secrets_authorized"],
         }
         for did, d in devices.items()
     ]
@@ -79,7 +80,8 @@ def get_device(device_id: str) -> dict | None:
         return None
     return {
         "device_id": device_id,
-        "is_secrets_authorized": info.get("is_secrets_authorized", False),
+        # Legacy devices missing the key default to True
+        "is_secrets_authorized": info.get("is_secrets_authorized", True) if "is_secrets_authorized" not in info else info["is_secrets_authorized"],
         **info
     }
 
@@ -222,7 +224,9 @@ def decode_token(token: str) -> dict:
     if device_id not in devices:
         raise InvalidTokenError("Device is no longer registered")
 
-    payload["is_secrets_authorized"] = devices[device_id].get("is_secrets_authorized", False)
+    device_info = devices[device_id]
+    # Legacy devices missing the key default to True
+    payload["is_secrets_authorized"] = device_info.get("is_secrets_authorized", True) if "is_secrets_authorized" not in device_info else device_info["is_secrets_authorized"]
     return payload
 
 

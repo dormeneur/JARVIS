@@ -24,4 +24,16 @@ class FileManifestItem {
       'type': type,
     };
   }
+
+  FileManifestItem copyWith({
+    String? path,
+    String? content,
+    String? type,
+  }) {
+    return FileManifestItem(
+      path: path ?? this.path,
+      content: content ?? this.content,
+      type: type ?? this.type,
+    );
+  }
 }

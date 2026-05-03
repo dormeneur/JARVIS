@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:dio/dio.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jarvis_mobile/core/network/api_client.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
+import 'package:jarvis_mobile/core/storage/secure_storage.dart';
 import 'package:jarvis_mobile/features/secrets/data/secrets_repository.dart';
 import 'package:jarvis_mobile/features/secrets/domain/crypto_service.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -27,10 +30,26 @@ void main() {
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('secrets_sync_test_');
     PathProviderPlatform.instance = _FakePathProvider(tempDir.path);
-    
+
     db = AppDatabase.forTesting(NativeDatabase.memory());
     cryptoService = CryptoService();
-    repository = SecretsRepository(db: db, cryptoService: cryptoService);
+
+    // Use a Dio that always returns 404 for DELETE calls, simulating
+    // "file was never on server" (offline / created locally only).
+    // This lets deleteSecret() skip server delete gracefully and fall
+    // back to queuing a mutation, which is what the test asserts.
+    final mockDio = Dio();
+    mockDio.httpClientAdapter = _AlwaysNotFoundAdapter();
+    final fakeApiClient = ApiClient(
+      secureStorage: SecureStorage(),
+      dioOverride: mockDio,
+    );
+
+    repository = SecretsRepository(
+      db: db,
+      cryptoService: cryptoService,
+      apiClient: fakeApiClient,
+    );
   });
 
   tearDown(() async {
@@ -122,8 +141,31 @@ void main() {
     final fileEntry = await db.getEntry('Secrets/$id.jvs');
     expect(fileEntry, isNull);
 
-    // 4. Delete mutation enqueued
+    // 4. Server returned 404 (file never uploaded) → serverDeleted=true
+    //    → no fallback mutation should be queued.
     final mutations = await db.getPendingMutations();
-    expect(mutations.any((m) => m.path == 'Secrets/$id.jvs' && m.operation == 'delete'), isTrue);
+    expect(
+      mutations.any((m) => m.path == 'Secrets/$id.jvs' && m.operation == 'delete'),
+      isFalse,
+      reason: 'Server returned 404 (treated as success), so no delete mutation should be queued.',
+    );
   });
+}
+
+/// A Dio HTTP adapter that always responds with 404 Not Found.
+/// Used in tests to simulate the case where the file was never uploaded
+/// to the server (e.g. created while offline), so deleteSecret() should
+/// treat the delete as successfully completed without queuing a mutation.
+class _AlwaysNotFoundAdapter implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    return ResponseBody.fromString('{"detail":"Not found"}', 404);
+  }
+
+  @override
+  void close({bool force = false}) {}
 }

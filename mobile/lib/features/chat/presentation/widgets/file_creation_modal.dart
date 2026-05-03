@@ -15,29 +15,48 @@ class FileCreationModal extends ConsumerStatefulWidget {
 }
 
 class _FileCreationModalState extends ConsumerState<FileCreationModal> {
-  final Set<String> _selectedPaths = {};
+  final Set<int> _selectedIndices = {};
+  late List<FileManifestItem> _manifestItems;
   bool _isWriting = false;
 
   @override
   void initState() {
     super.initState();
-    for (var item in widget.manifest) {
-      _selectedPaths.add(item.path);
+    _manifestItems = List.from(widget.manifest);
+    for (int i = 0; i < _manifestItems.length; i++) {
+      _selectedIndices.add(i);
     }
   }
 
-  void _toggleSelection(String path, bool? value) {
+  void _toggleSelection(int index, bool? value) {
     setState(() {
       if (value == true) {
-        _selectedPaths.add(path);
+        _selectedIndices.add(index);
       } else {
-        _selectedPaths.remove(path);
+        _selectedIndices.remove(index);
       }
     });
   }
 
+  Future<void> _editPath(int index) async {
+    final currentItem = _manifestItems[index];
+    final newPath = await showDialog<String>(
+      context: context,
+      builder: (context) => _EditPathDialog(initialPath: currentItem.path),
+    );
+
+    if (newPath != null && newPath.trim().isNotEmpty && newPath != currentItem.path) {
+      setState(() {
+        _manifestItems[index] = currentItem.copyWith(path: newPath.trim());
+      });
+    }
+  }
+
   Future<void> _executeCreation() async {
-    final selectedItems = widget.manifest.where((item) => _selectedPaths.contains(item.path)).toList();
+    final selectedItems = _manifestItems.asMap().entries
+        .where((entry) => _selectedIndices.contains(entry.key))
+        .map((entry) => entry.value)
+        .toList();
     if (selectedItems.isEmpty) return;
 
     setState(() {
@@ -128,9 +147,9 @@ class _FileCreationModalState extends ConsumerState<FileCreationModal> {
             Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
-                itemCount: widget.manifest.length,
+                itemCount: _manifestItems.length,
                 itemBuilder: (ctx, idx) {
-                  final item = widget.manifest[idx];
+                  final item = _manifestItems[idx];
                   final isConflict = existingPaths.contains(item.path);
                   
                   return Card(
@@ -139,8 +158,8 @@ class _FileCreationModalState extends ConsumerState<FileCreationModal> {
                       data: theme.copyWith(dividerColor: Colors.transparent),
                       child: ExpansionTile(
                         leading: Checkbox(
-                          value: _selectedPaths.contains(item.path),
-                          onChanged: (val) => _toggleSelection(item.path, val),
+                          value: _selectedIndices.contains(idx),
+                          onChanged: (val) => _toggleSelection(idx, val),
                         ),
                         title: Row(
                           children: [
@@ -151,6 +170,13 @@ class _FileCreationModalState extends ConsumerState<FileCreationModal> {
                             ),
                             const SizedBox(width: 8),
                             Expanded(child: Text(item.path)),
+                            IconButton(
+                              icon: const Icon(Icons.edit, size: 18),
+                              onPressed: () => _editPath(idx),
+                              tooltip: 'Edit Path',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
                           ],
                         ),
                         subtitle: isConflict
@@ -184,14 +210,156 @@ class _FileCreationModalState extends ConsumerState<FileCreationModal> {
             child: const Text('Cancel'),
           ),
         FilledButton(
-          onPressed: _isWriting || (!widget.isDryRun && _selectedPaths.isEmpty) 
+          onPressed: _isWriting || (!widget.isDryRun && _selectedIndices.isEmpty) 
             ? null 
             : (widget.isDryRun ? () => Navigator.of(context).pop(true) : _executeCreation),
           child: _isWriting 
             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-            : Text(widget.isDryRun ? 'Close' : 'Create ${_selectedPaths.length} Items'),
+            : Text(widget.isDryRun ? 'Close' : 'Create ${_selectedIndices.length} Items'),
         ),
       ],
     );
   }
 }
+
+class _EditPathDialog extends ConsumerStatefulWidget {
+  final String initialPath;
+  const _EditPathDialog({required this.initialPath});
+
+  @override
+  ConsumerState<_EditPathDialog> createState() => _EditPathDialogState();
+}
+
+class _EditPathDialogState extends ConsumerState<_EditPathDialog> {
+  TextEditingController? _autocompleteDirController;
+  late TextEditingController _nameController;
+  late String _initialDir;
+  List<String> _allDirs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    String dirPath = '';
+    String fileName = widget.initialPath;
+    
+    int lastSlash = widget.initialPath.lastIndexOf('/');
+    int lastBackslash = widget.initialPath.lastIndexOf('\\');
+    int lastSeparator = lastSlash > lastBackslash ? lastSlash : lastBackslash;
+
+    if (lastSeparator != -1) {
+      dirPath = widget.initialPath.substring(0, lastSeparator);
+      fileName = widget.initialPath.substring(lastSeparator + 1);
+    }
+
+    _initialDir = dirPath;
+    _nameController = TextEditingController(text: fileName);
+    _loadDirs();
+  }
+
+  Future<void> _loadDirs() async {
+    try {
+      final repo = ref.read(explorerRepositoryProvider);
+      final allFiles = await repo.getAllFiles();
+      final dirs = <String>{};
+      for (var file in allFiles) {
+        if (file.type == 'directory') {
+          dirs.add(file.path);
+        } else {
+          final path = file.path;
+          int lastSlash = path.lastIndexOf('/');
+          if (lastSlash != -1) {
+             dirs.add(path.substring(0, lastSlash));
+          }
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _allDirs = dirs.toList()..sort();
+        });
+      }
+    } catch (e) {
+      // Ignore if there's an issue loading dirs, autocomplete will just be empty
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit File Details'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Autocomplete<String>(
+              initialValue: TextEditingValue(text: _initialDir),
+              optionsBuilder: (TextEditingValue textEditingValue) {
+                if (textEditingValue.text.isEmpty) {
+                  return _allDirs;
+                }
+                return _allDirs.where((String option) {
+                  return option.toLowerCase().contains(textEditingValue.text.toLowerCase());
+                });
+              },
+              fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                _autocompleteDirController = controller;
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  decoration: const InputDecoration(
+                    labelText: 'Directory Path',
+                    hintText: 'e.g. lib/features/chat',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.folder_outlined),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'File Name',
+                hintText: 'e.g. my_file.dart',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.insert_drive_file_outlined),
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final dir = _autocompleteDirController?.text.trim() ?? _initialDir;
+            final name = _nameController.text.trim();
+            if (name.isEmpty) return; 
+            
+            String newPath = name;
+            if (dir.isNotEmpty) {
+              String sep = dir.contains('\\') ? '\\' : '/';
+              if (dir.endsWith('/') || dir.endsWith('\\')) {
+                newPath = '$dir$name';
+              } else {
+                newPath = '$dir$sep$name';
+              }
+            }
+            Navigator.of(context).pop(newPath);
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+

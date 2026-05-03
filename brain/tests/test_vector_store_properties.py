@@ -1,4 +1,4 @@
-"""Property-based tests for vector store.
+ww"""Property-based tests for vector store.
 
 Feature: phase-3-ai-integration
 Properties tested:

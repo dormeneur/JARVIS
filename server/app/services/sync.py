@@ -112,8 +112,13 @@ def diff_manifests(
         server_entry = server_manifest.get(path)
 
         if server_entry is None:
-            # File only exists on client -> push
-            to_push.append(path)
+            if entry.get('has_local_changes', False):
+                # Client created or modified offline — push to server
+                to_push.append(path)
+            else:
+                # File exists on client but not server — server deleted it.
+                # Append to to_pull so the client's 404 handler removes the local copy.
+                to_pull.append(path)
             continue
 
         if entry["content_hash"] == server_entry["content_hash"]:
