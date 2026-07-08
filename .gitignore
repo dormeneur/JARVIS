@@ -1,4 +1,14 @@
+# Secrets & local config — never commit
 .env
+*.pem
+*.key
+*.jks
+*.keystore
+
+# Scratch / throwaway scripts
+scratch/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -10,6 +20,19 @@ dist/
 build/
 .venv/
 venv/
-
-# Hypothesis tests
 .hypothesis/
+
+# Test artifacts & logs
+*.log
+*.db
+full_suite.txt
+specific_suite.txt
+full_test_log.txt
+analyze_output.txt
+out.txt
+
+# IDE / tooling
+.vscode/
+.idea/
+*.iml
+.qodo/
