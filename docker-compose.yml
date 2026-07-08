@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   api:
     build:
@@ -36,6 +34,8 @@ services:
     depends_on:
       chromadb:
         condition: service_started
+      ollama:
+        condition: service_started
     networks:
       - jarvis-internal
     restart: unless-stopped
@@ -56,9 +56,20 @@ services:
       - jarvis-internal
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jv-ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - jarvis-internal
+    restart: unless-stopped
+
 volumes:
   chroma-data:
     name: jarvis-chroma-data
+  ollama-models:
+    name: jarvis-ollama-models
 
 networks:
   jarvis-internal:

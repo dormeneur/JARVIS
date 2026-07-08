@@ -35,6 +35,8 @@ The peripheral interface. Fast, reactive, and always available.
 
 ## Deployment
 
+> New to the project? Follow **[HOW_TO_RUN.md](HOW_TO_RUN.md)** (Windows + Mac, copy-paste steps) and read **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)** first.
+
 ### Server Node
 ```bash
 cp .env.template .env       # Configure environment

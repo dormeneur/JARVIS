@@ -1,0 +1,5 @@
+# Optional override: NVIDIA GPU acceleration for Ollama (Windows/Linux).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+services:
+  ollama:
+    gpus: all
