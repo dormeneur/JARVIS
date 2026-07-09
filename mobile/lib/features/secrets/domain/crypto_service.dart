@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 
 class MacMismatchException implements Exception {
@@ -9,23 +9,41 @@ class MacMismatchException implements Exception {
   String toString() => 'MacMismatchException: $message';
 }
 
-class CryptoService {
-  static const int _pbkdf2Iterations = 100000;
+/// Top-level so [compute] can run it in a background isolate.
+Uint8List _deriveKeyImpl(Map<String, Object> args) {
+  final derivator = KeyDerivator('SHA-256/HMAC/PBKDF2')
+    ..init(Pbkdf2Parameters(
+      args['salt'] as Uint8List,
+      CryptoService.pbkdf2Iterations,
+      32,
+    ));
 
-  /// Derives AES key using PBKDF2 with HMAC-SHA256
+  final pinBytes = Uint8List.fromList(utf8.encode(args['pin'] as String));
+  final key = derivator.process(pinBytes);
+
+  // Explicitly zero out the pinBytes array from memory
+  for (var i = 0; i < pinBytes.length; i++) {
+    pinBytes[i] = 0;
+  }
+
+  return key;
+}
+
+class CryptoService {
+  static const int pbkdf2Iterations = 100000;
+
+  /// Derives AES key using PBKDF2 with HMAC-SHA256.
+  /// Synchronous — blocks the calling isolate for seconds. Only use in
+  /// tests or already-background code; UI paths must use [deriveKeyAsync].
   Uint8List deriveKey(String pin, Uint8List salt) {
-    final derivator = KeyDerivator('SHA-256/HMAC/PBKDF2')
-      ..init(Pbkdf2Parameters(salt, _pbkdf2Iterations, 32));
-    
-    final pinBytes = Uint8List.fromList(utf8.encode(pin));
-    final key = derivator.process(pinBytes);
-    
-    // Explicitly zero out the pinBytes array from memory
-    for (var i = 0; i < pinBytes.length; i++) {
-      pinBytes[i] = 0;
-    }
-    
-    return key;
+    return _deriveKeyImpl({'pin': pin, 'salt': salt});
+  }
+
+  /// Derives the AES key in a background isolate. 100k PBKDF2 iterations
+  /// take seconds in pure Dart — running this on the main isolate freezes
+  /// the UI (Choreographer "skipped frames").
+  Future<Uint8List> deriveKeyAsync(String pin, Uint8List salt) {
+    return compute(_deriveKeyImpl, {'pin': pin, 'salt': salt});
   }
 
   /// Explicitly zeroes out a byte array from memory

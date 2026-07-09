@@ -44,7 +44,11 @@ class SecretsRepository {
     required Uint8List salt,
     required Uint8List iv,
   }) async {
-    final encryptedBlob = _cryptoService.encrypt(derivedKey, value, iv);
+    // Encrypt {label, value} JSON so a restored device recovers labels too.
+    // derivedKey MUST be derived from (PIN, this file's salt) so the .jvs
+    // file is self-contained and decryptable on any device with the PIN.
+    final payload = jsonEncode({'label': label, 'value': value});
+    final encryptedBlob = _cryptoService.encrypt(derivedKey, payload, iv);
     final now = nowUtcIso8601();
 
     // 1. Update SecretEntries in SQLite (for local display)
@@ -113,6 +117,112 @@ class SecretsRepository {
   }
 
   Future<List<SecretEntry>> getAllSecrets() => _db.getAllSecrets();
+
+  /// Restore secrets from the server's Secrets/ folder using the PIN.
+  /// Each .jvs file is self-contained: JVSP magic + salt(16) + iv(12) + ciphertext.
+  /// Returns (restored, failed). Files that don't decrypt (wrong PIN or
+  /// legacy vault-salt format) are counted as failed and left untouched.
+  Future<(int, int)> restoreFromServer(String pin) async {
+    // 1. List Secrets/ on the server
+    final listing = await _apiClient.dio.get('/files/Secrets');
+    final entries = (listing.data['entries'] as List? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .where((e) => e['type'] == 'file' && (e['name'] as String).endsWith('.jvs'))
+        .toList();
+
+    int restored = 0;
+    int failed = 0;
+
+    for (final entry in entries) {
+      final name = entry['name'] as String;
+      final path = 'Secrets/$name';
+      try {
+        // 2. Download raw bytes
+        final response = await _apiClient.dio.post(
+          '/sync/pull',
+          data: {'path': path},
+          options: Options(responseType: ResponseType.bytes),
+        );
+        final bytes = Uint8List.fromList(response.data as List<int>);
+
+        // 3. Parse the self-contained format
+        if (bytes.length < 4 + 16 + 12 + 1 ||
+            utf8.decode(bytes.sublist(0, 4)) != 'JVSP') {
+          failed++;
+          continue;
+        }
+        final salt = bytes.sublist(4, 20);
+        final iv = bytes.sublist(20, 32);
+        final ciphertext = bytes.sublist(32);
+
+        // 4. Derive this file's key from the PIN + embedded salt (off main thread)
+        final key = await _cryptoService.deriveKeyAsync(pin, salt);
+        String plaintext;
+        try {
+          plaintext = _cryptoService.decrypt(key, ciphertext, iv);
+        } on Exception {
+          failed++; // wrong PIN, or legacy file encrypted with a lost vault salt
+          continue;
+        } finally {
+          _cryptoService.zeroKey(key);
+        }
+
+        String label;
+        try {
+          label = (jsonDecode(plaintext) as Map<String, dynamic>)['label'] as String;
+        } catch (_) {
+          label = 'Recovered secret'; // pre-JSON payloads have no label
+        }
+
+        // 5. Repopulate local DB + mirror file (marked synced — nothing to push)
+        final id = name.substring(0, name.length - '.jvs'.length);
+        final now = nowUtcIso8601();
+        await _db.upsertSecret(
+          SecretEntriesCompanion(
+            id: Value(id),
+            label: Value(label),
+            encryptedBlob: Value(base64Encode(ciphertext)),
+            iv: Value(base64Encode(iv)),
+            salt: Value(base64Encode(salt)),
+            createdAt: Value(now),
+            updatedAt: Value(now),
+          ),
+        );
+
+        final mirror = await _mirrorDir();
+        final secretsFolder = Directory(p.join(mirror.path, 'Secrets'));
+        if (!secretsFolder.existsSync()) {
+          secretsFolder.createSync(recursive: true);
+        }
+        final absolutePath = p.join(secretsFolder.path, name);
+        await File(absolutePath).writeAsBytes(bytes);
+
+        await _db.upsertEntry(
+          FileCacheEntriesCompanion(
+            path: Value(path),
+            name: Value(name),
+            type: const Value('file'),
+            sizeBytes: Value(bytes.length),
+            lastModified: Value(now),
+            contentHash: Value(sha256Hex(bytes)),
+            localPath: Value(absolutePath),
+            lastSynced: Value(now),
+            serverVersion: Value(
+              int.tryParse(
+                    response.headers.value('X-File-Version') ?? '',
+                  ) ??
+                  1,
+            ),
+          ),
+        );
+        restored++;
+      } on DioException {
+        failed++;
+      }
+    }
+
+    return (restored, failed);
+  }
 
   Future<void> deleteSecret(String id) async {
     final filePath = 'Secrets/$id.jvs';

@@ -134,6 +134,75 @@ class _SecretsScreenState extends ConsumerState<SecretsScreen> {
               child: const Text('Initialize Vault'),
             ),
           ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: OutlinedButton.icon(
+              onPressed: () => _showRestoreDialog(context),
+              icon: const Icon(Icons.cloud_download_outlined),
+              label: const Text('Restore Existing Vault'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Already had secrets on another device? Restore them from the server with your old PIN.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRestoreDialog(BuildContext context) {
+    final restorePinController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Restore Vault'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Enter the PIN you used when the secrets were created. '
+              'They will be downloaded from the server and decrypted on this device.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: restorePinController,
+              decoration: const InputDecoration(
+                labelText: 'Vault PIN',
+                border: OutlineInputBorder(),
+              ),
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final pin = restorePinController.text;
+              if (pin.length < 4) return;
+              Navigator.pop(dialogContext);
+              final message =
+                  await ref.read(secretsProvider.notifier).restoreVault(pin);
+              if (!mounted) return;
+              ScaffoldMessenger.of(this.context).showSnackBar(
+                SnackBar(
+                  content: Text(message ?? 'Vault restored successfully.'),
+                  duration: const Duration(seconds: 4),
+                ),
+              );
+            },
+            child: const Text('Restore'),
+          ),
         ],
       ),
     );
@@ -207,9 +276,11 @@ class _SecretsScreenState extends ConsumerState<SecretsScreen> {
           subtitle: const Text('********'),
           trailing: IconButton(
             icon: const Icon(Icons.copy),
-            onPressed: () {
-              final value = ref.read(secretsProvider.notifier).decryptValue(secret);
-              ref.read(secretsProvider.notifier).copyToClipboard(value);
+            onPressed: () async {
+              final value =
+                  await ref.read(secretsProvider.notifier).decryptValue(secret);
+              await ref.read(secretsProvider.notifier).copyToClipboard(value);
+              if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Copied to clipboard. Clears in 30s.'),
@@ -269,8 +340,9 @@ class _SecretsScreenState extends ConsumerState<SecretsScreen> {
     );
   }
 
-  void _showSecretDetails(BuildContext context, SecretEntry secret) {
-    final value = ref.read(secretsProvider.notifier).decryptValue(secret);
+  Future<void> _showSecretDetails(BuildContext context, SecretEntry secret) async {
+    final value = await ref.read(secretsProvider.notifier).decryptValue(secret);
+    if (!context.mounted) return;
     showModalBottomSheet(
       context: context,
       builder: (context) => Padding(

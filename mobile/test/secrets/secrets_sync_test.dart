@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jarvis_mobile/core/network/api_client.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
@@ -30,6 +32,10 @@ void main() {
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('secrets_sync_test_');
     PathProviderPlatform.instance = _FakePathProvider(tempDir.path);
+
+    // Without this, ApiClient's auth interceptor awaits the (unmocked)
+    // flutter_secure_storage platform channel forever and the test times out.
+    FlutterSecureStorage.setMockInitialValues({});
 
     db = AppDatabase.forTesting(NativeDatabase.memory());
     cryptoService = CryptoService();
@@ -107,7 +113,9 @@ void main() {
     
     final ciphertext = bytes.sublist(32);
     final decrypted = cryptoService.decrypt(derivedKey, ciphertext, iv);
-    expect(decrypted, value);
+    final payload = jsonDecode(decrypted) as Map<String, dynamic>;
+    expect(payload['label'], label);
+    expect(payload['value'], value);
   });
 
   test('Deleting a secret removes DB entry, physical file, and enqueues delete mutation', () async {

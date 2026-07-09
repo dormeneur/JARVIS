@@ -53,8 +53,11 @@ final secretsProvider = StateNotifierProvider<SecretsNotifier, SecretsState>((re
 class SecretsNotifier extends StateNotifier<SecretsState> {
   final SecretsRepository _repository;
   final CryptoService _cryptoService;
-  
+
   Uint8List? _derivedKey;
+  // Kept while unlocked: per-secret keys are derived from (PIN, per-file salt)
+  // so .jvs files stay decryptable on any device. Cleared on lock.
+  String? _pin;
   Timer? _lockTimer;
   Timer? _clipboardTimer;
   
@@ -93,14 +96,15 @@ class SecretsNotifier extends StateNotifier<SecretsState> {
       final salt = Uint8List.fromList(List.generate(16, (_) => Random.secure().nextInt(256)));
       final iv = Uint8List.fromList(List.generate(12, (_) => Random.secure().nextInt(256)));
       
-      final key = _cryptoService.deriveKey(pin, salt);
+      final key = await _cryptoService.deriveKeyAsync(pin, salt);
       final encryptedValidator = _cryptoService.encrypt(key, _validatorPlaintext, iv);
-      
+
       await prefs.setString(_saltKey, base64Encode(salt));
       await prefs.setString(_validatorIvKey, base64Encode(iv));
       await prefs.setString(_validatorKey, base64Encode(encryptedValidator));
-      
+
       _derivedKey = key;
+      _pin = pin;
       state = state.copyWith(isUnlocked: true, hasPin: true, isLoading: false);
       _startLockTimer();
     } catch (e) {
@@ -125,12 +129,13 @@ class SecretsNotifier extends StateNotifier<SecretsState> {
       final iv = base64Decode(ivBase64);
       final validator = base64Decode(validatorBase64);
       
-      final key = _cryptoService.deriveKey(pin, Uint8List.fromList(salt));
-      
+      final key = await _cryptoService.deriveKeyAsync(pin, Uint8List.fromList(salt));
+
       try {
         final decrypted = _cryptoService.decrypt(key, Uint8List.fromList(validator), Uint8List.fromList(iv));
         if (decrypted == _validatorPlaintext) {
           _derivedKey = key;
+          _pin = pin;
           state = state.copyWith(isUnlocked: true, isLoading: false);
           _startLockTimer();
           await refreshSecrets();
@@ -155,6 +160,7 @@ class SecretsNotifier extends StateNotifier<SecretsState> {
       _cryptoService.zeroKey(_derivedKey!);
       _derivedKey = null;
     }
+    _pin = null;
     _lockTimer?.cancel();
     state = state.copyWith(isUnlocked: false);
   }
@@ -173,27 +179,65 @@ class SecretsNotifier extends StateNotifier<SecretsState> {
   }
 
   Future<void> addSecret(String label, String value) async {
-    if (_derivedKey == null) return;
-    
+    if (_pin == null) return;
+
     state = state.copyWith(isLoading: true);
     try {
       final id = const Uuid().v4();
       final salt = Uint8List.fromList(List.generate(16, (_) => Random.secure().nextInt(256)));
       final iv = Uint8List.fromList(List.generate(12, (_) => Random.secure().nextInt(256)));
-      
-      await _repository.saveSecret(
-        id: id,
-        label: label,
-        value: value,
-        derivedKey: _derivedKey!,
-        salt: salt,
-        iv: iv,
-      );
-      
+
+      // Per-file key from (PIN, this file's salt): the .jvs file is
+      // self-contained, so any device with the PIN can restore it.
+      final fileKey = await _cryptoService.deriveKeyAsync(_pin!, salt);
+      try {
+        await _repository.saveSecret(
+          id: id,
+          label: label,
+          value: value,
+          derivedKey: fileKey,
+          salt: salt,
+          iv: iv,
+        );
+      } finally {
+        _cryptoService.zeroKey(fileKey);
+      }
+
       await refreshSecrets();
       state = state.copyWith(isLoading: false);
     } catch (e) {
       state = state.copyWith(error: 'Failed to add secret: $e', isLoading: false);
+    }
+  }
+
+  /// Restore an existing vault from the server using the PIN.
+  /// On success the local vault (salt + validator) is re-initialized with
+  /// the same PIN and the restored secrets are shown.
+  Future<String?> restoreVault(String pin) async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final (restored, failed) = await _repository.restoreFromServer(pin);
+
+      if (restored == 0) {
+        final msg = failed == 0
+            ? 'No secrets found on the server.'
+            : '$failed file(s) found but none could be decrypted with this PIN. '
+              'Files from the old vault format are unrecoverable.';
+        state = state.copyWith(isLoading: false, error: msg);
+        return msg;
+      }
+
+      // Re-initialize the local vault with the same PIN (sets unlocked state)
+      await setupPin(pin);
+      await refreshSecrets();
+
+      return failed == 0
+          ? null
+          : 'Restored $restored secret(s); $failed old-format file(s) could not be recovered.';
+    } catch (e) {
+      final msg = 'Restore failed: $e';
+      state = state.copyWith(isLoading: false, error: msg);
+      return msg;
     }
   }
 
@@ -208,12 +252,30 @@ class SecretsNotifier extends StateNotifier<SecretsState> {
     }
   }
 
-  String decryptValue(SecretEntry secret) {
-    if (_derivedKey == null) return '********';
+  /// Decrypts a secret's value using its per-file key (PIN + stored salt).
+  /// Async because key derivation runs in a background isolate.
+  Future<String> decryptValue(SecretEntry secret) async {
+    if (_pin == null) return '********';
     try {
       final encryptedBlob = base64Decode(secret.encryptedBlob);
       final iv = base64Decode(secret.iv);
-      return _cryptoService.decrypt(_derivedKey!, Uint8List.fromList(encryptedBlob), Uint8List.fromList(iv));
+      final salt = base64Decode(secret.salt);
+      final key = await _cryptoService.deriveKeyAsync(_pin!, Uint8List.fromList(salt));
+      try {
+        final plaintext = _cryptoService.decrypt(
+          key,
+          Uint8List.fromList(encryptedBlob),
+          Uint8List.fromList(iv),
+        );
+        // New format: JSON {label, value}. Old format: raw value string.
+        try {
+          return (jsonDecode(plaintext) as Map<String, dynamic>)['value'] as String;
+        } catch (_) {
+          return plaintext;
+        }
+      } finally {
+        _cryptoService.zeroKey(key);
+      }
     } catch (e) {
       return 'Decryption Error';
     }
