@@ -20,19 +20,40 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Prefill the last known server URL so a session expiry doesn't force
+    // the user to remember/re-type it.
+    ref.read(secureStorageProvider).getServerUrl().then((stored) {
+      if (mounted && stored != null && stored.isNotEmpty) {
+        _urlController.text = stored;
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _urlController.dispose();
     super.dispose();
   }
 
+  /// Adds the default port :8000 when the user omits one.
+  String _normalizeUrl(String url) {
+    url = url.replaceAll(RegExp(r'/+$'), '');
+    final hostPart = url.replaceFirst(RegExp(r'^https?://'), '');
+    if (!hostPart.contains(':')) return '$url:8000';
+    return url;
+  }
+
   Future<void> _checkAndProceed() async {
-    final url = _urlController.text.trim();
+    final url = _normalizeUrl(_urlController.text.trim());
     if (url.isEmpty || !url.startsWith('http')) {
       setState(
         () => _error = 'Enter a valid URL (e.g., http://100.x.x.x:8000)',
       );
       return;
     }
+    _urlController.text = url;
 
     setState(() {
       _loading = true;
