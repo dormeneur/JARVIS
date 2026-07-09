@@ -29,6 +29,14 @@ class MockChatRepository extends Mock implements ChatRepository {
 
   @override
   Future<String> triggerReindex() async => 'indexing_started';
+
+  @override
+  Future<void> syncMessageToBrain({
+    required String sessionId,
+    required String query,
+    required String response,
+    required String timestamp,
+  }) async {}
 }
 
 void main() {
@@ -50,7 +58,7 @@ void main() {
 
     // Initial state — wait for status check
     await tester.pumpAndSettle();
-    expect(find.text('JARVIS AI'), findsOneWidget);
+    expect(find.text('JARVIS'), findsOneWidget);
 
     // Type query
     await tester.enterText(find.byType(TextField), 'Hello JARVIS');

@@ -180,4 +180,17 @@ class ChatRepository {
       // Non-critical, just logs error
     }
   }
+
+  /// Check if a file exists on the server by requesting its metadata.
+  Future<bool> checkFileExists(String filePath) async {
+    try {
+      final response = await _apiClient.dio.get(
+        '/files/$filePath',
+        options: Options(receiveTimeout: const Duration(seconds: 5)),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
 }

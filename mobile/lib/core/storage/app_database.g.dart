@@ -1669,8 +1669,24 @@ class $ChatSessionsTable extends ChatSessions
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
-  List<GeneratedColumn> get $columns => [id, title, createdAt, lastActiveAt];
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('active'),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    title,
+    createdAt,
+    lastActiveAt,
+    status,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -1715,6 +1731,12 @@ class $ChatSessionsTable extends ChatSessions
     } else if (isInserting) {
       context.missing(_lastActiveAtMeta);
     }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    }
     return context;
   }
 
@@ -1740,6 +1762,10 @@ class $ChatSessionsTable extends ChatSessions
         DriftSqlType.string,
         data['${effectivePrefix}last_active_at'],
       )!,
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
     );
   }
 
@@ -1754,11 +1780,16 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
   final String title;
   final String createdAt;
   final String lastActiveAt;
+
+  /// Session status: 'active' (current), 'inactive' (past/read-only).
+  /// Future: 'resumed' when continuing a past session.
+  final String status;
   const ChatSession({
     required this.id,
     required this.title,
     required this.createdAt,
     required this.lastActiveAt,
+    required this.status,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1767,6 +1798,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
     map['title'] = Variable<String>(title);
     map['created_at'] = Variable<String>(createdAt);
     map['last_active_at'] = Variable<String>(lastActiveAt);
+    map['status'] = Variable<String>(status);
     return map;
   }
 
@@ -1776,6 +1808,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       title: Value(title),
       createdAt: Value(createdAt),
       lastActiveAt: Value(lastActiveAt),
+      status: Value(status),
     );
   }
 
@@ -1789,6 +1822,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       title: serializer.fromJson<String>(json['title']),
       createdAt: serializer.fromJson<String>(json['createdAt']),
       lastActiveAt: serializer.fromJson<String>(json['lastActiveAt']),
+      status: serializer.fromJson<String>(json['status']),
     );
   }
   @override
@@ -1799,6 +1833,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       'title': serializer.toJson<String>(title),
       'createdAt': serializer.toJson<String>(createdAt),
       'lastActiveAt': serializer.toJson<String>(lastActiveAt),
+      'status': serializer.toJson<String>(status),
     };
   }
 
@@ -1807,11 +1842,13 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
     String? title,
     String? createdAt,
     String? lastActiveAt,
+    String? status,
   }) => ChatSession(
     id: id ?? this.id,
     title: title ?? this.title,
     createdAt: createdAt ?? this.createdAt,
     lastActiveAt: lastActiveAt ?? this.lastActiveAt,
+    status: status ?? this.status,
   );
   ChatSession copyWithCompanion(ChatSessionsCompanion data) {
     return ChatSession(
@@ -1821,6 +1858,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       lastActiveAt: data.lastActiveAt.present
           ? data.lastActiveAt.value
           : this.lastActiveAt,
+      status: data.status.present ? data.status.value : this.status,
     );
   }
 
@@ -1830,13 +1868,14 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           ..write('id: $id, ')
           ..write('title: $title, ')
           ..write('createdAt: $createdAt, ')
-          ..write('lastActiveAt: $lastActiveAt')
+          ..write('lastActiveAt: $lastActiveAt, ')
+          ..write('status: $status')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, title, createdAt, lastActiveAt);
+  int get hashCode => Object.hash(id, title, createdAt, lastActiveAt, status);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1844,7 +1883,8 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           other.id == this.id &&
           other.title == this.title &&
           other.createdAt == this.createdAt &&
-          other.lastActiveAt == this.lastActiveAt);
+          other.lastActiveAt == this.lastActiveAt &&
+          other.status == this.status);
 }
 
 class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
@@ -1852,12 +1892,14 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
   final Value<String> title;
   final Value<String> createdAt;
   final Value<String> lastActiveAt;
+  final Value<String> status;
   final Value<int> rowid;
   const ChatSessionsCompanion({
     this.id = const Value.absent(),
     this.title = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.lastActiveAt = const Value.absent(),
+    this.status = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   ChatSessionsCompanion.insert({
@@ -1865,6 +1907,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     required String title,
     required String createdAt,
     required String lastActiveAt,
+    this.status = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        title = Value(title),
@@ -1875,6 +1918,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     Expression<String>? title,
     Expression<String>? createdAt,
     Expression<String>? lastActiveAt,
+    Expression<String>? status,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1882,6 +1926,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       if (title != null) 'title': title,
       if (createdAt != null) 'created_at': createdAt,
       if (lastActiveAt != null) 'last_active_at': lastActiveAt,
+      if (status != null) 'status': status,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1891,6 +1936,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     Value<String>? title,
     Value<String>? createdAt,
     Value<String>? lastActiveAt,
+    Value<String>? status,
     Value<int>? rowid,
   }) {
     return ChatSessionsCompanion(
@@ -1898,6 +1944,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       title: title ?? this.title,
       createdAt: createdAt ?? this.createdAt,
       lastActiveAt: lastActiveAt ?? this.lastActiveAt,
+      status: status ?? this.status,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1917,6 +1964,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     if (lastActiveAt.present) {
       map['last_active_at'] = Variable<String>(lastActiveAt.value);
     }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1930,6 +1980,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
           ..write('title: $title, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastActiveAt: $lastActiveAt, ')
+          ..write('status: $status, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3230,6 +3281,7 @@ typedef $$ChatSessionsTableCreateCompanionBuilder =
       required String title,
       required String createdAt,
       required String lastActiveAt,
+      Value<String> status,
       Value<int> rowid,
     });
 typedef $$ChatSessionsTableUpdateCompanionBuilder =
@@ -3238,6 +3290,7 @@ typedef $$ChatSessionsTableUpdateCompanionBuilder =
       Value<String> title,
       Value<String> createdAt,
       Value<String> lastActiveAt,
+      Value<String> status,
       Value<int> rowid,
     });
 
@@ -3267,6 +3320,11 @@ class $$ChatSessionsTableFilterComposer
 
   ColumnFilters<String> get lastActiveAt => $composableBuilder(
     column: $table.lastActiveAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -3299,6 +3357,11 @@ class $$ChatSessionsTableOrderingComposer
     column: $table.lastActiveAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$ChatSessionsTableAnnotationComposer
@@ -3323,6 +3386,9 @@ class $$ChatSessionsTableAnnotationComposer
     column: $table.lastActiveAt,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
 }
 
 class $$ChatSessionsTableTableManager
@@ -3360,12 +3426,14 @@ class $$ChatSessionsTableTableManager
                 Value<String> title = const Value.absent(),
                 Value<String> createdAt = const Value.absent(),
                 Value<String> lastActiveAt = const Value.absent(),
+                Value<String> status = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ChatSessionsCompanion(
                 id: id,
                 title: title,
                 createdAt: createdAt,
                 lastActiveAt: lastActiveAt,
+                status: status,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -3374,12 +3442,14 @@ class $$ChatSessionsTableTableManager
                 required String title,
                 required String createdAt,
                 required String lastActiveAt,
+                Value<String> status = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ChatSessionsCompanion.insert(
                 id: id,
                 title: title,
                 createdAt: createdAt,
                 lastActiveAt: lastActiveAt,
+                status: status,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

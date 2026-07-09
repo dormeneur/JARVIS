@@ -73,6 +73,17 @@ class SettingsScreen extends ConsumerWidget {
             },
           ),
           const Divider(),
+          _SectionHeader('AI Chat'),
+          SwitchListTile(
+            secondary: const Icon(Icons.auto_delete_outlined),
+            title: const Text('Auto-Archive Old Chats'),
+            subtitle: const Text('Archive chats older than 7 days to Memory/Chats/'),
+            value: ref.watch(autoArchiveProvider),
+            onChanged: (value) {
+              ref.read(autoArchiveProvider.notifier).toggle(value);
+            },
+          ),
+          const Divider(),
           _SectionHeader('Account'),
           ListTile(
             leading: Icon(Icons.logout, color: theme.colorScheme.error),

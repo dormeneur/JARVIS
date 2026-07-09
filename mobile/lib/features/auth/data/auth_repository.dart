@@ -110,6 +110,8 @@ class AuthRepository {
   }
 
   /// Validate the stored token by calling GET /auth/me.
+  /// Uses shorter timeouts since this runs in the background —
+  /// we don't want to hang for 30+ seconds when offline.
   Future<TokenValidationResult> validateToken() async {
     try {
       await _apiClient.init();
@@ -119,7 +121,13 @@ class AuthRepository {
       final url = await _secureStorage.getServerUrl();
       if (url == null || url.isEmpty) return TokenValidationResult.invalid;
 
-      final response = await _apiClient.dio.get('/auth/me');
+      final response = await _apiClient.dio.get(
+        '/auth/me',
+        options: Options(
+          sendTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 5),
+        ),
+      );
       return response.statusCode == 200
           ? TokenValidationResult.valid
           : TokenValidationResult.invalid;

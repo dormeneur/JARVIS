@@ -72,38 +72,83 @@ class AuthNotifier extends StateNotifier<AuthState> {
   AuthNotifier(this._authRepo, this._secureStorage, this._apiClient)
     : super(const AuthState.loading());
 
-  /// Called on app startup: load credentials and validate.
+  /// Called on app startup: load credentials and proceed immediately.
+  /// Token validation happens in the background — never blocks the UI.
   Future<void> initialize() async {
     state = const AuthState.loading();
 
+    // Step 1: Check for stored credentials locally (no network needed)
     final hasCredentials = await _authRepo.hasStoredCredentials();
     if (!hasCredentials) {
       state = const AuthState.unauthenticated();
       return;
     }
 
+    // Step 2: Load local device info and proceed IMMEDIATELY
     await _apiClient.init();
-    final validationResult = await _authRepo.validateToken();
-    if (validationResult == TokenValidationResult.invalid) {
-      state = const AuthState.unauthenticated(
-        error: 'Session expired. Please log in again.',
-      );
-      return;
-    }
-
     final deviceId = await _secureStorage.getDeviceId() ?? '';
     final deviceName = await _secureStorage.getDeviceName() ?? '';
     final serverUrl = await _secureStorage.getServerUrl() ?? '';
 
-    final deviceInfo = await _authRepo.listDevices().then((list) => list.firstWhere((d) => d['device_id'] == deviceId));
-    final isAuth = deviceInfo['is_secrets_authorized'] as bool? ?? false;
-
+    // Proceed to authenticated state using locally stored data.
+    // We trust local credentials and don't block on network.
     state = AuthState.authenticated(
       deviceId: deviceId,
       deviceName: deviceName,
       serverUrl: serverUrl,
-      isSecretsAuthorized: isAuth,
+      isSecretsAuthorized: false, // Conservative default; updated when online
     );
+
+    // Step 3: Validate token in background (non-blocking, fire-and-forget)
+    _validateInBackground();
+  }
+
+  /// Validates the token and fetches device info in the background.
+  /// If the token is definitively invalid (401/403), transitions to unauthenticated.
+  /// If the server is unreachable, does nothing (stays authenticated with local data).
+  Future<void> _validateInBackground() async {
+    try {
+      final validationResult = await _authRepo.validateToken();
+
+      if (validationResult == TokenValidationResult.invalid) {
+        // Token is definitively expired/revoked — must re-authenticate
+        if (mounted) {
+          state = const AuthState.unauthenticated(
+            error: 'Session expired. Please log in again.',
+          );
+        }
+        return;
+      }
+
+      if (validationResult == TokenValidationResult.valid) {
+        // Server is online — fetch updated device info
+        final deviceId = await _secureStorage.getDeviceId() ?? '';
+        try {
+          final devices = await _authRepo.listDevices();
+          final deviceInfo = devices.firstWhere(
+            (d) => d['device_id'] == deviceId,
+            orElse: () => <String, dynamic>{},
+          );
+          final isAuth =
+              deviceInfo['is_secrets_authorized'] as bool? ?? false;
+
+          // Update state with server-confirmed info
+          if (mounted) {
+            state = AuthState.authenticated(
+              deviceId: state.deviceId ?? deviceId,
+              deviceName: state.deviceName ?? '',
+              serverUrl: state.serverUrl ?? '',
+              isSecretsAuthorized: isAuth,
+            );
+          }
+        } catch (_) {
+          // listDevices failed — not critical, keep current state
+        }
+      }
+      // If unreachable, do nothing — user continues offline
+    } catch (_) {
+      // Swallow any unexpected errors — never crash the background validation
+    }
   }
 
   /// Register the first device.

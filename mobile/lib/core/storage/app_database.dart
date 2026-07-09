@@ -68,7 +68,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration {
@@ -121,6 +121,11 @@ class AppDatabase extends _$AppDatabase {
           await customStatement('''
             UPDATE chat_messages SET session_id = '$legacySessionId' WHERE session_id IS NULL
           ''');
+        }
+        if (from < 9) {
+          await m.addColumn(chatSessions, chatSessions.status);
+          // Mark all existing sessions as inactive by default
+          await customStatement("UPDATE chat_sessions SET status = 'inactive'");
         }
       },
     );
@@ -417,6 +422,26 @@ class AppDatabase extends _$AppDatabase {
       await (delete(chatMessages)..where((m) => m.sessionId.equals(id))).go();
       await (delete(chatSessions)..where((s) => s.id.equals(id))).go();
     });
+  }
+
+  /// Mark a session as active and all others as inactive.
+  Future<void> setActiveSession(String activeSessionId) async {
+    await transaction(() async {
+      // First, mark all sessions as inactive
+      await customStatement("UPDATE chat_sessions SET status = 'inactive'");
+      // Then mark the target session as active
+      await (update(chatSessions)..where((s) => s.id.equals(activeSessionId))).write(
+        const ChatSessionsCompanion(status: Value('active')),
+      );
+    });
+  }
+
+  /// Get all inactive sessions older than the given date.
+  Future<List<ChatSession>> getInactiveSessionsOlderThan(String isoDateCutoff) {
+    return (select(chatSessions)
+          ..where((s) => s.status.equals('inactive'))
+          ..where((s) => s.lastActiveAt.isSmallerThanValue(isoDateCutoff)))
+        .get();
   }
 
   /// Delete a single chat message by ID.
