@@ -53,3 +53,19 @@ class DeviceInfo(BaseModel):
 class DeviceListResponse(BaseModel):
     devices: list[DeviceInfo]
     max_devices: int
+
+
+# --- QR Invite ---
+
+class InviteTokenResponse(BaseModel):
+    """Returned to the admin device so it can render the QR code."""
+    invite_token: str
+    expires_at: datetime
+    ttl_seconds: int
+
+
+class InviteRegisterRequest(BaseModel):
+    """Sent by the guest device after scanning the QR."""
+    device_name: str
+    invite_token: str
+    server_url: str  # echo'd from the QR payload; used by mobile to pre-fill URL

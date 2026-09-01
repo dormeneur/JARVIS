@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 
 from app.config import settings
@@ -7,6 +9,8 @@ from app.dependencies import get_current_device
 from app.models.auth_models import (
     DeviceInfo,
     DeviceListResponse,
+    InviteRegisterRequest,
+    InviteTokenResponse,
     ReconnectRequest,
     RegistrationResponse,
     RegisterByDeviceRequest,
@@ -138,4 +142,59 @@ async def list_devices(
     return DeviceListResponse(
         devices=[DeviceInfo(**d) for d in devices],
         max_devices=settings.max_devices,
+    )
+
+
+# ---------------------------------------------------------------------------
+# QR Invite flow
+# ---------------------------------------------------------------------------
+
+@router.post("/invite", response_model=InviteTokenResponse, status_code=201)
+async def create_invite(
+    current: dict = Depends(get_current_device),
+) -> InviteTokenResponse:
+    """Generate a single-use invite token (10-min TTL) for QR-based registration.
+
+    Only secrets-authorized (admin) devices may generate invites.
+    The caller encodes {server_url, invite_token} into a QR code and displays
+    it; the guest device scans it and calls POST /auth/invite/register.
+    """
+    if not current.get("is_secrets_authorized", False):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin devices may generate invite tokens",
+        )
+
+    token, expires_at = auth.create_invite_token()
+    ttl = int((expires_at - datetime.now(tz=timezone.utc)).total_seconds())
+
+    return InviteTokenResponse(
+        invite_token=token,
+        expires_at=expires_at,
+        ttl_seconds=max(ttl, 0),
+    )
+
+
+@router.post("/invite/register", response_model=RegistrationResponse, status_code=201)
+async def register_via_invite(
+    body: InviteRegisterRequest,
+) -> RegistrationResponse:
+    """Register a new device by redeeming a QR invite token.
+
+    No existing JWT required — the invite token is the credential.
+    The token is single-use and expires after 10 minutes.
+    The resulting JWT is NOT secrets-authorized (guests never have Secrets access).
+    """
+    device_id, device_secret, token, expires = auth.register_invited_device(
+        device_name=body.device_name,
+        invite_token=body.invite_token,
+    )
+    return RegistrationResponse(
+        access_token=token,
+        expires_at=expires,
+        device_id=device_id,
+        device_name=body.device_name,
+        device_secret=device_secret,
+        is_secrets_authorized=False,
     )

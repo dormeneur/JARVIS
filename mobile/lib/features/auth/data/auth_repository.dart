@@ -3,12 +3,8 @@ import 'package:jarvis_mobile/core/network/api_client.dart';
 import 'package:jarvis_mobile/core/network/api_exceptions.dart';
 import 'package:jarvis_mobile/core/storage/secure_storage.dart';
 
-/// Enum representing the outcome of token validation.
-enum TokenValidationResult {
-  valid,
-  invalid,
-  unreachable,
-}
+/// Outcome of a background token validation check.
+enum TokenValidationResult { valid, invalid, unreachable }
 
 /// Handles device registration, token storage, and validation.
 class AuthRepository {
@@ -18,10 +14,13 @@ class AuthRepository {
   AuthRepository({
     required ApiClient apiClient,
     required SecureStorage secureStorage,
-  }) : _apiClient = apiClient,
-       _secureStorage = secureStorage;
+  })  : _apiClient = apiClient,
+        _secureStorage = secureStorage;
 
-  /// Check if server is reachable and get health status.
+  // ---------------------------------------------------------------------------
+  // Health
+  // ---------------------------------------------------------------------------
+
   Future<bool> checkServerHealth(String serverUrl) async {
     try {
       final response = await Dio().get('$serverUrl/health');
@@ -31,93 +30,121 @@ class AuthRepository {
     }
   }
 
-  /// Register the first device using setup secret.
+  // ---------------------------------------------------------------------------
+  // Registration flows
+  // ---------------------------------------------------------------------------
+
   Future<void> registerFirstDevice({
     required String serverUrl,
     required String deviceName,
     required String setupSecret,
   }) async {
     _apiClient.setBaseUrl(serverUrl);
-
     try {
       final response = await _apiClient.dio.post(
         '/auth/register',
         data: {'device_name': deviceName, 'setup_secret': setupSecret},
       );
-
-      final data = response.data as Map<String, dynamic>;
-      await _secureStorage.setServerUrl(serverUrl);
-      await _secureStorage.setJwt(data['access_token'] as String);
-      await _secureStorage.setDeviceId(data['device_id'] as String);
-      await _secureStorage.setDeviceName(data['device_name'] as String);
-      await _secureStorage.setDeviceSecret(data['device_secret'] as String);
+      await _storeCredentials(serverUrl, response.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw mapDioError(e);
     }
   }
 
-  /// Register an additional device (requires existing JWT).
   Future<void> registerAdditionalDevice({
     required String serverUrl,
     required String existingToken,
     required String deviceName,
   }) async {
     _apiClient.setBaseUrl(serverUrl);
-
     try {
-      // Temporarily set the provided token for this request
       final response = await _apiClient.dio.post(
         '/auth/register/device',
         data: {'device_name': deviceName},
         options: Options(headers: {'Authorization': 'Bearer $existingToken'}),
       );
-
-      final data = response.data as Map<String, dynamic>;
-      await _secureStorage.setServerUrl(serverUrl);
-      await _secureStorage.setJwt(data['access_token'] as String);
-      await _secureStorage.setDeviceId(data['device_id'] as String);
-      await _secureStorage.setDeviceName(data['device_name'] as String);
-      await _secureStorage.setDeviceSecret(data['device_secret'] as String);
+      await _storeCredentials(serverUrl, response.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw mapDioError(e);
     }
   }
 
-  /// Reconnect to an existing device by name and secret (no auth required).
-  /// Use this when app data is cleared but device is still registered on server.
   Future<void> reconnectDevice({
     required String serverUrl,
     required String deviceName,
     required String deviceSecret,
   }) async {
     _apiClient.setBaseUrl(serverUrl);
-
     try {
       final response = await _apiClient.dio.post(
         '/auth/reconnect',
         data: {'device_name': deviceName, 'device_secret': deviceSecret},
       );
-
       final data = response.data as Map<String, dynamic>;
       await _secureStorage.setServerUrl(serverUrl);
       await _secureStorage.setJwt(data['access_token'] as String);
       await _secureStorage.setDeviceId(data['device_id'] as String);
       await _secureStorage.setDeviceName(data['device_name'] as String);
-      // Device secret already stored, but we keep it (doesn't change)
+      // device_secret doesn't change on reconnect
     } on DioException catch (e) {
       throw mapDioError(e);
     }
   }
 
-  /// Validate the stored token by calling GET /auth/me.
-  /// Uses shorter timeouts since this runs in the background —
-  /// we don't want to hang for 30+ seconds when offline.
+  // ---------------------------------------------------------------------------
+  // QR invite flow
+  // ---------------------------------------------------------------------------
+
+  /// Request a 10-min single-use invite token (admin devices only).
+  /// Returns a record so the caller can build the QR payload.
+  Future<({String inviteToken, DateTime expiresAt, int ttlSeconds, String serverUrl})>
+      createInviteToken() async {
+    try {
+      final response = await _apiClient.dio.post('/auth/invite');
+      final data = response.data as Map<String, dynamic>;
+      final serverUrl = await _secureStorage.getServerUrl() ?? '';
+      return (
+        inviteToken: data['invite_token'] as String,
+        expiresAt: DateTime.parse(data['expires_at'] as String),
+        ttlSeconds: data['ttl_seconds'] as int,
+        serverUrl: serverUrl,
+      );
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  /// Register by redeeming a QR invite token (guest device, no JWT needed).
+  Future<void> registerViaInvite({
+    required String serverUrl,
+    required String deviceName,
+    required String inviteToken,
+  }) async {
+    _apiClient.setBaseUrl(serverUrl);
+    try {
+      final response = await _apiClient.dio.post(
+        '/auth/invite/register',
+        data: {
+          'device_name': deviceName,
+          'invite_token': inviteToken,
+          'server_url': serverUrl,
+        },
+      );
+      await _storeCredentials(serverUrl, response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Token lifecycle
+  // ---------------------------------------------------------------------------
+
   Future<TokenValidationResult> validateToken() async {
     try {
       await _apiClient.init();
       final jwt = await _secureStorage.getJwt();
       if (jwt == null || jwt.isEmpty) return TokenValidationResult.invalid;
-
       final url = await _secureStorage.getServerUrl();
       if (url == null || url.isEmpty) return TokenValidationResult.invalid;
 
@@ -141,7 +168,6 @@ class AuthRepository {
     }
   }
 
-  /// Refresh the current token.
   Future<void> refreshToken() async {
     try {
       final response = await _apiClient.dio.post('/auth/refresh');
@@ -152,30 +178,30 @@ class AuthRepository {
     }
   }
 
-  /// Logout: clear all stored credentials.
   Future<void> logout() async {
     await _secureStorage.clearAll();
   }
 
-  /// Check if credentials exist locally.
   Future<bool> hasStoredCredentials() async {
     final jwt = await _secureStorage.getJwt();
     final url = await _secureStorage.getServerUrl();
     return jwt != null && jwt.isNotEmpty && url != null && url.isNotEmpty;
   }
 
-  /// Fetch list of all registered devices.
+  // ---------------------------------------------------------------------------
+  // Device management
+  // ---------------------------------------------------------------------------
+
   Future<List<Map<String, dynamic>>> listDevices() async {
     try {
       final response = await _apiClient.dio.get('/auth/devices');
       final data = response.data as Map<String, dynamic>;
-      return List<Map<String, dynamic>>.from(data['devices']);
+      return List<Map<String, dynamic>>.from(data['devices'] as List);
     } on DioException catch (e) {
       throw mapDioError(e);
     }
   }
 
-  /// Authorize a device for secrets access.
   Future<void> authorizeSecrets(String deviceId) async {
     try {
       await _apiClient.dio.post(
@@ -184,6 +210,20 @@ class AuthRepository {
       );
     } on DioException catch (e) {
       throw mapDioError(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  Future<void> _storeCredentials(String serverUrl, Map<String, dynamic> data) async {
+    await _secureStorage.setServerUrl(serverUrl);
+    await _secureStorage.setJwt(data['access_token'] as String);
+    await _secureStorage.setDeviceId(data['device_id'] as String);
+    await _secureStorage.setDeviceName(data['device_name'] as String);
+    if (data['device_secret'] != null) {
+      await _secureStorage.setDeviceSecret(data['device_secret'] as String);
     }
   }
 }

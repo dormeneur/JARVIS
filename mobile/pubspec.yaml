@@ -26,6 +26,8 @@ dependencies:
   pointycastle: ^4.0.0
   uuid: ^4.5.3
   intl: ^0.18.1
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^6.0.5
 
 dev_dependencies:
   flutter_test:

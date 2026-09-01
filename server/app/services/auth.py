@@ -286,3 +286,81 @@ def refresh_token(device_id: str, device_name: str, old_jti: str) -> tuple[str, 
 
 def revoke_device(device_id: str) -> None:
     revoke_all_for_device(device_id)
+
+
+# --- Invite Token Flow (QR registration) ---
+
+_INVITE_TTL_MINUTES = 10
+
+
+def _invite_tokens_path() -> Path:
+    return _system_dir() / "invite_tokens.json"
+
+
+def _load_invite_tokens() -> dict:
+    path = _invite_tokens_path()
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _save_invite_tokens(tokens: dict) -> None:
+    _invite_tokens_path().write_text(json.dumps(tokens, indent=2), encoding="utf-8")
+
+
+def create_invite_token() -> tuple[str, datetime]:
+    """Create a single-use invite token valid for 10 minutes.
+
+    Returns (token, expires_at).
+    """
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(tz=timezone.utc) + timedelta(minutes=_INVITE_TTL_MINUTES)
+
+    tokens = _load_invite_tokens()
+    # Purge expired tokens on every write to keep the file small.
+    now = datetime.now(tz=timezone.utc)
+    tokens = {
+        t: exp
+        for t, exp in tokens.items()
+        if datetime.fromisoformat(exp) > now
+    }
+    tokens[token] = expires_at.isoformat()
+    _save_invite_tokens(tokens)
+    return token, expires_at
+
+
+def consume_invite_token(token: str) -> None:
+    """Validate and consume an invite token (single-use + TTL).
+
+    Raises InvalidSetupSecretError if the token is missing, expired, or already used.
+    """
+    tokens = _load_invite_tokens()
+    exp_str = tokens.get(token)
+    if exp_str is None:
+        raise InvalidSetupSecretError()
+
+    expires_at = datetime.fromisoformat(exp_str)
+    if datetime.now(tz=timezone.utc) > expires_at:
+        # Expired — remove and raise
+        del tokens[token]
+        _save_invite_tokens(tokens)
+        raise InvalidSetupSecretError()
+
+    # Consume: remove so it cannot be reused
+    del tokens[token]
+    _save_invite_tokens(tokens)
+
+
+def register_invited_device(
+    device_name: str,
+    invite_token: str,
+) -> tuple[str, str, str, datetime]:
+    """Register a new device via QR invite token.
+
+    Returns (device_id, device_secret, jwt_token, expires_at).
+    Raises InvalidSetupSecretError if the token is invalid/expired.
+    """
+    consume_invite_token(invite_token)
+    device_id, device_secret = _add_device(device_name, is_secrets_authorized=False)
+    token, expires = create_token(device_id, device_name)
+    return device_id, device_secret, token, expires

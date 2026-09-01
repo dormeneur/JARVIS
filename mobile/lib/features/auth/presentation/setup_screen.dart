@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/auth/presentation/register_screen.dart';
+import 'package:jarvis_mobile/features/auth/presentation/qr_scan_screen.dart';
 
 /// Screen where the user enters the JARVIS server URL.
 ///
@@ -145,6 +146,15 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text('Connect'),
+              ),
+              const SizedBox(height: 12),
+              // QR scan — shown only before connection so guests can skip URL entry
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const QrScanScreen()),
+                ),
+                icon: const Icon(Icons.qr_code_scanner, size: 18),
+                label: const Text('Scan Invite QR'),
               ),
             ],
           ),
