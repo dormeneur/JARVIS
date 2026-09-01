@@ -40,12 +40,17 @@ async def reset_all_files(
 @router.get("/files", response_model=DirectoryListing)
 async def list_root(_device: dict = Depends(get_current_device)) -> DirectoryListing:
     listing = vault.list_directory()
-    
-    # Filter out Secrets if unauthorized
+
+    # Filter out Secrets/ for devices that are not secrets-authorized
     if not _device.get("is_secrets_authorized", False):
-        listing.files = [f for f in listing.files if not f.path.startswith("Secrets/")]
-        listing.directories = [d for d in listing.directories if d != "Secrets" and not d.startswith("Secrets/")]
-        
+        listing = DirectoryListing(
+            path=listing.path,
+            entries=[
+                e for e in listing.entries
+                if not (e.path == "Secrets" or e.path.startswith("Secrets/"))
+            ],
+        )
+
     return listing
 
 
@@ -91,8 +96,13 @@ async def get_path(
     
     result = vault.get_path(path)
     if isinstance(result, DirectoryListing) and not _device.get("is_secrets_authorized", False):
-        result.files = [f for f in result.files if not f.path.startswith("Secrets/")]
-        result.directories = [d for d in result.directories if d != "Secrets" and not d.startswith("Secrets/")]
+        result = DirectoryListing(
+            path=result.path,
+            entries=[
+                e for e in result.entries
+                if not (e.path == "Secrets" or e.path.startswith("Secrets/"))
+            ],
+        )
     return result
 
 
