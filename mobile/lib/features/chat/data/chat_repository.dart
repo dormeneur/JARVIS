@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/network/api_client.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
+import 'agent_models.dart';
 import 'file_manifest_model.dart';
 
 final chatRepositoryProvider = Provider<ChatRepository>((ref) {
@@ -66,6 +67,81 @@ class ChatRepository {
       yield jsonEncode({'error': 'Network error: ${e.message}'});
     } catch (e) {
       yield jsonEncode({'error': 'Error: $e'});
+    }
+  }
+
+  /// Agentic chat: the model picks its own tools.
+  ///
+  /// Emits decoded [AgentEvent]s. The stream ends early on
+  /// [AgentApprovalRequired] — the caller records the user's decision in
+  /// [toolTranscript] and calls this again to resume from that point.
+  Stream<AgentEvent> askAgent(
+    String query, {
+    List<String>? attachments,
+    List<Map<String, dynamic>>? chatHistory,
+    String currentDirectory = ".",
+    List<String> grantedTools = const [],
+    List<Map<String, dynamic>> toolTranscript = const [],
+    CancelToken? cancelToken,
+  }) async* {
+    try {
+      final body = <String, dynamic>{
+        'query': query,
+        'current_directory': currentDirectory,
+        'granted_tools': grantedTools,
+        'tool_transcript': toolTranscript,
+      };
+      if (attachments != null && attachments.isNotEmpty) {
+        body['attachments'] = attachments;
+      }
+      if (chatHistory != null && chatHistory.isNotEmpty) {
+        body['chat_history'] = chatHistory;
+      }
+
+      final response = await _apiClient.dio.post(
+        '/ask/ai/agent',
+        data: body,
+        cancelToken: cancelToken,
+        options: Options(
+          responseType: ResponseType.stream,
+          receiveTimeout: const Duration(seconds: 300),
+        ),
+      );
+
+      final stream = response.data.stream as Stream;
+      // A TCP chunk can split a JSON line, so decode to newline boundaries.
+      final lines = stream
+          .map((chunk) => List<int>.from(chunk))
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+
+      await for (final line in lines) {
+        if (line.trim().isEmpty) continue;
+        try {
+          final decoded = jsonDecode(line);
+          if (decoded is! Map<String, dynamic>) continue;
+          final event = AgentEvent.fromJson(decoded);
+          if (event != null) yield event;
+        } catch (_) {
+          // Ignore malformed partial lines.
+        }
+      }
+    } on DioException catch (e) {
+      if (CancelToken.isCancel(e)) return;
+      yield AgentError('Network error: ${e.message}');
+    } catch (e) {
+      yield AgentError('$e');
+    }
+  }
+
+  /// Fetch the tool catalogue (names + risk classes) for the permission UI.
+  Future<List<Map<String, dynamic>>> getTools() async {
+    try {
+      final response = await _apiClient.dio.get('/ask/ai/tools');
+      final data = response.data as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['tools'] as List? ?? []);
+    } catch (_) {
+      return [];
     }
   }
 

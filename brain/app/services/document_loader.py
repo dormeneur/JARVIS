@@ -10,10 +10,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
-import fitz  # PyMuPDF
-from docx import Document
-
 logger = logging.getLogger(__name__)
+
+# fitz (PyMuPDF) and python-docx are imported lazily inside the two extractors
+# that need them. They are heavy native deps, and importing them at module load
+# made EXCLUDED_FOLDERS — which other modules need — unimportable without them.
 
 # Configuration constants
 SUPPORTED_EXTENSIONS = [".md", ".txt", ".pdf", ".json", ".csv", ".docx"]
@@ -168,6 +169,8 @@ class DocumentLoader:
         Returns:
             Extracted text content
         """
+        import fitz  # PyMuPDF — heavy native dep, loaded on demand
+
         doc = fitz.open(file_path)
         text_parts = []
         
@@ -186,6 +189,8 @@ class DocumentLoader:
         Returns:
             Extracted text content
         """
+        from docx import Document  # heavy native dep, loaded on demand
+
         doc = Document(file_path)
         paragraphs = [para.text for para in doc.paragraphs]
         return "\n".join(paragraphs)

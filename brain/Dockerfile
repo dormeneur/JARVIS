@@ -2,7 +2,9 @@
 FROM python:3.12-slim AS builder
 WORKDIR /build
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# This network drops TLS handshakes to PyPI often enough that a plain
+# `pip install` fails the build on an unlucky run. Retry instead of failing.
+RUN pip install --no-cache-dir --retries 10 --timeout 60 -r requirements.txt
 
 # Runtime stage
 FROM python:3.12-slim

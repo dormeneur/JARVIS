@@ -28,6 +28,31 @@ class AskRequest(BaseModel):
     options: Optional[AskOptions] = Field(default_factory=AskOptions)
 
 
+class ToolTranscriptEntry(BaseModel):
+    """A tool call the user has already ruled on, replayed to resume the loop."""
+
+    name: str = Field(..., description="Tool name")
+    arguments: dict = Field(default_factory=dict, description="Arguments the model chose")
+    approved: bool = Field(..., description="Whether the user allowed this call")
+
+
+class AgentRequest(BaseModel):
+    """Request model for the agentic (tool-calling) chat endpoint."""
+
+    query: str = Field(..., description="Natural language request")
+    current_directory: str = Field(default=".", description="Context directory relative to vault")
+    chat_history: List[Message] = Field(default_factory=list, description="Prior turns")
+    attachments: List[str] = Field(default_factory=list, description="File paths to focus on")
+    granted_tools: List[str] = Field(
+        default_factory=list,
+        description="Tools the user has approved for this session (skip the prompt)",
+    )
+    tool_transcript: List[ToolTranscriptEntry] = Field(
+        default_factory=list,
+        description="Already-decided tool calls for this turn, replayed in order",
+    )
+
+
 class Source(BaseModel):
     """Source attribution for retrieved context."""
     

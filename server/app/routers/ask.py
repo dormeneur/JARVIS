@@ -63,6 +63,41 @@ async def ask_jarvis(
         media_type="application/x-ndjson"
     )
 
+@router.post("/ask/ai/agent")
+async def ask_jarvis_agent(
+    request: Request,
+    device=Depends(get_current_device),
+):
+    """Proxy agentic (tool-calling) chat to the Brain service (Streaming)."""
+    brain_agent_url = f"{settings.brain_url.rstrip('/')}/brain/ai/agent"
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    logger.info(f"[AGENT] Received request, forwarding to {brain_agent_url}")
+
+    return StreamingResponse(
+        proxy_stream(payload, brain_agent_url),
+        media_type="application/x-ndjson",
+    )
+
+
+@router.get("/ask/ai/tools")
+async def ask_list_tools(device=Depends(get_current_device)):
+    """List the AI tool catalogue (names, risk classes) for permission UI."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/ai/tools"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch tool catalogue from brain: {e}")
+        raise HTTPException(status_code=503, detail="AI service offline")
+
+
 @router.get("/ask/status")
 async def ask_status(device=Depends(get_current_device)):
     """Check health of AI subsystem."""

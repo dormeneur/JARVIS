@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/explorer/domain/providers/clipboard_provider.dart';
-import 'package:jarvis_mobile/features/explorer/domain/providers/file_operation_provider.dart';
-import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
-import 'package:jarvis_mobile/features/explorer/presentation/widgets/folder_picker_dialog.dart';
 import 'package:jarvis_mobile/shared/models/file_entry.dart';
 import 'package:jarvis_mobile/shared/utils/date_utils.dart';
 
@@ -121,57 +118,11 @@ class FileContextMenu extends ConsumerWidget {
           _ActionTile(
             icon: Icons.drive_file_move_outline,
             label: 'Move to…',
-            onTap: () async {
-              Navigator.pop(context);
-              final targetPath = await showDialog<String>(
-                context: context,
-                builder: (_) => const FolderPickerDialog(),
-              );
-              if (targetPath != null && context.mounted) {
-                int? descendantCount;
-                if (entry.isDirectory) {
-                  final repo = ref.read(explorerRepositoryProvider);
-                  descendantCount = await repo.getDescendantCount(entry.path);
-                }
-                
-                if (!context.mounted) return;
-                
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Move Folder'),
-                    content: Text(
-                      descendantCount != null && descendantCount > 0 
-                          ? 'Move "${entry.name}" and its $descendantCount nested items to the selected folder?\n\nThis will be synced to the server.'
-                          : 'Move "${entry.name}" to the selected folder?\n\nThis will be synced to the server.'
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('Cancel'),
-                      ),
-                      FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Move'),
-                      ),
-                    ],
-                  ),
-                );
-                
-                if (confirmed != true || !context.mounted) return;
-
-                final service = ref.read(fileOperationServiceProvider);
-                final result = await service.moveFile(entry.path, targetPath);
-                ref.invalidate(directoryEntriesProvider);
-                if (context.mounted) {
-                  if (result.isSuccess) {
-                    _showSnackBar(context, 'Moved "${entry.name}"');
-                  } else {
-                    _showSnackBar(
-                        context, 'Move failed: ${result.errors.first.message}');
-                  }
-                }
-              }
+            onTap: () {
+              // Popping this sheet unmounts its BuildContext, so the
+              // follow-up folder picker + confirm dialog run in the caller
+              // (explorer_screen's stable context), not here.
+              Navigator.pop(context, 'move');
             },
           ),
           if (clipboardState.isNotEmpty)
@@ -179,24 +130,8 @@ class FileContextMenu extends ConsumerWidget {
               icon: Icons.paste,
               label:
                   'Paste here (${clipboardState.fileIds.length} item${clipboardState.fileIds.length == 1 ? '' : 's'})',
-              onTap: () async {
-                Navigator.pop(context);
-                if (!entry.isDirectory) return;
-                final clipNotifier =
-                    ref.read(clipboardStateProvider.notifier);
-                final service = ref.read(fileOperationServiceProvider);
-                final result = await clipNotifier.paste(entry.path, service);
-                ref.invalidate(directoryEntriesProvider);
-                if (context.mounted) {
-                  if (result.isSuccess) {
-                    _showSnackBar(
-                        context,
-                        '${result.successfulIds.length} item${result.successfulIds.length == 1 ? '' : 's'} pasted');
-                  } else {
-                    _showSnackBar(context,
-                        'Paste failed: ${result.errors.first.message}');
-                  }
-                }
+              onTap: () {
+                Navigator.pop(context, 'paste');
               },
             ),
           const Divider(height: 1),

@@ -4,8 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:drift/drift.dart' as drift;
 import 'package:uuid/uuid.dart';
+import 'package:dio/dio.dart' show CancelToken;
+import '../data/agent_models.dart';
 import '../data/chat_repository.dart';
 import '../data/chat_archive_service.dart';
+import 'tool_permission_provider.dart';
+import 'widgets/tool_call_card.dart';
+import 'widgets/tool_permission_sheet.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_provider.dart';
@@ -20,12 +25,22 @@ class ChatMessage {
   final List<dynamic>? sources;
   final List<String>? attachments;
 
+  /// Tools the assistant ran for this turn, in order, for the audit trail.
+  final List<ToolCall> toolCalls;
+
+  /// Text of the message this one is replying to (swipe-to-reply).
+  final String? replyToText;
+  final String? replyToRole;
+
   ChatMessage({
     required this.role,
     required this.text,
     this.isStreaming = false,
     this.sources,
     this.attachments,
+    this.toolCalls = const [],
+    this.replyToText,
+    this.replyToRole,
   });
 
   ChatMessage copyWith({
@@ -33,6 +48,7 @@ class ChatMessage {
     bool? isStreaming,
     List<dynamic>? sources,
     List<String>? attachments,
+    List<ToolCall>? toolCalls,
   }) {
     return ChatMessage(
       role: role,
@@ -40,7 +56,22 @@ class ChatMessage {
       isStreaming: isStreaming ?? this.isStreaming,
       sources: sources ?? this.sources,
       attachments: attachments ?? this.attachments,
+      toolCalls: toolCalls ?? this.toolCalls,
+      replyToText: replyToText,
+      replyToRole: replyToRole,
     );
+  }
+
+  /// Upsert a tool call by id, preserving order.
+  List<ToolCall> withToolCall(ToolCall call) {
+    final next = List<ToolCall>.from(toolCalls);
+    final i = next.indexWhere((c) => c.id == call.id);
+    if (i >= 0) {
+      next[i] = call;
+    } else {
+      next.add(call);
+    }
+    return next;
   }
 }
 
@@ -62,6 +93,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool? _aiAvailable; // null = checking, true = online, false = offline
   String? _currentSessionId;
   String? _activeSessionId; // The session that can be texted
+
+  /// Message being replied to (swipe-to-reply), quoted into the next send.
+  ChatMessage? _replyingTo;
+
+  /// Lets the Stop button abort an in-flight agent turn.
+  CancelToken? _cancelToken;
 
   @override
   void initState() {
@@ -278,15 +315,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (query.isEmpty || _isGenerating) return;
 
     final sentAttachments = List<String>.from(_attachments);
+    final reply = _replyingTo;
+
     _textController.clear();
     setState(() {
       _messages.add(ChatMessage(
         role: 'user',
         text: query,
         attachments: sentAttachments.isNotEmpty ? sentAttachments : null,
+        replyToText: reply?.text,
+        replyToRole: reply?.role,
       ));
+      _replyingTo = null;
     });
 
+    // `/create` still works, but is no longer required — the model now picks
+    // its own tools for "make me a file…" style requests.
     if (query.toLowerCase().startsWith('/create')) {
       _handleFileCreation(query);
       return;
@@ -299,83 +343,158 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
 
     _scrollToBottom();
+    await _runAgentTurn(query, sentAttachments, reply);
+  }
 
+  /// Drive the agentic loop, pausing for approval whenever the server asks.
+  ///
+  /// The server is stateless about approvals: when it needs one it ends the
+  /// stream, and we resume by re-sending the same query with the decision
+  /// appended to [transcript].
+  Future<void> _runAgentTurn(
+    String query,
+    List<String> attachments,
+    ChatMessage? reply,
+  ) async {
     final currentDir = ref.read(currentDirectoryProvider);
     final directory = currentDir.isNotEmpty ? currentDir : '.';
+    final repo = ref.read(chatRepositoryProvider);
 
-    final allHistory = _messages
-        .where((m) => !m.isStreaming)
+    // Quoted message becomes explicit context so "it"/"that file" resolves.
+    final effectiveQuery = reply == null
+        ? query
+        : 'Regarding this earlier ${reply.role == 'user' ? 'message of mine' : 'answer of yours'}:\n"""\n${reply.text}\n"""\n\n$query';
+
+    final history = _messages
+        .where((m) => !m.isStreaming && m.text.isNotEmpty)
         .map((m) => {'role': m.role, 'content': m.text})
         .toList();
-    final recentHistory = allHistory.length > 10 ? allHistory.sublist(allHistory.length - 10) : allHistory;
+    // Drop the just-added user turn; the server appends `query` itself.
+    if (history.isNotEmpty) history.removeLast();
+    final recentHistory =
+        history.length > 10 ? history.sublist(history.length - 10) : history;
 
-    final repo = ref.read(chatRepositoryProvider);
+    final transcript = <Map<String, dynamic>>[];
+    _cancelToken = CancelToken();
+
     try {
-      await for (final chunk in repo.askJarvis(
-        query,
-        attachments: sentAttachments.isNotEmpty ? sentAttachments : null,
-        chatHistory: recentHistory,
-        currentDirectory: directory,
-      )) {
-        if (!mounted) break;
+      // Each pass runs until the stream ends or an approval interrupts it.
+      for (var pass = 0; pass < 12; pass++) {
+        ToolCall? awaiting;
 
-        setState(() {
-          final lastIndex = _messages.length - 1;
-          final lastMessage = _messages[lastIndex];
+        await for (final event in repo.askAgent(
+          effectiveQuery,
+          attachments: attachments.isNotEmpty ? attachments : null,
+          chatHistory: recentHistory,
+          currentDirectory: directory,
+          grantedTools: ref.read(toolPermissionProvider).granted,
+          toolTranscript: transcript,
+          cancelToken: _cancelToken,
+        )) {
+          if (!mounted) return;
+          final i = _messages.length - 1;
 
-          if (chunk.startsWith('{')) {
-            try {
-              final data = jsonDecode(chunk);
-              if (data.containsKey('error')) {
-                _messages[lastIndex] = lastMessage.copyWith(
-                  text: '${lastMessage.text}\n\n**Error:** ${data['error']}',
-                  isStreaming: false,
-                );
-              } else if (data.containsKey('answer')) {
-                _messages[lastIndex] = lastMessage.copyWith(
-                  text: data['answer'],
-                  isStreaming: false,
-                  sources: data['sources'],
-                );
+          switch (event) {
+            case AgentToken(:final token):
+              setState(() => _messages[i] =
+                  _messages[i].copyWith(text: _messages[i].text + token));
+              _scrollToBottom();
+
+            case AgentToolStart(:final call):
+              setState(() => _messages[i] =
+                  _messages[i].copyWith(toolCalls: _messages[i].withToolCall(call)));
+              _scrollToBottom();
+
+            case AgentToolResult(:final id, :final ok, :final summary):
+              final existing =
+                  _messages[i].toolCalls.where((c) => c.id == id).firstOrNull;
+              if (existing != null) {
+                setState(() => _messages[i] = _messages[i].copyWith(
+                    toolCalls: _messages[i]
+                        .withToolCall(existing.copyWith(ok: ok, summary: summary))));
               }
-            } catch (_) {
-              _messages[lastIndex] =
-                  lastMessage.copyWith(text: lastMessage.text + chunk);
-            }
-          } else {
-            _messages[lastIndex] =
-                lastMessage.copyWith(text: lastMessage.text + chunk);
+
+            case AgentApprovalRequired(:final call):
+              awaiting = call;
+
+            case AgentFinal(:final sources):
+              setState(() => _messages[i] = _messages[i]
+                  .copyWith(isStreaming: false, sources: sources));
+
+            case AgentError(:final message):
+              setState(() => _messages[i] = _messages[i].copyWith(
+                    text: '${_messages[i].text}\n\n**Error:** $message',
+                    isStreaming: false,
+                  ));
+              return;
           }
-        });
-        _scrollToBottom();
+        }
+
+        final pending = awaiting;
+        if (pending == null) return; // turn complete
+
+        // Ask the user, then resume the loop from this decision.
+        if (!mounted) return;
+        final decision = await ToolPermissionSheet.show(context, pending);
+        if (!mounted) return;
+
+        final approved = decision != null &&
+            await ref
+                .read(toolPermissionProvider.notifier)
+                .applyDecision(pending, decision);
+
+        transcript.add(pending.toTranscriptJson(approved));
+
+        final i = _messages.length - 1;
+        setState(() => _messages[i] = _messages[i].copyWith(
+              toolCalls: _messages[i].withToolCall(
+                approved ? pending : pending.copyWith(denied: true),
+              ),
+            ));
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          final lastIndex = _messages.length - 1;
-          final lastMessage = _messages[lastIndex];
-          _messages[lastIndex] = lastMessage.copyWith(
-            text: '${lastMessage.text}\n\n*Stream failed: $e*',
-            isStreaming: false,
-          );
-        });
+        final i = _messages.length - 1;
+        setState(() => _messages[i] = _messages[i].copyWith(
+              text: '${_messages[i].text}\n\n*Stream failed: $e*',
+              isStreaming: false,
+            ));
       }
     } finally {
+      _cancelToken = null;
       if (mounted) {
         setState(() {
           _isGenerating = false;
-          final lastIndex = _messages.length - 1;
-          if (_messages[lastIndex].isStreaming) {
-            _messages[lastIndex] =
-                _messages[lastIndex].copyWith(isStreaming: false);
+          final i = _messages.length - 1;
+          if (_messages[i].isStreaming) {
+            _messages[i] = _messages[i].copyWith(isStreaming: false);
           }
         });
         _scrollToBottom();
-
-        // Save to chat history
-        _saveChatPair(query, sentAttachments);
+        _saveChatPair(query, attachments);
+        // Tools may have changed the vault — refresh the explorer view.
+        ref.invalidate(directoryEntriesProvider);
       }
     }
+  }
+
+  /// Abort the in-flight turn (the Stop button).
+  void _stopGeneration() {
+    _cancelToken?.cancel('stopped by user');
+    _cancelToken = null;
+    if (!mounted) return;
+    setState(() {
+      _isGenerating = false;
+      final i = _messages.length - 1;
+      if (i >= 0 && _messages[i].isStreaming) {
+        _messages[i] = _messages[i].copyWith(
+          text: _messages[i].text.isEmpty
+              ? '*Stopped.*'
+              : '${_messages[i].text}\n\n*Stopped.*',
+          isStreaming: false,
+        );
+      }
+    });
   }
 
   void _handleFileCreation(String query) async {
@@ -719,7 +838,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       final message = _messages[index];
                       final isUser = message.role == 'user';
 
-                      return Align(
+                      return _SwipeToReply(
+                        onReply: message.text.trim().isEmpty
+                            ? null
+                            : () => setState(() => _replyingTo = message),
+                        child: Align(
                         alignment: isUser
                             ? Alignment.centerRight
                             : Alignment.centerLeft,
@@ -746,6 +869,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              // Quoted message this one is replying to
+                              if (message.replyToText != null) ...[
+                                _QuotedReply(
+                                  text: message.replyToText!,
+                                  role: message.replyToRole ?? 'assistant',
+                                ),
+                                const SizedBox(height: 6),
+                              ],
+                              // Tools this turn ran, in order — the audit trail
+                              if (message.toolCalls.isNotEmpty) ...[
+                                ...message.toolCalls
+                                    .map((c) => ToolCallCard(call: c)),
+                                const SizedBox(height: 4),
+                              ],
                               // Show attached files on user messages
                               if (isUser &&
                                   message.attachments != null &&
@@ -807,6 +944,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                             ],
                           ),
                         ),
+                        ),
                       );
                     },
                   ),
@@ -823,7 +961,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     if (text.startsWith('/')) {
                       final query = text.toLowerCase();
                       const commands = [
-                        {'cmd': '/create', 'desc': 'Generate a scaffold of files from a prompt'},
+                        {
+                          'cmd': '/create',
+                          'desc': 'Scaffold several files at once (plain requests now work too)'
+                        },
                       ];
                       final matches = commands.where((c) => c['cmd']!.startsWith(query)).toList();
                       
@@ -861,6 +1002,51 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     return const SizedBox.shrink();
                   },
                 ),
+                // Reply banner — what the next message will quote
+                if (_replyingTo != null)
+                  Container(
+                    margin: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border(
+                        left: BorderSide(color: theme.colorScheme.primary, width: 3),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.reply, size: 16, color: theme.colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _replyingTo!.role == 'user' ? 'You' : 'JARVIS',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                _replyingTo!.text.replaceAll('\n', ' '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => setState(() => _replyingTo = null),
+                          tooltip: 'Cancel reply',
+                        ),
+                      ],
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: Row(
@@ -892,13 +1078,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      IconButton(
-                        icon: const Icon(Icons.send),
-                        color: theme.colorScheme.primary,
-                        onPressed: (_isGenerating || _aiAvailable == false)
-                            ? null
-                            : _sendMessage,
-                      ),
+                      // Send turns into Stop while a turn is in flight, so a
+                      // runaway tool loop is always one tap from cancellable.
+                      _isGenerating
+                          ? IconButton(
+                              icon: const Icon(Icons.stop_circle_outlined),
+                              color: theme.colorScheme.error,
+                              tooltip: 'Stop generating',
+                              onPressed: _stopGeneration,
+                            )
+                          : IconButton(
+                              icon: const Icon(Icons.send),
+                              color: theme.colorScheme.primary,
+                              onPressed: _aiAvailable == false ? null : _sendMessage,
+                            ),
                     ],
                   ),
                 ),
@@ -1056,6 +1249,121 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           color: _aiAvailable! ? Colors.green : Colors.red,
           fontWeight: FontWeight.bold,
         ),
+      ),
+    );
+  }
+}
+
+/// Horizontal drag on a message bubble to reply to it, WhatsApp-style.
+///
+/// Only triggers past a threshold and snaps back, so it never fights the
+/// ListView's vertical scroll.
+class _SwipeToReply extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onReply;
+
+  const _SwipeToReply({required this.child, this.onReply});
+
+  @override
+  State<_SwipeToReply> createState() => _SwipeToReplyState();
+}
+
+class _SwipeToReplyState extends State<_SwipeToReply> {
+  static const _triggerAt = 56.0;
+  double _dx = 0;
+  bool _armed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (widget.onReply == null) return widget.child;
+
+    return GestureDetector(
+      onHorizontalDragUpdate: (d) {
+        // Right-drag only; clamp so the bubble can't be flung off-screen.
+        final next = (_dx + d.delta.dx).clamp(0.0, _triggerAt + 16);
+        final armed = next >= _triggerAt;
+        if (armed && !_armed) Feedback.forTap(context);
+        setState(() {
+          _dx = next;
+          _armed = armed;
+        });
+      },
+      onHorizontalDragEnd: (_) {
+        if (_armed) widget.onReply!.call();
+        setState(() {
+          _dx = 0;
+          _armed = false;
+        });
+      },
+      onHorizontalDragCancel: () => setState(() {
+        _dx = 0;
+        _armed = false;
+      }),
+      child: Stack(
+        alignment: Alignment.centerLeft,
+        children: [
+          if (_dx > 4)
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Opacity(
+                opacity: (_dx / _triggerAt).clamp(0.0, 1.0),
+                child: Icon(
+                  Icons.reply,
+                  size: 20,
+                  color: _armed
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          Transform.translate(
+            offset: Offset(_dx, 0),
+            child: widget.child,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The quoted snippet rendered inside a message that replied to another.
+class _QuotedReply extends StatelessWidget {
+  final String text;
+  final String role;
+
+  const _QuotedReply({required this.text, required this.role});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(color: theme.colorScheme.primary, width: 3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            role == 'user' ? 'You' : 'JARVIS',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.primary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          Text(
+            text.replaceAll('\n', ' '),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
       ),
     );
   }

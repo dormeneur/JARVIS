@@ -43,8 +43,16 @@ flutter run
   `MutationQueue` row; there are no conflict files on disk.
 - **Mobile DB is Drift with codegen.** Schema version and migrations live in
   `mobile/lib/core/storage/app_database.dart`. Never alter existing tables' shape; add migrations.
+- **Agentic chat:** `/ask/ai/agent` → `brain/app/routers/agent.py` runs an Ollama `/api/chat`
+  tool-calling loop. Tools live in `brain/app/services/tools.py` (schema + risk + executor in
+  one place). Mutating tools stop the stream with `approval_required`; the client re-POSTs with
+  `tool_transcript` to resume, so approvals need no server state. **Requires a tool-capable model**
+  (`JARVIS_LLM_MODEL=qwen3:4b`) — llama3 has no tool template and will narrate shell commands
+  instead of calling tools. Safety tests: `brain/tests/test_tools_safety.py`.
 - **`/Secrets` must never reach the AI.** Exclusion is a named constant in
   `brain/app/services/document_loader.py`; e2e guard: `brain/tests/test_rag_secrets_exclusion_e2e.py`.
+  The tool layer enforces the same list in `tools.safe_path()` — every model-supplied path is
+  resolved and re-checked against the vault root before any read or write.
   Secrets crypto (AES-256-GCM + PBKDF2, `.jvs` format) must stay byte-compatible between
   `mobile/lib/features/secrets/domain/crypto_service.dart` and the server.
 - **Config:** all backend settings are env vars with `JARVIS_` prefix, loaded by pydantic-settings

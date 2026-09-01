@@ -14,6 +14,7 @@ import 'package:jarvis_mobile/features/explorer/domain/providers/selection_provi
 import 'package:jarvis_mobile/features/explorer/domain/state/clipboard_state.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/widgets/breadcrumb_bar.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/widgets/file_context_menu.dart';
+import 'package:jarvis_mobile/features/explorer/presentation/widgets/folder_picker_dialog.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/widgets/pdf_extract_dialog.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/widgets/file_search_delegate.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/widgets/selection_app_bar.dart';
@@ -688,6 +689,102 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
         ref.read(selectionStateProvider.notifier).toggle(entry.path);
       case 'delete':
         _confirmAndDelete(context, ref, entry);
+      case 'move':
+        _showMoveDialog(context, ref, entry);
+      case 'paste':
+        _pasteInto(context, ref, entry);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Move to…
+  // ---------------------------------------------------------------------------
+
+  Future<void> _showMoveDialog(
+      BuildContext context, WidgetRef ref, FileEntry entry) async {
+    final targetPath = await showDialog<String>(
+      context: context,
+      builder: (_) => const FolderPickerDialog(),
+    );
+    if (targetPath == null || !context.mounted) return;
+
+    int? descendantCount;
+    if (entry.isDirectory) {
+      final repo = ref.read(explorerRepositoryProvider);
+      descendantCount = await repo.getDescendantCount(entry.path);
+    }
+
+    if (!context.mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(entry.isDirectory ? 'Move Folder' : 'Move File'),
+        content: Text(
+          descendantCount != null && descendantCount > 0
+              ? 'Move "${entry.name}" and its $descendantCount nested items to the selected folder?\n\nThis will be synced to the server.'
+              : 'Move "${entry.name}" to the selected folder?\n\nThis will be synced to the server.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Move'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final service = ref.read(fileOperationServiceProvider);
+    final result = await service.moveFile(entry.path, targetPath);
+    ref.invalidate(directoryEntriesProvider);
+    if (!context.mounted) return;
+    if (result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Moved "${entry.name}"')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Move failed: ${result.errors.first.message}'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Paste into a specific folder (context menu)
+  // ---------------------------------------------------------------------------
+
+  Future<void> _pasteInto(
+      BuildContext context, WidgetRef ref, FileEntry entry) async {
+    if (!entry.isDirectory) return;
+    final clipNotifier = ref.read(clipboardStateProvider.notifier);
+    final service = ref.read(fileOperationServiceProvider);
+    final result = await clipNotifier.paste(entry.path, service);
+    ref.invalidate(directoryEntriesProvider);
+    if (!context.mounted) return;
+    if (result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${result.successfulIds.length} item${result.successfulIds.length == 1 ? '' : 's'} pasted',
+          ),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Paste failed: ${result.errors.first.message}'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
     }
   }
 

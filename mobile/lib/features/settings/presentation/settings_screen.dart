@@ -4,6 +4,7 @@ import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_provider.dart';
 import 'package:jarvis_mobile/features/settings/presentation/device_management_screen.dart';
+import 'package:jarvis_mobile/features/chat/presentation/tool_permission_provider.dart';
 
 /// Settings screen — shows device info, server URL, and logout.
 class SettingsScreen extends ConsumerWidget {
@@ -83,6 +84,7 @@ class SettingsScreen extends ConsumerWidget {
               ref.read(autoArchiveProvider.notifier).toggle(value);
             },
           ),
+          _ToolPermissionsTile(),
           const Divider(),
           _SectionHeader('Account'),
           ListTile(
@@ -195,6 +197,65 @@ class _SectionHeader extends StatelessWidget {
           color: Theme.of(context).colorScheme.primary,
         ),
       ),
+    );
+  }
+}
+
+/// Shows which AI tools have a standing "always allow" grant, and lets the
+/// user take it back. Without this, "Always allow" would be a one-way door.
+class _ToolPermissionsTile extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final perms = ref.watch(toolPermissionProvider);
+    final theme = Theme.of(context);
+    final always = perms.always.toList()..sort();
+    final sessionCount = perms.session.length;
+
+    return ListTile(
+      leading: const Icon(Icons.verified_user_outlined),
+      title: const Text('AI Tool Permissions'),
+      subtitle: Text(
+        always.isEmpty && sessionCount == 0
+            ? 'JARVIS asks before every action'
+            : '${always.length} always-allowed'
+                '${sessionCount > 0 ? ', $sessionCount this session' : ''}',
+      ),
+      trailing: (always.isEmpty && sessionCount == 0)
+          ? null
+          : TextButton(
+              onPressed: () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Revoke tool permissions?'),
+                    content: Text(
+                      always.isEmpty
+                          ? 'JARVIS will ask for approval again on every action.'
+                          : 'Removes the standing grant for:\n\n'
+                              '${always.map((t) => '• $t').join('\n')}\n\n'
+                              'JARVIS will ask for approval again on every action.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: theme.colorScheme.error,
+                        ),
+                        child: const Text('Revoke all'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed == true) {
+                  await ref.read(toolPermissionProvider.notifier).revokeAll();
+                }
+              },
+              child: const Text('Revoke'),
+            ),
     );
   }
 }

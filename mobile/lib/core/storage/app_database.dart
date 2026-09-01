@@ -282,6 +282,26 @@ class AppDatabase extends _$AppDatabase {
     }
   }
 
+  /// Mark a mutation as failed due to an infrastructure error (network
+  /// unreachable, timeout, auth failure, server error) rather than a
+  /// genuine content conflict. Retries silently for a few sync cycles
+  /// before surfacing in the Conflicts tab, so a transient blip isn't
+  /// mislabeled as a conflict the user has to manually resolve.
+  Future<void> markMutationTransientFailure(String id) async {
+    final mutation = await (select(
+      mutationQueue,
+    )..where((m) => m.id.equals(id))).getSingleOrNull();
+    if (mutation == null) return;
+
+    final retryCount = mutation.retryCount + 1;
+    await (update(mutationQueue)..where((m) => m.id.equals(id))).write(
+      MutationQueueCompanion(
+        status: Value(retryCount >= 3 ? 'failed' : 'pending'),
+        retryCount: Value(retryCount),
+      ),
+    );
+  }
+
   /// Mark a mutation as failed due to a version conflict, storing
   /// the local content snapshot for the conflict UI.
   Future<void> markMutationAsConflict(

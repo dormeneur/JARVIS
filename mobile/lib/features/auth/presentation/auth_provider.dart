@@ -233,6 +233,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
     await _authRepo.logout();
     state = const AuthState.unauthenticated();
   }
+
+  /// Called when the API client detects a 401 mid-session (e.g. an expired
+  /// JWT). Mirrors `_validateInBackground`'s invalid-token path: drop to
+  /// unauthenticated but keep the stored device credentials so the setup
+  /// screen can offer a one-tap reconnect instead of full re-registration.
+  void handleUnauthorized() {
+    if (!mounted) return;
+    if (state.status != AuthStatus.authenticated) return;
+    state = const AuthState.unauthenticated(
+      error: 'Session expired. Please log in again.',
+    );
+  }
 }
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {

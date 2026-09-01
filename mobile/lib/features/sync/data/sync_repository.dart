@@ -176,8 +176,11 @@ class SyncRepository {
             }
           }
         } catch (e) {
-          // Mark mutation as failed on error
-          await _db.markMutationFailed(mutation.id);
+          // Anything landing here (network unreachable, timeout, 401/5xx) is
+          // an infrastructure failure, never a real content conflict — the
+          // conflict path returns normally via pushResult['is_conflict'].
+          // Retry silently instead of parking it in the Conflicts tab.
+          await _db.markMutationTransientFailure(mutation.id);
           // Continue with other mutations
         }
       }

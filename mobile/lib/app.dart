@@ -16,6 +16,13 @@ class _JarvisAppState extends ConsumerState<JarvisApp> {
   @override
   void initState() {
     super.initState();
+    // Wire the API client's 401 hook to the auth state machine so a token
+    // that expires mid-session (not just at startup) bounces the user back
+    // to the login screen instead of leaving a dead session behind a stale
+    // "authenticated" UI.
+    ref.read(apiClientProvider).onUnauthorized = () {
+      ref.read(authProvider.notifier).handleUnauthorized();
+    };
     // Initialize auth on startup: load JWT, validate via /auth/me
     Future.microtask(() {
       ref.read(authProvider.notifier).initialize();
