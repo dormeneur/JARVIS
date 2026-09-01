@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # jv-api (server/) Python tests
+  # ─────────────────────────────────────────────────────────────────────────
+  server-tests:
+    name: Server tests (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: server/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        # Exclude tests that need trio or hypothesis (dev-env only).
+        # The CI matrix installs neither, which matches the prod image.
+        run: |
+          python -m pytest tests/ \
+            --ignore=tests/test_api_proxy_properties.py \
+            -v --tb=short -q
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # jv-brain (brain/) Python tests
+  # ─────────────────────────────────────────────────────────────────────────
+  brain-tests:
+    name: Brain tests (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brain
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: brain/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        # Skip tests that import the full app (need tiktoken / chromadb) —
+        # those run inside Docker. Unit tests that don't need those deps run fine.
+        run: |
+          python -m pytest \
+            tests/test_document_loader_secrets_guard.py \
+            tests/test_tools_safety.py \
+            tests/test_chat_history.py \
+            tests/test_chat_archive.py \
+            tests/test_chunking_logic.py \
+            tests/test_document_loader_unit.py \
+            tests/test_generate_sanitize.py \
+            tests/test_fs_tree.py \
+            -v --tb=short -q
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Flutter — analyze + test
+  # ─────────────────────────────────────────────────────────────────────────
+  flutter:
+    name: Flutter (analyze + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate Drift code
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test --no-pub
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Docker build smoke — verifies both images build without error
+  # ─────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build jv-api image
+        run: docker build -t jv-api-ci ./server
+
+      - name: Build jv-brain image
+        run: docker build -t jv-brain-ci ./brain

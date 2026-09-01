@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/core/network/api_client.dart';
 import 'package:jarvis_mobile/core/storage/secure_storage.dart';
@@ -103,16 +105,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _validateInBackground();
   }
 
-  /// Validates the token and fetches device info in the background.
-  /// If the token is definitively invalid (401/403), transitions to unauthenticated.
-  /// If the server is unreachable, does nothing (stays authenticated with local data).
+  /// Validates the token in the background.
+  ///
+  /// Priority order:
+  ///   1. Server unreachable → stay authenticated offline, do nothing.
+  ///   2. Token definitively invalid (401/403) → drop to unauthenticated.
+  ///   3. Token valid but expiring within 24 h → silently refresh it.
+  ///   4. Token valid and fresh → update device info (secrets auth flag).
   Future<void> _validateInBackground() async {
     try {
       final validationResult = await _authRepo.validateToken();
 
       if (validationResult == TokenValidationResult.invalid) {
-        // Token is definitively expired/revoked — must re-authenticate
-        if (mounted) {
+        // Definitively expired or revoked — check if we can reconnect silently
+        // using the stored device secret before kicking the user to the login screen.
+        final reconnected = await _tryReconnect();
+        if (!reconnected && mounted) {
           state = const AuthState.unauthenticated(
             error: 'Session expired. Please log in again.',
           );
@@ -121,7 +129,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
       }
 
       if (validationResult == TokenValidationResult.valid) {
-        // Server is online — fetch updated device info
+        // Server is reachable — proactively refresh the token if it's
+        // within 24 h of expiry so sessions never silently die on users.
+        await _maybeRefreshToken();
+
+        // Fetch updated device info (secrets authorization flag).
         final deviceId = await _secureStorage.getDeviceId() ?? '';
         try {
           final devices = await _authRepo.listDevices();
@@ -129,10 +141,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
             (d) => d['device_id'] == deviceId,
             orElse: () => <String, dynamic>{},
           );
-          final isAuth =
-              deviceInfo['is_secrets_authorized'] as bool? ?? false;
-
-          // Update state with server-confirmed info
+          final isAuth = deviceInfo['is_secrets_authorized'] as bool? ?? false;
           if (mounted) {
             state = AuthState.authenticated(
               deviceId: state.deviceId ?? deviceId,
@@ -149,6 +158,81 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } catch (_) {
       // Swallow any unexpected errors — never crash the background validation
     }
+  }
+
+  /// Attempt a silent reconnect using the stored device secret.
+  ///
+  /// Returns true if reconnect succeeded (new token stored and state updated).
+  /// Returns false if the device secret is missing or the server rejects it.
+  Future<bool> _tryReconnect() async {
+    try {
+      final deviceName = await _secureStorage.getDeviceName();
+      final deviceSecret = await _secureStorage.getDeviceSecret();
+      final serverUrl = await _secureStorage.getServerUrl();
+
+      if (deviceName == null || deviceSecret == null || serverUrl == null) {
+        return false;
+      }
+
+      await _authRepo.reconnectDevice(
+        serverUrl: serverUrl,
+        deviceName: deviceName,
+        deviceSecret: deviceSecret,
+      );
+
+      if (mounted) {
+        state = AuthState.authenticated(
+          deviceId: await _secureStorage.getDeviceId() ?? '',
+          deviceName: deviceName,
+          serverUrl: serverUrl,
+          isSecretsAuthorized: false, // Will be updated in the next validation cycle
+        );
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Refresh the JWT if it expires within the next 24 hours.
+  ///
+  /// Reads the expiry from the JWT payload locally (no network call needed
+  /// for the check). Only calls the server if a refresh is actually needed.
+  Future<void> _maybeRefreshToken() async {
+    try {
+      final jwt = await _secureStorage.getJwt();
+      if (jwt == null || jwt.isEmpty) return;
+
+      final parts = jwt.split('.');
+      if (parts.length != 3) return;
+
+      final payload = _decodeJwtPayload(parts[1]);
+      final exp = payload['exp'];
+      if (exp == null || exp is! num) return;
+
+      final expiresAt = DateTime.fromMillisecondsSinceEpoch(
+        (exp as num).toInt() * 1000,
+        isUtc: true,
+      );
+      final timeLeft = expiresAt.difference(DateTime.now().toUtc());
+
+      // Refresh if less than 24 h remain.
+      if (timeLeft.inHours < 24) {
+        await _authRepo.refreshToken();
+      }
+    } catch (_) {
+      // JWT decode or refresh failure is non-fatal — the user stays logged in
+      // on their current token until it fully expires.
+    }
+  }
+
+  /// Decode a base64url-encoded JWT payload segment using dart:convert.
+  static Map<String, dynamic> _decodeJwtPayload(String base64url) {
+    String b64 = base64url.replaceAll('-', '+').replaceAll('_', '/');
+    final mod = b64.length % 4;
+    if (mod != 0) b64 += '=' * (4 - mod);
+    final decoded = utf8.decode(base64Decode(b64));
+    return jsonDecode(decoded) as Map<String, dynamic>;
   }
 
   /// Register the first device.
