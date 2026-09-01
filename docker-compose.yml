@@ -5,7 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: jv-api
     ports:
-      - "0.0.0.0:8000:8000"
+      # Bind to localhost only — access via Tailscale (tailscale serve) or
+      # direct LAN. Never expose on 0.0.0.0 per 06-Security-Model.md.
+      - "127.0.0.1:8000:8000"
     volumes:
       - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS
     env_file: .env
@@ -20,8 +22,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   brain:
     build:
@@ -29,7 +29,9 @@ services:
       dockerfile: Dockerfile
     container_name: jv-brain
     volumes:
-      - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS
+      # Read-only: brain only reads vault files for indexing & RAG.
+      # generate-files writes go through jv-api, not directly through brain.
+      - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS:ro
     env_file: .env
     depends_on:
       chromadb:
@@ -44,8 +46,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   chromadb:
     image: chromadb/chroma:0.5.23
@@ -55,6 +55,7 @@ services:
     networks:
       - jarvis-internal
     restart: unless-stopped
+    # ChromaDB image has no curl/wget — use service_started, not service_healthy.
 
   ollama:
     image: ollama/ollama:latest

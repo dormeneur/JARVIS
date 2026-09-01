@@ -1,12 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 from typing import List
-from datetime import datetime
 from pydantic import BaseModel
 
-from app.services.history_db import get_db, SessionModel, MessageModel
+from app.services.history_db import (
+    get_db,
+    get_all_sessions,
+    get_session,
+    get_messages,
+    upsert_session,
+    add_message,
+    delete_session as _delete_session,
+    SessionModel,
+    MessageModel,
+)
 
 router = APIRouter(tags=["chat"])
+
 
 class MessageSync(BaseModel):
     session_id: str
@@ -14,69 +23,72 @@ class MessageSync(BaseModel):
     response: str
     timestamp: str  # ISO8601
 
+
 class SessionResponse(BaseModel):
     id: str
     title: str
-    created_at: datetime
-    last_active_at: datetime
+    created_at: str
+    last_active_at: str
 
-    class Config:
-        from_attributes = True
+    @classmethod
+    def from_model(cls, m: SessionModel) -> "SessionResponse":
+        return cls(
+            id=m.id,
+            title=m.title,
+            created_at=m.created_at.isoformat(),
+            last_active_at=m.last_active_at.isoformat(),
+        )
+
 
 class MessageResponse(BaseModel):
     id: str
     query: str
     response: str
-    timestamp: datetime
+    timestamp: str
 
-    class Config:
-        from_attributes = True
+    @classmethod
+    def from_model(cls, m: MessageModel) -> "MessageResponse":
+        return cls(
+            id=m.id,
+            query=m.query,
+            response=m.response,
+            timestamp=m.timestamp.isoformat(),
+        )
+
 
 @router.get("/brain/chat/sessions", response_model=List[SessionResponse])
-async def get_sessions(db: Session = Depends(get_db)):
+async def get_sessions():
     """Get all chat sessions ordered by last active time."""
-    return db.query(SessionModel).order_by(SessionModel.last_active_at.desc()).all()
+    with get_db() as conn:
+        return [SessionResponse.from_model(s) for s in get_all_sessions(conn)]
+
 
 @router.get("/brain/chat/sessions/{session_id}", response_model=List[MessageResponse])
-async def get_session_history(session_id: str, db: Session = Depends(get_db)):
+async def get_session_history(session_id: str):
     """Get full message history for a session."""
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return db.query(MessageModel).filter(MessageModel.session_id == session_id).order_by(MessageModel.timestamp.asc()).all()
+    with get_db() as conn:
+        session = get_session(conn, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return [MessageResponse.from_model(m) for m in get_messages(conn, session_id)]
+
 
 @router.delete("/brain/chat/sessions/{session_id}")
-async def delete_session(session_id: str, db: Session = Depends(get_db)):
+async def delete_session_endpoint(session_id: str):
     """Delete a session and all its messages."""
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    db.delete(session)
-    db.commit()
+    with get_db() as conn:
+        session = get_session(conn, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        _delete_session(conn, session_id)
     return {"status": "ok"}
 
+
 @router.post("/brain/chat/sync")
-async def sync_message(msg: MessageSync, db: Session = Depends(get_db)):
+async def sync_message(msg: MessageSync):
     """Sync a new message pair to the brain history."""
-    # Ensure session exists
-    session = db.query(SessionModel).filter(SessionModel.id == msg.session_id).first()
-    if not session:
-        # Create session if it doesn't exist (first message)
-        # Title is extracted from the message query (first 60 chars)
-        title = msg.query[:60]
-        session = SessionModel(id=msg.session_id, title=title)
-        db.add(session)
-    
-    # Update last active
-    session.last_active_at = datetime.utcnow()
-    
-    # Add message
-    new_msg = MessageModel(
-        session_id=msg.session_id,
-        query=msg.query,
-        response=msg.response,
-        timestamp=datetime.fromisoformat(msg.timestamp.replace('Z', '+00:00'))
-    )
-    db.add(new_msg)
-    db.commit()
+    with get_db() as conn:
+        # Title = first 60 chars of the query (only used on first message)
+        upsert_session(conn, msg.session_id, msg.query[:60])
+        add_message(conn, msg.session_id, msg.query, msg.response, msg.timestamp)
     return {"status": "ok"}

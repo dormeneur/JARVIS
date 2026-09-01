@@ -5,7 +5,9 @@ from app.config import settings
 from pathlib import Path
 import logging
 import json
-import fitz
+
+# fitz (PyMuPDF) is a heavy native dep — import lazily inside the PDF
+# endpoint so the module is importable on dev machines without it installed.
 
 from app.services.retriever import Retriever
 from app.services.context_assembler import ContextAssembler
@@ -158,6 +160,7 @@ async def extract_pdf(req: ExtractPdfRequest):
         raise HTTPException(status_code=400, detail="File is not a PDF")
 
     try:
+        import fitz  # PyMuPDF — loaded on demand
         doc = fitz.open(full_path)
         total_pages = len(doc)
         

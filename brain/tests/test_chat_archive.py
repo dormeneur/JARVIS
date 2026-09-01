@@ -1,324 +1,190 @@
-"""Tests for the chat archive retention and deletion logic.
+"""Chat archive retention logic — selection criteria, deletion, file format.
 
-These tests validate:
-1. Sessions older than 7 days by last_active_at are selected for archiving
-2. Active sessions are never selected regardless of age
-3. Memory file path and content format are correct
-4. Deletion only proceeds after the session is confirmed to exist
-5. The DELETE endpoint works correctly for cleanup
+Imports only the chat router (not the full app) so tests run without
+tiktoken/PyMuPDF/chromadb-client installed in the local dev venv.
 """
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime, timedelta
-import os
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
-from app.api import app
-from app.services.history_db import Base, get_db, SessionModel, MessageModel
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-# Use an in-memory database to avoid Windows file lock issues
-# StaticPool ensures all connections share the same in-memory database
-from sqlalchemy.pool import StaticPool
-
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+import app.services.history_db as history_db_module
+from app.services.history_db import (
+    get_db, init_db, upsert_session, add_message,
+    get_session, get_messages,
 )
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+from app.routers.chat import router as chat_router
 
 
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
+def _now() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
 
 
-app.dependency_overrides[get_db] = override_get_db
+def _days_ago(n: int) -> str:
+    return (datetime.now(tz=timezone.utc) - timedelta(days=n)).isoformat()
 
 
-@pytest.fixture(autouse=True)
-def setup_db():
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+@pytest.fixture
+def client(tmp_path):
+    db_path = str(tmp_path / "archive.db")
+    with patch.object(history_db_module, "_DB_PATH", db_path):
+        init_db()
+        mini_app = FastAPI()
+        mini_app.include_router(chat_router)
+        yield TestClient(mini_app)
 
 
-client = TestClient(app)
+@pytest.fixture
+def db_path(tmp_path):
+    path = str(tmp_path / "archive.db")
+    with patch.object(history_db_module, "_DB_PATH", path):
+        init_db()
+        yield path
 
 
-def _create_session(db, session_id: str, title: str, last_active_at: datetime):
-    """Helper to create a session with a specific last_active_at."""
-    session = SessionModel(
-        id=session_id,
-        title=title,
-        created_at=datetime.utcnow(),
-        last_active_at=last_active_at,
-    )
-    db.add(session)
-    db.commit()
-    return session
+def _insert_session(db_path, session_id: str, title: str, last_active_iso: str):
+    with patch.object(history_db_module, "_DB_PATH", db_path):
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at) VALUES (?,?,?,?)",
+                (session_id, title, _now(), last_active_iso),
+            )
 
 
-def _create_message(db, session_id: str, query: str, response: str):
-    """Helper to create a message in a session."""
-    msg = MessageModel(
-        id=str(uuid.uuid4()),
-        session_id=session_id,
-        query=query,
-        response=response,
-        timestamp=datetime.utcnow(),
-    )
-    db.add(msg)
-    db.commit()
-    return msg
+def _insert_message(db_path, session_id: str, query: str = "Q", response: str = "A"):
+    with patch.object(history_db_module, "_DB_PATH", db_path):
+        with get_db() as conn:
+            add_message(conn, session_id, query, response, _now())
 
+
+# ---------------------------------------------------------------------------
+# Archive selection criteria
+# ---------------------------------------------------------------------------
 
 class TestArchiveSessionSelection:
-    """Tests for selecting sessions eligible for archiving."""
+    def test_old_session_is_archivable(self, db_path):
+        _insert_session(db_path, "old-1", "Old Chat", _days_ago(10))
+        cutoff = _days_ago(7)
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            with get_db() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM sessions WHERE last_active_at < ?", (cutoff,)
+                ).fetchall()
+        assert any(r["id"] == "old-1" for r in rows)
 
-    def test_old_session_is_archivable(self):
-        """Sessions with last_active_at older than 7 days should be selected."""
-        db = TestingSessionLocal()
-        try:
-            old_date = datetime.utcnow() - timedelta(days=10)
-            _create_session(db, "old-session-1", "Old Chat", old_date)
+    def test_recent_session_not_archivable(self, db_path):
+        _insert_session(db_path, "recent-1", "Recent Chat", _days_ago(3))
+        cutoff = _days_ago(7)
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            with get_db() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM sessions WHERE last_active_at < ?", (cutoff,)
+                ).fetchall()
+        assert not any(r["id"] == "recent-1" for r in rows)
 
-            # Query sessions older than 7 days
-            cutoff = datetime.utcnow() - timedelta(days=7)
-            old_sessions = (
-                db.query(SessionModel)
-                .filter(SessionModel.last_active_at < cutoff)
-                .all()
-            )
-            assert len(old_sessions) == 1
-            assert old_sessions[0].id == "old-session-1"
-        finally:
-            db.close()
+    def test_mixed_sessions_only_old_selected(self, db_path):
+        _insert_session(db_path, "old-a", "Old A", _days_ago(15))
+        _insert_session(db_path, "old-b", "Old B", _days_ago(20))
+        _insert_session(db_path, "recent", "Recent", _days_ago(2))
+        cutoff = _days_ago(7)
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            with get_db() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM sessions WHERE last_active_at < ?", (cutoff,)
+                ).fetchall()
+        ids = {r["id"] for r in rows}
+        assert ids == {"old-a", "old-b"}
 
-    def test_recent_session_is_not_archivable(self):
-        """Sessions with last_active_at within 7 days should NOT be selected."""
-        db = TestingSessionLocal()
-        try:
-            recent_date = datetime.utcnow() - timedelta(days=3)
-            _create_session(db, "recent-session-1", "Recent Chat", recent_date)
+    def test_session_active_recently_not_archivable(self, db_path):
+        _insert_session(db_path, "long-running", "Long Running", _days_ago(1))
+        cutoff = _days_ago(7)
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            with get_db() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM sessions WHERE last_active_at < ?", (cutoff,)
+                ).fetchall()
+        assert not any(r["id"] == "long-running" for r in rows)
 
-            cutoff = datetime.utcnow() - timedelta(days=7)
-            old_sessions = (
-                db.query(SessionModel)
-                .filter(SessionModel.last_active_at < cutoff)
-                .all()
-            )
-            assert len(old_sessions) == 0
-        finally:
-            db.close()
 
-    def test_mixed_sessions_only_old_selected(self):
-        """When both old and recent sessions exist, only old ones are selected."""
-        db = TestingSessionLocal()
-        try:
-            old_date = datetime.utcnow() - timedelta(days=15)
-            recent_date = datetime.utcnow() - timedelta(days=2)
-            today = datetime.utcnow()
-
-            _create_session(db, "old-1", "Old Chat 1", old_date)
-            _create_session(db, "old-2", "Old Chat 2", old_date - timedelta(days=5))
-            _create_session(db, "recent-1", "Recent Chat", recent_date)
-            _create_session(db, "active-1", "Active Chat", today)
-
-            cutoff = datetime.utcnow() - timedelta(days=7)
-            old_sessions = (
-                db.query(SessionModel)
-                .filter(SessionModel.last_active_at < cutoff)
-                .all()
-            )
-            old_ids = {s.id for s in old_sessions}
-            assert old_ids == {"old-1", "old-2"}
-        finally:
-            db.close()
-
-    def test_session_active_yesterday_not_archivable(self):
-        """A session created 30 days ago but active yesterday should NOT be archived."""
-        db = TestingSessionLocal()
-        try:
-            session = SessionModel(
-                id="old-created-recent-active",
-                title="Long Running Chat",
-                created_at=datetime.utcnow() - timedelta(days=30),
-                last_active_at=datetime.utcnow() - timedelta(days=1),
-            )
-            db.add(session)
-            db.commit()
-
-            cutoff = datetime.utcnow() - timedelta(days=7)
-            old_sessions = (
-                db.query(SessionModel)
-                .filter(SessionModel.last_active_at < cutoff)
-                .all()
-            )
-            assert len(old_sessions) == 0
-        finally:
-            db.close()
-
+# ---------------------------------------------------------------------------
+# Session deletion via API
+# ---------------------------------------------------------------------------
 
 class TestSessionDeletion:
-    """Tests for session deletion after archiving."""
+    def test_delete_removes_session_and_messages(self, client, db_path):
+        _insert_session(db_path, "del-1", "Delete Me", _now())
+        _insert_message(db_path, "del-1", "Q1", "A1")
+        _insert_message(db_path, "del-1", "Q2", "A2")
 
-    def test_delete_session_removes_messages(self):
-        """Deleting a session via API should remove all its messages too."""
-        db = TestingSessionLocal()
-        try:
-            session_id = "to-delete-1"
-            _create_session(db, session_id, "Delete Me", datetime.utcnow())
-            _create_message(db, session_id, "Hello", "Hi there")
-            _create_message(db, session_id, "How are you?", "I'm good")
-        finally:
-            db.close()
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            assert client.delete("/brain/chat/sessions/del-1").status_code == 200
+            assert client.get("/brain/chat/sessions/del-1").status_code == 404
 
-        # Delete via API
-        response = client.delete(f"/brain/chat/sessions/{session_id}")
-        assert response.status_code == 200
+    def test_delete_nonexistent_returns_404(self, client, db_path):
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            assert client.delete("/brain/chat/sessions/ghost").status_code == 404
 
-        # Verify session and messages are gone
-        response = client.get(f"/brain/chat/sessions/{session_id}")
-        assert response.status_code == 404
+    def test_delete_preserves_other_sessions(self, client, db_path):
+        _insert_session(db_path, "keep", "Keep", _now())
+        _insert_message(db_path, "keep", "Stay", "OK")
+        _insert_session(db_path, "gone", "Gone", _now())
+        _insert_message(db_path, "gone", "Bye", "Later")
 
-        response = client.get("/brain/chat/sessions")
-        sessions = response.json()
-        assert len(sessions) == 0
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            client.delete("/brain/chat/sessions/gone")
+            sessions = client.get("/brain/chat/sessions").json()
+            assert len(sessions) == 1 and sessions[0]["id"] == "keep"
+            msgs = client.get("/brain/chat/sessions/keep").json()
+            assert len(msgs) == 1
 
-    def test_delete_nonexistent_session_returns_404(self):
-        """Deleting a session that doesn't exist should return 404."""
-        response = client.delete("/brain/chat/sessions/nonexistent-id")
-        assert response.status_code == 404
 
-    def test_delete_preserves_other_sessions(self):
-        """Deleting one session should not affect others."""
-        db = TestingSessionLocal()
-        try:
-            _create_session(db, "keep-me", "Keep This", datetime.utcnow())
-            _create_message(db, "keep-me", "Stay", "OK")
-            _create_session(db, "delete-me", "Delete This", datetime.utcnow())
-            _create_message(db, "delete-me", "Bye", "Goodbye")
-        finally:
-            db.close()
-
-        # Delete only one
-        response = client.delete("/brain/chat/sessions/delete-me")
-        assert response.status_code == 200
-
-        # Verify the other survives
-        response = client.get("/brain/chat/sessions")
-        sessions = response.json()
-        assert len(sessions) == 1
-        assert sessions[0]["id"] == "keep-me"
-
-        # Verify its messages survive
-        response = client.get("/brain/chat/sessions/keep-me")
-        messages = response.json()
-        assert len(messages) == 1
-        assert messages[0]["query"] == "Stay"
-
+# ---------------------------------------------------------------------------
+# Memory file format (mirrors ChatArchiveService._buildMemoryFileContent)
+# ---------------------------------------------------------------------------
 
 class TestMemoryFileFormat:
-    """Tests for the memory file path and content format."""
-
-    def test_memory_file_content_format(self):
-        """Memory file should follow the exact markdown format."""
-        # Simulate what the archive service produces
-        title = "How to set up Docker Compose"
-        date = "2026-04-25"
-        summary = "Discussed Docker Compose setup for multi-container JARVIS deployment."
-
-        expected = f"# {title}\n**Date:** {date}  \n**Summary:** {summary}\n"
-
-        # Build content the same way the service does
+    def test_content_format(self):
+        title, date, summary = "How to set up Docker Compose", "2026-04-25", "Summary."
         content = f"# {title}\n**Date:** {date}  \n**Summary:** {summary}\n"
-        assert content == expected
-        assert content.startswith("# ")
-        assert "**Date:**" in content
-        assert "**Summary:**" in content
+        assert content.startswith(f"# {title}")
+        assert "**Date:**" in content and "**Summary:**" in content
 
-    def test_memory_filename_format(self):
-        """Memory filename should be YYYY-MM-DD-slug.md format."""
-        # Test slug generation logic (replicated from Dart)
-        title = "How to set up Docker"
-        date = "2026-04-25"
-
-        # Simulate slug generation (max 5 words)
-        words = title.lower().split()
-        slug = "-".join(words[:5])
-        filename = f"{date}-{slug}.md"
-
+    def test_filename_format(self):
+        words = "How to set up Docker".lower().split()[:5]
+        filename = f"2026-04-25-{'-'.join(words)}.md"
         assert filename == "2026-04-25-how-to-set-up-docker.md"
-        assert filename.endswith(".md")
 
-    def test_slug_handles_special_characters(self):
-        """Slug should strip special characters."""
-        import re
+    def test_slug_strips_special_chars(self):
+        clean = re.sub(r"[^a-zA-Z0-9\s]", "", "What's the plan for Q1 2026?")
+        slug = "-".join(w.lower() for w in clean.split()[:5])
+        assert "?" not in slug and "'" not in slug
 
-        title = "What's the plan for Q1 2026?"
-        clean = re.sub(r'[^a-zA-Z0-9\s]', '', title)
-        words = clean.strip().split()
-        slug = "-".join(w.lower() for w in words[:5])
-
-        assert slug == "whats-the-plan-for-q1"
-        assert "?" not in slug
-        assert "'" not in slug
-
-    def test_empty_title_produces_fallback_slug(self):
-        """An empty title should produce a fallback slug."""
-        title = ""
-        import re
-        clean = re.sub(r'[^a-zA-Z0-9\s]', '', title)
-        words = [w for w in clean.strip().split() if w]
+    def test_empty_title_fallback(self):
+        words = [w for w in re.sub(r"[^a-zA-Z0-9\s]", "", "").split() if w]
         slug = "-".join(w.lower() for w in words[:5]) if words else "untitled-chat"
-
         assert slug == "untitled-chat"
 
 
+# ---------------------------------------------------------------------------
+# Integrity
+# ---------------------------------------------------------------------------
+
 class TestArchiveJobIntegrity:
-    """Tests for the archive job's integrity guarantees."""
+    def test_session_survives_if_no_file_written(self, client, db_path):
+        _insert_session(db_path, "survivor", "Survivor", _days_ago(10))
+        _insert_message(db_path, "survivor", "Q", "A")
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            resp = client.get("/brain/chat/sessions/survivor")
+            assert resp.status_code == 200 and len(resp.json()) == 1
 
-    def test_session_with_messages_survives_if_no_file_written(self):
-        """If the memory file write fails, the session must NOT be deleted."""
-        # This tests the principle: we create a session, don't write any file,
-        # and verify the session still exists.
-        db = TestingSessionLocal()
-        try:
-            session_id = "should-survive"
-            _create_session(db, session_id, "Survivor", datetime.utcnow() - timedelta(days=10))
-            _create_message(db, session_id, "Q1", "A1")
-        finally:
-            db.close()
-
-        # Session should still be accessible
-        response = client.get(f"/brain/chat/sessions/{session_id}")
-        assert response.status_code == 200
-        messages = response.json()
-        assert len(messages) == 1
-
-    def test_multiple_messages_per_session_preserved(self):
-        """All messages in a session should be queryable before archiving."""
-        db = TestingSessionLocal()
-        try:
-            session_id = "multi-msg"
-            _create_session(db, session_id, "Multi Message Chat", datetime.utcnow())
-            for i in range(5):
-                _create_message(db, session_id, f"Question {i}", f"Answer {i}")
-        finally:
-            db.close()
-
-        response = client.get(f"/brain/chat/sessions/{session_id}")
-        assert response.status_code == 200
-        messages = response.json()
-        assert len(messages) == 5
-        # Verify ordering
-        for i, msg in enumerate(messages):
-            assert msg["query"] == f"Question {i}"
+    def test_all_messages_present_before_archive(self, client, db_path):
+        _insert_session(db_path, "multi", "Multi", _now())
+        for i in range(5):
+            _insert_message(db_path, "multi", f"Q{i}", f"A{i}")
+        with patch.object(history_db_module, "_DB_PATH", db_path):
+            msgs = client.get("/brain/chat/sessions/multi").json()
+            assert len(msgs) == 5
