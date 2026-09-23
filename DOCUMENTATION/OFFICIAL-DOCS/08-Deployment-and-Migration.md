@@ -119,6 +119,8 @@ networks:
 
 ```env
 # === Vault ===
+# Host path to your vault folder, bind-mounted into the containers.
+# Example above is Windows; Mac/Linux would be e.g. /Users/<you>/JARVIS-vault
 JARVIS_HOST_PATH=B:/JARVIS
 
 # === API ===
