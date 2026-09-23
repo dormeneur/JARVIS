@@ -75,8 +75,6 @@ class _InviteQrScreenState extends ConsumerState<InviteQrScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Invite Device'),

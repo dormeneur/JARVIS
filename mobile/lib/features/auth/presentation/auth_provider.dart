@@ -211,7 +211,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       if (exp == null || exp is! num) return;
 
       final expiresAt = DateTime.fromMillisecondsSinceEpoch(
-        (exp as num).toInt() * 1000,
+        exp.toInt() * 1000,
         isUtc: true,
       );
       final timeLeft = expiresAt.difference(DateTime.now().toUtc());
