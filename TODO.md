@@ -94,7 +94,10 @@ audit logging, backup/export, sync tombstones — see §1, still believed absent
       quality (see Vision, model-upgrade spike).
 - [ ] **Chat "resumed" session status** — placeholder column already exists in
       `chat_sessions_table.dart`, unused.
-- [ ] iOS build of the Flutter app — mostly storage-adapter work + testing, not started.
+- [ ] **iOS + macOS build of the Flutter app** — `mobile/` currently only has an `android/`
+      platform folder; `ios/` and `macos/` need to be generated (`flutter create .`) and wired
+      up (signing, storage-adapter work, platform-specific auth/QR flows) + testing. Not
+      started; android-only for now (2026-09-23).
 
 ---
 
