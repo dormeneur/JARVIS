@@ -1,109 +1,93 @@
 # JARVIS — TODO
 
 > Grounded in `DOCUMENTATION/OFFICIAL-DOCS/` (specs), `AI-AGENT-DOCS/` (decisions), and the
-> actual code as of 2026-09-23 (re-verified against git log + live grep, not just the prior
-> pass from 2026-07-09 — most of that list is now done, see §0). Three horizons: **Now**
-> (real gaps against our own specs), **Next** (decided features not yet built), **Vision**
-> (the cognitive-assistant direction — critically assessed), and a **Parking lot**.
+> actual code as of 2026-09-24. Horizons: **Now** (gaps against our own specs), **Next**
+> (decided features not yet built), **Vision** (cognitive-assistant direction), **Parking lot**.
+> Items marked 🙋 need something from Aditya (hardware, an account, or a decision).
 
 ---
 
-## 0. Since the last pass (2026-07-09 → 2026-09-23) — verified done ✅
+## 0. Done — verified in code (don't redo)
 
-Don't re-do these; confirmed against current code, not just commit messages:
+**Before 2026-09-23:** jv-api bound to `127.0.0.1`; non-root containers; debug router and
+`extra_hosts` removed; `langchain-text-splitters` + stdlib `sqlite3` (no SQLAlchemy); token
+auto-refresh + silent reconnect; QR guest registration; CI (server + brain pytest, flutter
+analyze/test, docker build); chat auto-archive.
 
-- **jv-api bound to `127.0.0.1:8000`**, not `0.0.0.0` (`docker-compose.yml:10`).
-- **Non-root containers**: both Dockerfiles have `USER jarvis`.
-- **Brain vault mount is `:ro`** (`docker-compose.yml:34`); jv-api keeps read-write.
-- **Dead debug router removed** (`brain/app/routers/debug.py` no longer exists).
-- **`extra_hosts` removed** from compose.
-- **`langchain` → `langchain-text-splitters`** (minimal dep, confirmed in `brain/requirements.txt`).
-- **SQLAlchemy dropped** — `history_db.py` now stdlib `sqlite3`, two tables, no ORM.
-- **Token auto-refresh** — `auth_provider.dart` refreshes silently at <24h to expiry
-  (`_maybeRefreshToken`), plus silent reconnect on 401 via stored device secret.
-- **QR guest/device registration** — shipped (`fbf1da6`): `invite_qr_screen.dart` (admin
-  generates a 10-min countdown QR), `qr_scan_screen.dart` (guest scans + names device),
-  server-side invite token flow in `server/app/routers/auth.py` / `auth_models.py`. Device
-  Management screen now has an "Invite a device" QR action gated on secrets-authorization.
-  *(Just fixed today: `device_management_screen.dart` had its entire class + provider
-  duplicated — a paste error that broke the Gradle/kernel build. Also cleaned an unnecessary
-  cast in `auth_provider.dart` and an unused `theme` var in `invite_qr_screen.dart`.)*
-- **CI pipeline** — `.github/workflows/ci.yml` runs server pytest, brain pytest (unit subset),
-  `flutter analyze` + `flutter test` (with Drift codegen step), and a Docker build smoke test,
-  on push/PR to `main`.
-- **Chat auto-archive** — fully committed (`e176dce`), not just staged as the old doc said.
-
-**Not re-verified this pass** (lower confidence, spot-check before relying on): rate limiting,
-audit logging, backup/export, sync tombstones — see §1, still believed absent.
+**2026-09-24 pass:**
+- **Security holes closed** (found while auditing; `server/tests/test_guest_privilege_guards.py`):
+  - `system/devices.json` (every device's reconnect secret) was readable/writable by **any**
+    device via `/files`, `/download`, `/sync` → a QR guest could reconnect as the admin. `system/`
+    is now unreachable through every endpoint and hidden from listings.
+  - Guest Secrets checks were bypassable with `secrets/…`, `./Secrets/…`, or bare `Secrets`
+    (e.g. `DELETE /files/Secrets`). One case-insensitive `is_secrets_path()` now guards all routes.
+  - Any device could `/files/reset` (wipe the vault), `/auth/revoke` the admin, or mint new
+    devices. Now admin-only (`require_admin`); a device can still revoke itself.
+  - Brain: `extract-pdf` path traversal, and RAG **attachments could pull `Secrets/` into the LLM
+    prompt**. Both now go through `tools.safe_path()`, which is also case-insensitive now.
+  - Reconnect secret compared in constant time.
+- **Regression fixed:** jv-brain's vault mount was `:ro`, but agent create/edit/move/delete and the
+  `Memory/global_index.md` writer write directly, so all of them failed. Mount is read-write again.
+- **Rate limiting** (`services/rate_limit.py`) — 429 + `Retry-After`; limits, and the deliberate
+  deviations from the spec table, are documented in 06-Security-Model.
+- **Audit log** → `<vault>/.system/audit.log`, JSON lines, rotated 5×10 MB, survives `/files/reset`.
+- **Backups** — daily automatic zip + `POST /backup/export` / list / download (admin), SQLite-safe,
+  keeps newest 10, into `JARVIS_BACKUP_HOST_PATH`. Settings → **Vault Backups** on admin devices.
+  Restore steps in `HOW_TO_RUN.md`.
+- **Device revoke UI** — long-press a device in Device Management (admin) to revoke a lost phone.
+- **`index-status` stuck `pending_files: 1`** — root cause: cumulative counters vs a per-run
+  total, and zero-chunk files (empty notes) counted nowhere. Also stopped a wasted LLM summary
+  call per empty file on every reindex.
+- **Tombstones — resolved as not needed:** delete propagation already works both ways; the only
+  "resurrection" is edit-vs-delete, where keeping the edit is the safe choice. Written up in
+  `5-version-control.md`.
+- **Legacy `.jvs`** — the one remaining file in `Secrets/` is current `JVSP` format (recoverable).
+- **Stale tests fixed** — CI was red: 6 server sync tests (inputs from before `has_local_changes`,
+  plus the trio backend) and the Flutter chat test (still mocked the pre-agent API). All suites
+  green: server 251, brain, Flutter 250.
+- **Docs de-drifted** — 02 (real layout + endpoints, no phantom `/secrets` router), 06 (as-built
+  auth/limits/audit), walkthrough.md marked historical. `run_tests_for_user.py` deleted.
+- **Background sync** — on app resume, on server reconnect / cold start, and every 10 min while
+  open; throttled, quiet on failure, and guarded so it never overlaps a manual sync.
+- **Biometric App Lock** — Settings → App Lock (fingerprint or device PIN, `local_auth`). It
+  covers the app instead of replacing it, so unsaved editor text survives; re-locks after 60 s away.
+- **Interview mode + `Profile/` schema** — chat ⋮ → "Interview me": JARVIS asks one question at a
+  time and records answers in `Profile/{about,work,education,skills,goals,preferences,people,
+  standard-answers}.md`. The schema lives in `INTERVIEW_PROMPT` (`brain/app/routers/agent.py`).
+  Every write still goes through the normal approval prompt.
 
 ---
 
-## 1. NOW — real gaps against our own specs
+## 1. NOW — remaining
 
-### Security (still open — highest priority before more personal data lives here)
-
-- [ ] **Rate limiting** (spec: 02 §Security, 06 §Endpoint Matrix). No `slowapi` or counter
-      middleware found in `server/app`. Still nothing stopping a compromised/buggy device
-      from hammering `/auth/*` or `/files/*`.
-- [ ] **Audit logging** to `/JARVIS/.system/audit.log` (spec: 06 §Audit Logging). No `audit`
-      references anywhere in `server/app`. Mutations, auth failures, secrets access, device
-      identity — none of it is logged today.
-
-### Bugs / debt
-
-- [ ] **Sync tombstones** — still the biggest data-correctness hole. Deletes on the server can
-      resurrect from a device that hasn't pulled the deletion. Documented non-goal, but worth
-      a fresh look now that sync has been stable for months.
-- [ ] **Legacy unrecoverable `.jvs` files** in `Secrets/` (pre per-file-salt fix) — no cleanup
-      UI shipped. Either add a "delete unrecoverable" affordance to the restore flow or confirm
-      they were removed manually.
-- [ ] `index-status` stuck `pending_files: 1` — unclear if this was fixed; re-check against a
-      live `docker compose up` before trusting the indexer's status endpoint.
-- [ ] `run_tests_for_user.py` at repo root is a scratch script (shells out to pytest, dumps to
-      `.txt` files) — looks like a leftover debugging artifact, not part of the test suite or
-      CI. Delete it or move it under a `scripts/` dir if it's still useful.
-- [ ] **Doc drift** — `02-Backend-Specification.md` still describes a `middleware/` dir and
-      `/ask` shapes that may not match current routers; `walkthrough.md` predates Phase 4/5
-      entirely. Worth a pass now that QR + refresh + CI have landed, or mark sections
-      explicitly superseded.
-
-### Phase 5 (Polish & QA)
-
-- [ ] **Backup/export** (`POST /backup/export` + download, spec 02 §Backup) — nothing exists.
-      Even a zip-the-vault endpoint beats nothing; this is the one gap that turns a bug into
-      permanent data loss.
-- [ ] **Migration test** — copy vault + repo to a clean machine, `docker compose up`, confirm
-      every feature works. Write the result down (`HOW_TO_RUN.md` or a dated note) instead of
-      re-deriving it from memory each time.
-- [ ] **CONTRIBUTING.md + issue templates** — README/HOW_TO_RUN/OVERVIEW exist; contributor
-      onboarding docs don't. Only matters if outside contributions are actually wanted.
-- [ ] **Performance sanity check** — file ops < 500 ms, AI answer < 15 s on target hardware
-      (spec 05). No measured numbers on record.
+- [ ] 🙋 **Live smoke test of this pass** — Docker was off, so everything above is verified by
+      tests, not a running stack. `docker compose up -d --build`, then check: agent create_file
+      works (rw mount), `/ask/index-status` shows `pending_files: 0`, a backup lands in `./backups`.
+- [ ] 🙋 **On-device check** of App Lock, background sync, and revoke on the Motorola.
+- [ ] 🙋 **Migration test** — clean machine (the friend's Mac?) → restore a backup zip → all works.
+      Write the result into `HOW_TO_RUN.md`.
+- [ ] 🙋 **Performance sanity** — file ops < 500 ms, AI answer < 15 s (spec 05). Needs the stack up.
+- [ ] **CONTRIBUTING.md + issue templates** — only if outside contributions are wanted.
 
 ---
 
 ## 2. NEXT — decided in the docs, not yet started
 
-- [ ] **Background sync** on app resume + connectivity change (03 §Sync Manager — today sync
-      is manual/pull-to-refresh). Needs the concurrency guard noted as a future item in
-      `5-version-control.md`.
-- [ ] **Biometric app lock** (fingerprint before app opens) — small, high value, Phase 6 item.
-- [ ] **Per-file version history + diff preview** in the conflict screen.
-- [ ] **Multi-model config surfaced in Settings** — model names are already env vars
-      (`JARVIS_LLM_MODEL`); no UI to switch/test a second model. Matters for tool-calling
-      quality (see Vision, model-upgrade spike).
-- [ ] **Chat "resumed" session status** — placeholder column already exists in
-      `chat_sessions_table.dart`, unused.
-- [ ] **iOS + macOS build of the Flutter app** — `mobile/` currently only has an `android/`
+- [ ] **Per-file version history + diff preview** in the conflict screen. Needs the server to
+      keep prior versions (today it keeps only `prev_hash`) and touches the LOCKED conflict screens.
+- [ ] **Multi-model config in Settings** — brain endpoint to list Ollama models + switch at
+      runtime. Do it together with the §3A model spike.
+- [ ] **Chat "resumed" session status** — placeholder column in `chat_sessions_table.dart` with no
+      concrete use yet. Drop the column or define the behavior.
+- [ ] 🙋 **iOS + macOS build of the Flutter app** — `mobile/` currently only has an `android/`
       platform folder; `ios/` and `macos/` need to be generated (`flutter create .`) and wired
-      up (signing, storage-adapter work, platform-specific auth/QR flows) + testing. Not
-      started; android-only for now (2026-09-23).
+      up (signing, storage-adapter work, platform-specific auth/QR flows) + testing. Needs a Mac.
 
 ---
 
 ## 3. VISION — "JARVIS as my cognitive center" (critical assessment first)
 
-**The honest constraints, unchanged since last pass — still true:**
+**The honest constraints — still true:**
 
 1. **A local 8B–ish model cannot "replace your thinking."** It can summarize, draft, retrieve,
    classify, and ask questions. It cannot act unsupervised on your behalf. Every outbound
@@ -112,33 +96,28 @@ audit logging, backup/export, sync tombstones — see §1, still believed absent
    written into the plan: *external inference stays forbidden; external actions/data via
    user-authorized OAuth are allowed.* Treat fetched email like vault data.
 3. **Sequencing matters** — "ping me," "learn about me," "approve actions" are the foundation.
-   Nothing in §3A has been started yet (no `Profile/` folder in the vault, no proposal queue,
-   no push notification path, no interview-mode chat) — this entire section is still greenfield.
+   "Learn about me" (interview mode) now exists; "ping me" and "approve actions" are next.
 4. **Job auto-apply is the least realistic piece.** The vault already has a `JOBS/` folder in
    use manually — the realistic target is "prepare the application pack, you paste/click,"
    not portal automation.
 
-### 3A. Foundations (build in this order — none started)
+### 3A. Foundations (in order)
 
-- [ ] **Interview mode** — chat mode where JARVIS asks structured questions and writes answers
-      into the vault via the existing generate-files dry-run pipeline. Highest value-per-effort:
-      no new infra, reuses what's already built.
-- [ ] **Structured `Profile/` schema** — contact, education, work history, skills, standard
-      Q&A. Interview mode fills it; forms/jobs features consume it.
+- [x] **Interview mode** — see §0.
+- [x] **Structured `Profile/` schema** — see §0.
+- [ ] 🙋 **Push notifications via self-hosted ntfy** — needs the ntfy app on the phone and a
+      decision on how the phone reaches it (a second `tailscale serve` port). Then wire to: sync
+      conflicts, proposal queue items, digest ready.
 - [ ] **Proposal queue + approval inbox** — server-side table of AI-proposed actions
       (`draft_email`, `fill_form`, `write_file`) with `proposed/approved/rejected/done` status
-      + a mobile inbox. The file-creation dry-run modal is the embryo of this pattern.
-- [ ] **Push notifications** — recommend self-hosted **ntfy** over Tailscale (fits the
-      no-cloud model over FCM). Wire to: sync conflicts, proposal queue items, digest ready.
-- [ ] **Scheduler in jv-brain** — asyncio cron-like job table for digest/mail-poll/reindex.
-      The chat-archive job (client-side today) shows the pattern; server-side is the right
-      home for anything proactive.
+      + a mobile inbox. The agent's `approval_required` flow is the in-chat version of this.
+- [ ] **Scheduler in jv-brain** — asyncio job loop for digest / mail-poll / reindex. jv-api's
+      hourly backup loop (`server/app/main.py`) is the pattern to copy.
 - [ ] **Daily digest** — morning summary of vault changes, pending conflicts, pending
-      proposals → push. First real "proactive JARVIS" milestone.
-- [ ] **Model upgrade spike** — evaluate a tool-calling-capable small model (llama3.1:8b,
-      qwen2.5:7b) for the agent loop. `JARVIS_LLM_MODEL=qwen3:4b` is already the documented
-      requirement for tool calling (per CLAUDE.md) — confirm it's actually deployed, since the
-      compose default may still be llama3.
+      proposals → push. First real "proactive JARVIS" milestone. Needs push first.
+- [ ] 🙋 **Model upgrade spike** — compare `qwen3:4b` (the `.env.template` default) against
+      `qwen2.5:7b` / `llama3.1:8b` on the agent loop, especially interview mode (it needs one-
+      question discipline and reliable edit_file calls). Needs the stack running on the RTX 3050.
 
 ### 3B. Email (read → digest → drafts, strictly in that order — not started)
 
@@ -176,4 +155,4 @@ audit logging, backup/export, sync tombstones — see §1, still believed absent
 memory. Anything violating one of those three gets parked.*
 
 *Next re-verification pass: re-run the greps in §0/§1 against the code before trusting this
-list — it drifts fast on an actively-developed repo. Last verified 2026-09-23.*
+list — it drifts fast on an actively-developed repo. Last verified 2026-09-24.*

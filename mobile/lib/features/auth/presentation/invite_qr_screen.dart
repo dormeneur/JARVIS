@@ -10,7 +10,7 @@ import 'auth_provider.dart';
 /// Admin screen — generates a 10-minute invite QR that a guest device scans.
 ///
 /// The QR payload is a compact JSON object:
-///   {"v":1, "url":"http://100.x.x.x:8000", "t":"<invite_token>"}
+///   `{"v":1, "url":"http://100.x.x.x:8000", "t":"<invite_token>"}`
 ///
 /// The guest device reads this, pre-fills the server URL, and calls
 /// POST /auth/invite/register with the token.

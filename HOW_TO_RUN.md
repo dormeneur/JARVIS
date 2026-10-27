@@ -85,6 +85,20 @@ docker compose up -d      # start backend (it also auto-starts with Docker Deskt
 cd mobile && flutter run  # run the app
 ```
 
+## Backups & restore
+
+The server zips the whole vault once a day (and on demand from **Settings → Vault Backups** on an
+admin device) into `JARVIS_BACKUP_HOST_PATH` (default `./backups` next to `docker-compose.yml`,
+keeps the newest 10). Point it at a **different disk** in `.env` so a dead drive doesn't take both:
+
+```bash
+JARVIS_BACKUP_HOST_PATH=D:/JARVIS-backups
+```
+
+Restore onto a clean machine: stop the stack, unzip the newest `jarvis-vault-*.zip` into an
+**empty** folder, set `JARVIS_HOST_PATH` to it, `docker compose up -d`. Devices, versions, and
+encrypted Secrets come back as they were, so phones reconnect without re-registering.
+
 ## If something breaks
 
 | Problem | Fix |

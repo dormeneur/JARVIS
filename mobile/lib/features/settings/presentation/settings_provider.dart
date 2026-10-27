@@ -67,3 +67,26 @@ class ArchiveTimestampService {
     return DateTime.now().toUtc().difference(lastRun).inHours >= 24;
   }
 }
+
+/// Whether the app asks for fingerprint / device PIN before showing content.
+/// Seeded from prefs in main() so a locked app never flashes content at start.
+final appLockProvider = StateNotifierProvider<AppLockNotifier, bool>((ref) {
+  return AppLockNotifier(false);
+});
+
+class AppLockNotifier extends StateNotifier<bool> {
+  static const _key = 'jarvis_app_lock';
+
+  AppLockNotifier(super.enabled);
+
+  static Future<bool> loadInitial() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_key) ?? false;
+  }
+
+  Future<void> set(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_key, value);
+    state = value;
+  }
+}

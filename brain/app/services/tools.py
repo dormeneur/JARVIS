@@ -41,6 +41,9 @@ WRITABLE_EXTENSIONS = {
 }
 
 
+_EXCLUDED_CASEFOLDED = frozenset(f.casefold() for f in EXCLUDED_FOLDERS)
+
+
 class ToolError(Exception):
     """A tool failed in a way the model should see and can recover from."""
 
@@ -77,7 +80,8 @@ def safe_path(raw: str, *, must_exist: bool = False) -> Path:
         raise ToolError(f"path escapes the vault: {raw}")
 
     rel_parts = resolved.relative_to(root).parts
-    if rel_parts and rel_parts[0] in EXCLUDED_FOLDERS:
+    # casefold: the vault is a Windows bind mount, so "secrets/x" opens Secrets/x.
+    if rel_parts and rel_parts[0].casefold() in _EXCLUDED_CASEFOLDED:
         raise ToolError(
             f"'{rel_parts[0]}' is off-limits to the assistant and cannot be read or modified"
         )

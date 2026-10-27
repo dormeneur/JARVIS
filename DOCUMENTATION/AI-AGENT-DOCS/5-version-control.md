@@ -255,10 +255,18 @@ We are NOT implementing:
 * Commit graph
 * Full Git history
 * Automatic 3-way merge engine
-* Tombstones (delete propagation) — future stage
+* Tombstones — not needed for the cases below
 
-Deletes from server may currently resurrect due to lack of tombstones.
-This will be addressed in a future stage.
+Delete propagation as implemented (verified 2026-09-24, `diff_manifests` + mobile mutation queue):
+
+* Mobile deletes → queued `delete` mutation → `DELETE /files/{path}` on the next sync.
+* Server-side deletes (another device, or the host filesystem) → the path is absent from the
+  server manifest while the client reports `has_local_changes: false` → `to_pull` → pull 404s →
+  the client removes its local copy.
+* **Edit-vs-delete**: if a device edited a file offline that was deleted on the server, the
+  client reports `has_local_changes: true` → `to_push` → the edit recreates the file. This is
+  the one "resurrection" left, and it is deliberate: losing the unsynced edit would be worse.
+  A tombstone would only turn this into a conflict prompt.
 
 ---
 

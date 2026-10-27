@@ -40,6 +40,12 @@ class IncrementalIndexer:
         self.files_deleted = 0
         self.files_modified = 0
         self.total_files = 0
+        # Status fields. The counters above are cumulative work tallies across
+        # runs, so they can't be subtracted from a per-run total (that was the
+        # "pending_files stuck at 1" bug when a file produced no chunks).
+        self._processed = 0
+        self._indexed_files = 0
+        self._indexed_chunks = 0
         
         self.health = "healthy"
         self._indexing_task = None
@@ -47,10 +53,10 @@ class IncrementalIndexer:
     def get_status(self) -> IndexStatus:
         """Get the current status of the indexer."""
         return IndexStatus(
-            total_files_indexed=self.files_indexed,
-            total_chunks=self.chunks_created,
+            total_files_indexed=self._indexed_files,
+            total_chunks=self._indexed_chunks,
             last_index_run=self.last_index_time.isoformat() if self.last_index_time else None,
-            pending_files=max(0, self.total_files - (self.files_indexed + self.files_skipped)),
+            pending_files=max(0, self.total_files - self._processed) if self.is_indexing else 0,
             index_health="indexing" if self.is_indexing else self.health
         )
         
@@ -82,11 +88,13 @@ class IncrementalIndexer:
             pass_deleted = 0
             pass_skipped = 0
             pass_chunks = 0
+            self._processed = 0
             
             # Load files from disk
             disk_paths = set()
             for doc in self.loader.load_documents():
                 disk_paths.add(doc.path)
+                self._processed += 1
                 
                 # Check if it has changed
                 status = self._has_changed(doc.path, doc.content_hash, db_state)
@@ -104,6 +112,12 @@ class IncrementalIndexer:
                 else:
                     pass_new += 1
                     
+                chunks = self.chunker.chunk_document(doc)
+                if not chunks:
+                    # Nothing to embed (e.g. an empty note) — skip the LLM summary call too.
+                    await asyncio.sleep(0)
+                    continue
+
                 # Generate summary for new/modified files via local LLM
                 summary = ""
                 try:
@@ -116,19 +130,16 @@ class IncrementalIndexer:
                     logger.warning(f"Failed to generate summary for {doc.path}: {e}")
                     summary = "Summary unavailable."
                     
-                # Process the file
-                chunks = self.chunker.chunk_document(doc)
-                if chunks:
-                    embeddings = await self.embedder.embed_chunks(chunks)
-                    await self.store.upsert_chunks(
-                        chunks=chunks, 
-                        embeddings=embeddings, 
-                        last_modified=doc.last_modified.isoformat() if hasattr(doc.last_modified, 'isoformat') else str(doc.last_modified),
-                        summary=summary
-                    )
-                    pass_chunks += len(chunks)
-                    self.chunks_created += len(chunks)
-                    self.files_indexed += 1
+                embeddings = await self.embedder.embed_chunks(chunks)
+                await self.store.upsert_chunks(
+                    chunks=chunks, 
+                    embeddings=embeddings, 
+                    last_modified=doc.last_modified.isoformat() if hasattr(doc.last_modified, 'isoformat') else str(doc.last_modified),
+                    summary=summary
+                )
+                pass_chunks += len(chunks)
+                self.chunks_created += len(chunks)
+                self.files_indexed += 1
                 
                 # Yield to event loop to keep server responsive
                 await asyncio.sleep(0)
@@ -145,6 +156,9 @@ class IncrementalIndexer:
                 await self._update_global_memory()
                     
             self.total_files = len(disk_paths)
+            final_metadata = await self.store.get_all_metadata()
+            self._indexed_chunks = len(final_metadata)
+            self._indexed_files = len(self._group_by_path(final_metadata))
             self.last_index_time = datetime.now(timezone.utc)
             self.health = "healthy"
             

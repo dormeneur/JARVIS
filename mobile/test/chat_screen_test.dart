@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/chat/presentation/chat_screen.dart';
+import 'package:dio/dio.dart';
+import 'package:jarvis_mobile/features/chat/data/agent_models.dart';
 import 'package:jarvis_mobile/features/chat/data/chat_repository.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
@@ -21,6 +23,25 @@ class MockChatRepository extends Mock implements ChatRepository {
     }
     return Stream.fromIterable([
       'Hello ', 'World', '{"answer": "Hello World", "sources": []}'
+    ]);
+  }
+
+  // The chat screen drives the agentic endpoint, not askJarvis.
+  @override
+  Stream<AgentEvent> askAgent(
+    String query, {
+    List<String>? attachments,
+    List<Map<String, dynamic>>? chatHistory,
+    String currentDirectory = '.',
+    List<String> grantedTools = const [],
+    List<Map<String, dynamic>> toolTranscript = const [],
+    CancelToken? cancelToken,
+    String mode = 'chat',
+  }) {
+    return Stream.fromIterable(const [
+      AgentToken('Hello '),
+      AgentToken('World'),
+      AgentFinal(answer: 'Hello World', sources: []),
     ]);
   }
 

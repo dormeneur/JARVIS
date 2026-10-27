@@ -78,3 +78,23 @@ async def test_start_background_indexing(mock_dependencies, patch_summary):
     # Wait for it to complete
     await indexer._indexing_task
     assert indexer._indexing_task.done()
+
+
+@pytest.mark.asyncio
+async def test_empty_document_does_not_leave_pending_or_call_llm(mock_dependencies, patch_summary):
+    # Regression: a file producing zero chunks used to pin pending_files at 1
+    # forever and cost an LLM summary call on every reindex.
+    loader, chunker, embedder, store = mock_dependencies
+    loader.load_documents.return_value = [
+        LoadedDocument(path="empty.md", content="", content_hash="h", last_modified=datetime.now())
+    ]
+    chunker.chunk_document.return_value = []
+
+    indexer = IncrementalIndexer(loader, chunker, embedder, store)
+    await indexer.run_indexing()
+
+    status = indexer.get_status()
+    assert status.pending_files == 0
+    assert status.total_files_indexed == 0
+    from brain.app.services import incremental_indexer as mod
+    mod.OllamaClient.return_value.generate.assert_not_called()

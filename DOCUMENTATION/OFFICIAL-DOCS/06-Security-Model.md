@@ -136,6 +136,28 @@ Single-user system with device-level permissions:
 | `/auth/*` | `admin:manage` | 5/min |
 | `/backup/*` | `admin:manage` | 2/min |
 
+**As implemented** (`server/app/services/rate_limit.py`, `dependencies.require_admin`), verified 2026-09-24:
+
+- `admin:manage` = any **secrets-authorized** device (the first device, plus any device an admin
+  authorizes). Admin-only: `/auth/register/device`, `/auth/invite`, `/auth/authorize_secrets`,
+  `/auth/revoke` (a device may always revoke itself), `/files/reset`, `/backup/*`.
+- Non-admin devices get a 403 on any `Secrets/` path, whatever the spelling (`secrets/`, `./Secrets/`,
+  bare `Secrets`). The check is case-insensitive because the vault is a Windows bind mount.
+- `system/` (device registry with reconnect secrets, version DB) and every dot-path (`.system/`
+  audit log) cannot be reached through any endpoint, including by admins.
+- Rate limits are per device token (per IP for unauthenticated calls), fixed one-minute window:
+
+| Group | Limit | Why it differs from the table above |
+|---|---|---|
+| `/auth/register`, `/auth/reconnect`, `/auth/invite/register` | 10/min **per IP** | Credential-guessing surface; a fake `Authorization` header doesn't buy a fresh bucket |
+| `/ask/*` | 30/min | LLM cost; one request per chat message or approval |
+| `/backup/export` | 2/min | List and download aren't expensive, so they aren't limited |
+| `/sync/*` | 3000/min | Sync does one push/pull **per file**; 10/min would break any real sync |
+| everything else | 600/min | Catches runaway loops; bulk file operations stay usable |
+| `GET /health` | 120/min | |
+
+Exceeding a limit returns `429` + `Retry-After`, and is audit-logged.
+
 ---
 
 ## Input Validation
@@ -208,6 +230,10 @@ All security-relevant events logged:
 
 - Logs stored in `/JARVIS/.system/audit.log` (rotated, max 50MB)
 - Not synced to mobile (server-only)
+- **As implemented** (`server/app/main.py` middleware + `services/audit.py`): one JSON line per
+  non-GET request, per 4xx/5xx, per 401/403 (`auth.denied`), per 429 (`rate_limit.exceeded`), and per
+  `Secrets/` access through `/files`, `/download`, `/upload` (`secrets.access`), with `device_id`, `ip`,
+  `method`, `path`, `status`. `/files/reset` preserves `.system/`. Request bodies are never logged.
 
 ---
 

@@ -7,6 +7,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    from app.services import rate_limit
+    rate_limit.reset()
+    yield
+    rate_limit.reset()
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
 @pytest.fixture
 def tmp_vault(tmp_path: Path) -> Path:
     personal = tmp_path / "Personal"

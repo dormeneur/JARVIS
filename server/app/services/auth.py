@@ -272,7 +272,7 @@ def reconnect_device(device_name: str, device_secret: str) -> tuple[str, str, da
     
     # Validate device secret
     device_info = devices[device_id]
-    if device_info.get("device_secret") != device_secret:
+    if not secrets.compare_digest(device_info.get("device_secret", ""), device_secret):
         raise InvalidTokenError("Invalid device secret")
     
     token, expires = create_token(device_id, device_name)

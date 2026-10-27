@@ -7,7 +7,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'auth_provider.dart';
 
 /// QR payload schema (version 1):
-///   {"v":1, "url":"http://100.x.x.x:8000", "t":"<invite_token>"}
+///   `{"v":1, "url":"http://100.x.x.x:8000", "t":"<invite_token>"}`
 class _InvitePayload {
   final String serverUrl;
   final String inviteToken;

@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from app.models.ask_models import IndexStatus, AskRequest, AskResponse, AskOptions, Source, ExtractPdfRequest, ExtractPdfResponse
-from app.config import settings
-from pathlib import Path
 import logging
 import json
 
@@ -12,6 +10,7 @@ import json
 from app.services.retriever import Retriever
 from app.services.context_assembler import ContextAssembler
 from app.services.ollama_client import OllamaClient
+from app.services.tools import ToolError, safe_path
 
 # In standard FastAPI patterns, we might inject this via a dependency,
 # but for simplicity here we assume the indexer instance will be attached to the app state
@@ -151,8 +150,11 @@ async def get_index_status(request: Request):
 @router.post("/brain/extract-pdf", response_model=ExtractPdfResponse)
 async def extract_pdf(req: ExtractPdfRequest):
     """Extract specific pages of a PDF to Markdown."""
-    full_path = Path(settings.vault_path) / req.path
-    
+    try:
+        full_path = safe_path(req.path)
+    except ToolError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
         

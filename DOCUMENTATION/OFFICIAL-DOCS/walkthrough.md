@@ -1,5 +1,8 @@
 # JARVIS Phase 3 — AI Integration Handover Document
 
+> **Historical (superseded).** Written at the start of Phase 3; the code has moved far past it.
+> Current state: `PROJECT_OVERVIEW.md`, `TODO.md`, and the code itself.
+
 **Author:** AI Agent (Antigravity)  
 **Date:** 2026-03-24  
 **Status:** Step 1 of 12 complete. Steps 2–12 pending.

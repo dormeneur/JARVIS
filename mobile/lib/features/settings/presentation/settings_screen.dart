@@ -1,9 +1,13 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:jarvis_mobile/core/network/api_exceptions.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_provider.dart';
 import 'package:jarvis_mobile/features/settings/presentation/device_management_screen.dart';
+import 'package:jarvis_mobile/features/settings/presentation/app_lock.dart';
 import 'package:jarvis_mobile/features/chat/presentation/tool_permission_provider.dart';
 
 /// Settings screen — shows device info, server URL, and logout.
@@ -53,6 +57,14 @@ class SettingsScreen extends ConsumerWidget {
               );
             },
           ),
+          SwitchListTile(
+            secondary: const Icon(Icons.lock_outline),
+            title: const Text('App Lock'),
+            subtitle: const Text('Fingerprint or device PIN to open JARVIS'),
+            value: ref.watch(appLockProvider),
+            onChanged: (value) => _toggleAppLock(context, ref, value),
+          ),
+          if (authState.isSecretsAuthorized) const _BackupTile(),
           const Divider(),
           _SectionHeader('Explorer'),
           SwitchListTile(
@@ -99,6 +111,19 @@ class SettingsScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _toggleAppLock(BuildContext context, WidgetRef ref, bool enable) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (enable && !await canAuthenticate()) {
+      messenger.showSnackBar(const SnackBar(
+        content: Text('Set up a screen lock or fingerprint on this phone first.'),
+      ));
+      return;
+    }
+    // Verify in both directions: enabling proves it works; disabling proves it's you.
+    final ok = await authenticateUser(enable ? 'Confirm to turn on App Lock' : 'Confirm to turn off App Lock');
+    if (ok) await ref.read(appLockProvider.notifier).set(enable);
   }
 
   void _editServerUrl(BuildContext context, WidgetRef ref) {
@@ -256,6 +281,69 @@ class _ToolPermissionsTile extends ConsumerWidget {
               },
               child: const Text('Revoke'),
             ),
+    );
+  }
+}
+
+/// Newest-first list of vault backups on the server (admin devices only).
+final _backupsProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+  try {
+    final res = await ref.read(apiClientProvider).dio.get('/backup');
+    return List<Map<String, dynamic>>.from((res.data as Map)['backups'] as List);
+  } on DioException catch (e) {
+    throw mapDioError(e);
+  }
+});
+
+class _BackupTile extends ConsumerStatefulWidget {
+  const _BackupTile();
+
+  @override
+  ConsumerState<_BackupTile> createState() => _BackupTileState();
+}
+
+class _BackupTileState extends ConsumerState<_BackupTile> {
+  bool _running = false;
+
+  Future<void> _backUpNow() async {
+    setState(() => _running = true);
+    String message;
+    try {
+      // Zipping a large vault can outlast the default 30 s receive timeout.
+      final res = await ref.read(apiClientProvider).dio.post(
+            '/backup/export',
+            options: Options(receiveTimeout: const Duration(minutes: 10)),
+          );
+      final mb = ((res.data as Map)['size_bytes'] as int) / (1024 * 1024);
+      message = 'Backup saved on server (${mb.toStringAsFixed(1)} MB)';
+      ref.invalidate(_backupsProvider);
+    } on DioException catch (e) {
+      message = 'Backup failed: ${mapDioError(e).message}';
+    }
+    if (!mounted) return;
+    setState(() => _running = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final backups = ref.watch(_backupsProvider);
+    final subtitle = backups.when(
+      data: (list) => list.isEmpty
+          ? 'No backups yet'
+          : 'Last: ${DateFormat.yMMMd().add_jm().format(DateTime.parse(list.first['created_at'] as String).toLocal())}'
+              ' · ${list.length} kept',
+      loading: () => 'Checking…',
+      error: (e, _) => 'Unavailable: $e',
+    );
+
+    return ListTile(
+      leading: const Icon(Icons.backup_outlined),
+      title: const Text('Vault Backups'),
+      subtitle: Text(subtitle),
+      trailing: _running
+          ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+          : TextButton(onPressed: _backUpNow, child: const Text('Back up now')),
     );
   }
 }

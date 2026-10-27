@@ -7,6 +7,27 @@ MAX_PATH_DEPTH = 10
 MAX_FILENAME_LENGTH = 255
 MAX_PATH_LENGTH = 500
 
+# Server state (device registry with reconnect secrets, version DB). Never
+# reachable through the API — a guest reading devices.json could reconnect
+# as the admin device.
+RESERVED_TOP_LEVEL = frozenset({"system"})
+SECRETS_DIR = "secrets"
+
+
+def _top_level(relative_path: str) -> str:
+    # casefold: the vault is a Windows bind mount, so "secrets/x" opens Secrets/x.
+    # PurePosixPath drops "." segments, so "./Secrets/x" is caught too.
+    parts = PurePosixPath(relative_path.replace("\\", "/")).parts
+    return parts[0].casefold() if parts else ""
+
+
+def is_secrets_path(relative_path: str) -> bool:
+    return _top_level(relative_path) == SECRETS_DIR
+
+
+def is_reserved_path(relative_path: str) -> bool:
+    return _top_level(relative_path) in RESERVED_TOP_LEVEL
+
 
 def validate_path(relative_path: str) -> str:
     if not relative_path:
@@ -34,6 +55,9 @@ def validate_path(relative_path: str) -> str:
 
         if part.startswith(".") and part not in ALLOWED_DOT_ENTRIES:
             raise InvalidPathError(f"Hidden files or directories are not allowed: {part}")
+
+    if is_reserved_path(normalized):
+        raise InvalidPathError("Path is reserved for server use")
 
     return normalized
 

@@ -83,10 +83,12 @@ class ChatRepository {
     List<String> grantedTools = const [],
     List<Map<String, dynamic>> toolTranscript = const [],
     CancelToken? cancelToken,
+    String mode = 'chat',
   }) async* {
     try {
       final body = <String, dynamic>{
         'query': query,
+        'mode': mode,
         'current_directory': currentDirectory,
         'granted_tools': grantedTools,
         'tool_transcript': toolTranscript,

@@ -1,7 +1,7 @@
 """Pydantic models for AI requests and responses."""
 
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 
 class AskOptions(BaseModel):
@@ -50,6 +50,10 @@ class AgentRequest(BaseModel):
     tool_transcript: List[ToolTranscriptEntry] = Field(
         default_factory=list,
         description="Already-decided tool calls for this turn, replayed in order",
+    )
+    mode: Literal["chat", "interview"] = Field(
+        default="chat",
+        description="'interview': JARVIS asks questions and records answers in Profile/",
     )
 
 

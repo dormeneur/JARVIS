@@ -22,7 +22,7 @@ from app.models.file_models import (
     FileContent,
     FileInfo,
 )
-from app.services.path_validator import check_symlink, resolve_vault_path, validate_path
+from app.services.path_validator import check_symlink, is_reserved_path, resolve_vault_path, validate_path
 from app.services.version_tracker import VersionTracker
 
 STREAM_CHUNK_SIZE = 64 * 1024
@@ -72,6 +72,8 @@ def list_directory(relative_path: str | None = None) -> DirectoryListing:
         if child.name.startswith(".") and child.name not in {".gitkeep", ".gitignore"}:
             continue
         if child.is_symlink():
+            continue
+        if relative_path is None and is_reserved_path(child.name):
             continue
         entries.append(_file_info(vault_root, child))
 
@@ -258,8 +260,8 @@ def reset_vault() -> int:
     deleted = 0
 
     for child in vault_root.iterdir():
-        # Preserve the system directory (devices, version DB, etc.)
-        if child.name == "system":
+        # Preserve server state (devices, version DB) and the audit trail.
+        if child.name in ("system", ".system"):
             continue
         try:
             if child.is_dir():

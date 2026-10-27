@@ -124,4 +124,4 @@ def test_unauthorized_cannot_authorize(clean_vault):
     # Device B (Unauthorized) tries to authorize C
     resp_auth = client.post("/auth/authorize_secrets", params={"device_id": id_c}, headers=headers_b)
     assert resp_auth.status_code == 403
-    assert "Only secrets-authorized" in resp_auth.json()["detail"]
+    assert "Only admin" in resp_auth.json()["detail"]

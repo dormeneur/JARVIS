@@ -83,7 +83,9 @@ Host machine (Windows or Mac)
 ### Phase 4 — Security (mostly complete)
 - JWT (HS256) device auth. First device registers with a one-time **setup secret printed in jv-api
   logs on first boot**; more devices via `/auth/register/device`; reconnect + refresh flows.
-- Device management: list devices, revoke device (Settings → Device Management screen).
+- Device management: list devices, revoke (long-press, admin only), QR invites (Settings → Device Management).
+- Admin = secrets-authorized device. Admin-only: registering/revoking devices, invites, `/files/reset`, backups.
+  `system/` (device registry) is unreachable through the API.
 - **End-to-end encrypted `/Secrets`**: AES-256-GCM + PBKDF2 (600k iterations), `.jvs` file format,
   cross-device secrets authorization (`/auth/authorize_secrets`) and revocation. Server never sees
   the passphrase; mobile crypto in `mobile/lib/features/secrets/domain/crypto_service.dart`.
@@ -95,28 +97,12 @@ Host machine (Windows or Mac)
 - Big test suites: `server/tests/` (auth, vault, sync, path validator, phase-4 e2e…) and
   `brain/tests/` (~28 files, incl. property-based tests with Hypothesis). Flutter tests in `mobile/test/`.
 
-## 5. What is IN FLIGHT 🟡 (uncommitted work on `main` right now)
+## 5–6. Status and what's next
 
-A **chat auto-archive** feature (staged but not committed as of 2026-07-08):
-- `mobile/.../chat/data/chat_archive_service.dart` — sessions inactive > 7 days are written as
-  markdown into `Memory/Chats/` in the vault (so the AI can later recall old conversations via RAG),
-  then deleted locally. Runs at most once per 24 h.
-- Drift schema bump + `chat_sessions` table changes, settings toggle, auth-provider changes,
-  tests in `brain/tests/test_chat_archive.py`.
-- ⚠️ `brain/test_archive.db` and `brain/test_history.db` are staged — these look like test artifacts
-  and probably should be unstaged/gitignored before committing.
-
-## 6. What is PENDING / NEXT 📋
-
-1. **Finish & commit the chat-archive feature** (verify tests, drop the stray .db files).
-2. **QR guest registration** — fully designed in `OFFICIAL-DOCS/11-QR-Guest-Registration.md`
-  (invite tokens, guest-scoped JWTs, permission model), **zero code written yet**.
-3. **Phase 5 — Polish & QA**: CI pipeline (GitHub Actions), migration test on a clean machine,
-  backup/restore flow, performance checks, UI polish.
-4. **Sync gaps**: no tombstones yet — **files deleted on the server can resurrect from a device**
-  (known, documented non-goal for now). Background/auto sync, per-file version history, diff preview.
-5. **Phase 6 ideas**: voice input (STT), smart tagging, biometric app lock, daily digest,
-  relationship graph, web dashboard.
+Tracked in **`TODO.md`** (re-verified against the code 2026-09-24). Since this overview was
+written: chat auto-archive, QR guest registration, token auto-refresh, CI, rate limiting, audit
+logging, daily vault backups, background sync, biometric App Lock, and interview mode have all
+shipped, and a guest-privilege audit closed several holes (see TODO.md §0).
 
 ## 7. MUST-KNOW gotchas (hard-won, respect them)
 

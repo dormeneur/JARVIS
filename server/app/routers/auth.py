@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import settings
-from app.dependencies import get_current_device
+from app.dependencies import get_current_device, require_admin
 from app.models.auth_models import (
     DeviceInfo,
     DeviceListResponse,
@@ -42,7 +42,7 @@ async def register_device(body: RegisterRequest) -> RegistrationResponse:
 @router.post("/register/device", response_model=RegistrationResponse, status_code=201)
 async def register_additional_device(
     body: RegisterByDeviceRequest,
-    current: dict = Depends(get_current_device),
+    current: dict = Depends(require_admin),
 ) -> RegistrationResponse:
     device_id, device_secret, token, expires = auth.register_additional_device(
         device_name=body.device_name,
@@ -102,6 +102,8 @@ async def revoke_device(
     body: RevokeRequest,
     current: dict = Depends(get_current_device),
 ) -> dict:
+    if body.device_id != current["device_id"] and not current.get("is_secrets_authorized"):
+        raise HTTPException(status_code=403, detail="Only admin devices may revoke other devices")
     auth.revoke_device(body.device_id)
     return {"message": f"Device {body.device_id} revoked"}
 
@@ -123,12 +125,8 @@ async def get_current_device_info(
 async def authorize_secrets(
     device_id: str,
     authorized: bool = True,
-    current: dict = Depends(get_current_device),
+    current: dict = Depends(require_admin),
 ) -> dict:
-    if not current.get("is_secrets_authorized"):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Only secrets-authorized devices can authorize others")
-    
     auth.authorize_secrets(device_id, authorized)
     status_str = "authorized" if authorized else "revoked"
     return {"message": f"Device {device_id} secrets access {status_str}"}
@@ -151,20 +149,13 @@ async def list_devices(
 
 @router.post("/invite", response_model=InviteTokenResponse, status_code=201)
 async def create_invite(
-    current: dict = Depends(get_current_device),
+    current: dict = Depends(require_admin),
 ) -> InviteTokenResponse:
     """Generate a single-use invite token (10-min TTL) for QR-based registration.
 
-    Only secrets-authorized (admin) devices may generate invites.
     The caller encodes {server_url, invite_token} into a QR code and displays
     it; the guest device scans it and calls POST /auth/invite/register.
     """
-    if not current.get("is_secrets_authorized", False):
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=403,
-            detail="Only admin devices may generate invite tokens",
-        )
 
     token, expires_at = auth.create_invite_token()
     ttl = int((expires_at - datetime.now(tz=timezone.utc)).total_seconds())

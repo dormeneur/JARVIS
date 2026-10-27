@@ -97,10 +97,20 @@ class TestBuildServerManifest:
 
 
 class TestDiffManifests:
+    def test_client_only_unchanged_file_is_pulled_as_server_delete(self, vault_settings):
+        # Server deleted it and the client never edited it: pull -> 404 -> client removes it.
+        from app.services import sync
+        client = [
+            {"path": "gone.md", "content_hash": "sha256:abc", "last_modified": "2026-01-01T00:00:00Z", "has_local_changes": False},
+        ]
+        to_push, to_pull, conflicts = sync.diff_manifests(client, {})
+        assert to_pull == ["gone.md"]
+        assert to_push == [] and conflicts == []
+
     def test_client_only_files_to_push(self, vault_settings):
         from app.services import sync
         client = [
-            {"path": "new.md", "content_hash": "sha256:abc", "last_modified": "2026-01-01T00:00:00Z"},
+            {"path": "new.md", "content_hash": "sha256:abc", "last_modified": "2026-01-01T00:00:00Z", "has_local_changes": True},
         ]
         server = {}
         to_push, to_pull, conflicts = sync.diff_manifests(client, server)
@@ -586,7 +596,7 @@ class TestDiffManifests:
     def test_mixed_scenario(self, vault_settings):
         from app.services import sync
         client = [
-            {"path": "client_only.md", "content_hash": "sha256:c1", "last_modified": "2026-01-01T00:00:00Z"},
+            {"path": "client_only.md", "content_hash": "sha256:c1", "last_modified": "2026-01-01T00:00:00Z", "has_local_changes": True},
             {"path": "both_same.md", "content_hash": "sha256:same", "last_modified": "2026-01-01T00:00:00Z"},
             {"path": "client_newer.md", "content_hash": "sha256:cn", "last_modified": "2026-03-01T00:00:00Z"},
             {"path": "server_newer.md", "content_hash": "sha256:sn_old", "last_modified": "2026-01-01T00:00:00Z"},
@@ -879,7 +889,7 @@ class TestSyncManifestEndpoint:
             json={
                 "manifest": [
                     {"path": "readme.md", "content_hash": server_hash, "last_modified": server_mtime},
-                    {"path": "client_only.md", "content_hash": "sha256:xxx", "last_modified": "2026-01-01T00:00:00Z"},
+                    {"path": "client_only.md", "content_hash": "sha256:xxx", "last_modified": "2026-01-01T00:00:00Z", "has_local_changes": True},
                 ]
             },
             headers=auth_headers,

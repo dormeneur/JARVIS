@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/auth/presentation/setup_screen.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_screen.dart';
+import 'package:jarvis_mobile/features/settings/presentation/app_lock.dart';
+import 'package:jarvis_mobile/features/settings/presentation/settings_provider.dart';
 
 /// Root widget — manages auth state and routes accordingly.
 class JarvisApp extends ConsumerStatefulWidget {
@@ -12,10 +14,18 @@ class JarvisApp extends ConsumerStatefulWidget {
   ConsumerState<JarvisApp> createState() => _JarvisAppState();
 }
 
-class _JarvisAppState extends ConsumerState<JarvisApp> {
+class _JarvisAppState extends ConsumerState<JarvisApp> with WidgetsBindingObserver {
+  // Short trips out of the app (file picker, share sheet) shouldn't re-lock.
+  static const _relockAfter = Duration(seconds: 60);
+
+  late bool _locked;
+  DateTime? _backgroundedAt;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _locked = ref.read(appLockProvider);
     // Wire the API client's 401 hook to the auth state machine so a token
     // that expires mid-session (not just at startup) bounces the user back
     // to the login screen instead of leaving a dead session behind a stale
@@ -30,8 +40,30 @@ class _JarvisAppState extends ConsumerState<JarvisApp> {
   }
 
   @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      _backgroundedAt ??= DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      final away = _backgroundedAt;
+      _backgroundedAt = null;
+      if (ref.read(appLockProvider) && away != null && DateTime.now().difference(away) > _relockAfter) {
+        setState(() => _locked = true);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
+    final showLock = _locked &&
+        ref.watch(appLockProvider) &&
+        authState.status == AuthStatus.authenticated;
 
     return MaterialApp(
       title: 'JARVIS',
@@ -54,6 +86,14 @@ class _JarvisAppState extends ConsumerState<JarvisApp> {
       ),
       themeMode: ThemeMode.system,
       home: _buildHome(authState),
+      // Cover the navigator instead of replacing it, so locking never
+      // disposes an open editor with unsaved text.
+      builder: (context, child) => Stack(
+        children: [
+          ExcludeSemantics(excluding: showLock, child: child!),
+          if (showLock) AppLockScreen(onUnlocked: () => setState(() => _locked = false)),
+        ],
+      ),
     );
   }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
@@ -41,8 +42,37 @@ class ExplorerScreen extends ConsumerStatefulWidget {
   ConsumerState<ExplorerScreen> createState() => _ExplorerScreenState();
 }
 
-class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
+class _ExplorerScreenState extends ConsumerState<ExplorerScreen>
+    with WidgetsBindingObserver {
   DateTime? _lastBackPress;
+  Timer? _backgroundSyncTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _backgroundSyncTimer = Timer.periodic(
+      const Duration(minutes: 10),
+      (_) => _backgroundSync(),
+    );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _backgroundSyncTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _backgroundSync();
+  }
+
+  void _backgroundSync() {
+    if (ref.read(serverConnectionProvider) != ServerConnectionState.online) return;
+    ref.read(syncProvider.notifier).performBackgroundSync();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +86,19 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen> {
     final theme = Theme.of(context);
 
     final isSelectionMode = selectionState.isSelectionMode;
+
+    // Server became reachable (cold start, or back from offline) → catch up.
+    ref.listen(serverConnectionProvider, (prev, next) {
+      if (next == ServerConnectionState.online && prev != ServerConnectionState.online) {
+        ref.read(syncProvider.notifier).performBackgroundSync();
+      }
+    });
+    // Any finished sync (button or background) → refresh the listing.
+    ref.listen(syncProvider, (prev, next) {
+      if (prev?.status == SyncStatus.syncing && next.status == SyncStatus.complete) {
+        ref.invalidate(directoryEntriesProvider);
+      }
+    });
 
     return PopScope(
       canPop: false,

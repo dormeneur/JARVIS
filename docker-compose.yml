@@ -10,6 +10,8 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS
+      # Vault zip backups. Keep this OUTSIDE the vault; ideally another disk.
+      - ${JARVIS_BACKUP_HOST_PATH:-./backups}:/backups
     env_file: .env
     depends_on:
       chromadb:
@@ -29,9 +31,11 @@ services:
       dockerfile: Dockerfile
     container_name: jv-brain
     volumes:
-      # Read-only: brain only reads vault files for indexing & RAG.
-      # generate-files writes go through jv-api, not directly through brain.
-      - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS:ro
+      # Read-write: approved agent tools (create/edit/move/delete) and the
+      # Memory/global_index.md writer write here directly. Writes are confined
+      # by tools.safe_path(), which also keeps Secrets/ and system/ unreachable.
+      # (generate-files only returns a manifest; mobile writes those via jv-api.)
+      - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS
     env_file: .env
     depends_on:
       chromadb:

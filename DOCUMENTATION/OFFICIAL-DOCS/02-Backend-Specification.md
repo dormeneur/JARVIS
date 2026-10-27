@@ -22,36 +22,36 @@ Technical specification for `jv-api` — the Dockerized FastAPI backend that ser
 ## Service Architecture
 
 ```
-jv-api container
+jv-api container (actual layout, verified 2026-09-24)
 ├── app/
-│   ├── main.py              # FastAPI app factory
-│   ├── config.py            # Settings from env vars
-│   ├── dependencies.py      # Shared injection (auth, vault path)
+│   ├── main.py              # App, lifespan (setup secret, daily backup loop), rate-limit + audit middleware
+│   ├── config.py            # JARVIS_* settings
+│   ├── dependencies.py      # get_current_device, require_admin, ensure_path_access
+│   ├── errors.py            # VaultError / AuthError + handlers
 │   ├── routers/
 │   │   ├── health.py        # GET /health
-│   │   ├── files.py         # /files CRUD
-│   │   ├── sync.py          # /sync push/pull
-│   │   ├── ask.py           # /ask AI endpoint proxy
-│   │   └── secrets.py       # /secrets encrypt/decrypt
+│   │   ├── auth.py          # register, reconnect, refresh, revoke, devices, QR invite
+│   │   ├── files.py         # /files CRUD, /upload, /download, /files/reset
+│   │   ├── sync.py          # /sync/manifest, /sync/push, /sync/pull
+│   │   ├── ask.py           # /ask/* proxy to jv-brain (NDJSON streams)
+│   │   └── backup.py        # /backup list, export, download
 │   ├── services/
-│   │   ├── vault.py         # Filesystem abstraction over /JARVIS
-│   │   ├── sync_engine.py   # Metadata comparison, conflict resolution
-│   │   ├── auth.py          # JWT validation, token management
-│   │   └── encryption.py    # AES-256 wrapper for Secrets
-│   ├── models/
-│   │   ├── file_models.py   # Pydantic schemas for file ops
-│   │   ├── sync_models.py   # Sync manifest schemas
-│   │   └── ask_models.py    # AI query/response schemas
-│   └── middleware/
-│       ├── auth_middleware.py
-│       └── error_handler.py
+│   │   ├── vault.py         # Filesystem ops over the vault
+│   │   ├── sync.py          # Manifest build + diff (LOCKED — see 5-version-control.md)
+│   │   ├── version_tracker.py  # Per-file versions in system/file_versions.db
+│   │   ├── path_validator.py   # Traversal, hidden, reserved (system/), Secrets detection
+│   │   ├── auth.py          # Device registry, JWT, invite tokens
+│   │   ├── rate_limit.py    # Per-group request limits
+│   │   ├── audit.py         # .system/audit.log (JSON lines, rotated)
+│   │   └── backup.py        # Vault zips
+│   └── models/              # Pydantic schemas (auth, file, sync)
 ├── tests/
-│   ├── test_files.py
-│   ├── test_sync.py
-│   └── test_auth.py
 ├── Dockerfile
 └── requirements.txt
 ```
+
+> Secrets are encrypted/decrypted **on the device only** (`.jvs`, see 07); the server stores
+> ciphertext through the normal file/sync endpoints. There is no `/secrets` router.
 
 ---
 
@@ -106,29 +106,36 @@ jv-api container
 
 > Detailed sync protocol defined in [04-Sync-Protocol.md](file:///b:/DEV/JARVIS/DOCUMENTATION/OFFICIAL-DOCS/04-Sync-Protocol.md)
 
-### AI Endpoints (`/ask`)
+### AI Endpoints (`/ask/*`)
 
-| Method | Path | Description | Auth |
-|---|---|---|---|
-| `POST` | `/ask` | Submit query with optional file attachments | JWT |
-| `GET` | `/ask/status` | Check if AI services are available | JWT |
+All proxied to jv-brain (`server/app/routers/ask.py`); streams are NDJSON.
 
-> Detailed AI design in [05-AI-System-Design.md](file:///b:/DEV/JARVIS/DOCUMENTATION/OFFICIAL-DOCS/05-AI-System-Design.md)
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/ask/ai/query` | RAG answer (stream) |
+| `POST` | `/ask/ai/agent` | Tool-calling agent chat (stream; stops at `approval_required`) |
+| `GET` | `/ask/ai/tools` | Tool catalogue + risk classes for the permission UI |
+| `GET` | `/ask/status`, `/ask/index-status` | AI health / indexer progress |
+| `POST` | `/ask/reindex`, `/ask/refresh-fs-tree` | Trigger reindex / fs snapshot rebuild |
+| `POST` | `/ask/extract-pdf` | PDF pages → Markdown |
+| `POST` | `/ask/generate-files`, `/ask/generate-files/dry-run` | LLM file-scaffold manifest (mobile writes it) |
+| `GET/DELETE` | `/ask/chat/sessions[/{id}]` | Server-side chat history |
+| `POST` | `/ask/chat/sync` | Store a message pair in chat history |
 
-### Secrets Endpoints (`/secrets`)
-
-| Method | Path | Description | Auth |
-|---|---|---|---|
-| `GET` | `/secrets` | List encrypted files (metadata only) | JWT |
-| `POST` | `/secrets/decrypt` | Decrypt a file (requires user passphrase) | JWT |
-| `POST` | `/secrets/encrypt` | Encrypt and store a file | JWT |
+> Detailed AI design in [05-AI-System-Design.md](05-AI-System-Design.md)
 
 ### Backup & Export
 
 | Method | Path | Description | Auth |
 |---|---|---|---|
-| `POST` | `/backup/export` | Generate zip archive of `/JARVIS` | JWT |
-| `GET` | `/backup/download/{id}` | Download generated backup | JWT |
+| `GET` | `/backup` | List backups, newest first (`backup_id`, size, `created_at`) | JWT (admin) |
+| `POST` | `/backup/export` | Zip the whole vault into `JARVIS_BACKUP_HOST_PATH` (synchronous; returns the backup) | JWT (admin) |
+| `GET` | `/backup/download/{id}` | Download a backup zip | JWT (admin) |
+
+Backups also run automatically every `JARVIS_BACKUP_INTERVAL_HOURS` (default 24, `0` = off),
+keeping the newest `JARVIS_BACKUP_KEEP` (default 10). SQLite files (the version DB) are
+snapshotted through the SQLite backup API, so a zip never holds a half-written DB.
+"Admin" = a secrets-authorized device (see 06 §Permissions).
 
 ---
 

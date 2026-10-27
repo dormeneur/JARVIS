@@ -213,6 +213,14 @@ class AuthRepository {
     }
   }
 
+  Future<void> revokeDevice(String deviceId) async {
+    try {
+      await _apiClient.dio.post('/auth/revoke', data: {'device_id': deviceId});
+    } on DioException catch (e) {
+      throw mapDioError(e);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------

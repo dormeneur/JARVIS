@@ -50,6 +50,9 @@ class DeviceManagementScreen extends ConsumerWidget {
             final registeredAt = DateTime.parse(device['registered_at'] as String);
 
             return ListTile(
+              onLongPress: isAuthorized && !isCurrent
+                  ? () => _confirmRevoke(context, ref, deviceId, device['device_name'] as String)
+                  : null,
               leading: Icon(
                 isCurrent ? Icons.phone_android : Icons.devices,
                 color: isCurrent ? Theme.of(context).primaryColor : null,
@@ -61,7 +64,8 @@ class DeviceManagementScreen extends ConsumerWidget {
                 ),
               ),
               subtitle: Text(
-                'Registered: ${DateFormat.yMMMd().add_jm().format(registeredAt.toLocal())}',
+                'Registered: ${DateFormat.yMMMd().add_jm().format(registeredAt.toLocal())}'
+                '${isAuthorized && !isCurrent ? '\nLong-press to revoke' : ''}',
               ),
               trailing: isSecretsAuth
                   ? const Chip(
@@ -95,5 +99,41 @@ class DeviceManagementScreen extends ConsumerWidget {
         error: (err, stack) => Center(child: Text('Error: $err')),
       ),
     );
+  }
+
+  Future<void> _confirmRevoke(
+    BuildContext context,
+    WidgetRef ref,
+    String deviceId,
+    String deviceName,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Revoke $deviceName?'),
+        content: const Text(
+          'The device is signed out immediately and can no longer sync, '
+          'read files, or reconnect. Use this for a lost or retired device.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Revoke'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref.read(authRepositoryProvider).revokeDevice(deviceId);
+      ref.invalidate(deviceListProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Revoked $deviceName')));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to revoke: $e')));
+    }
   }
 }

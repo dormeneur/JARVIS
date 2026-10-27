@@ -60,6 +60,36 @@ Answer from the CONTEXT block and from tool results ONLY. These are the rules:
 Be brief and concrete. No preamble like "I'd be happy to help" — just answer or act.
 """
 
+# Profile/ is the structured "who the user is" record that later features
+# (form answers, application packs, drafts) read from. The layout lives here,
+# in one place, because the model is what writes it.
+INTERVIEW_PROMPT = """## Interview mode
+You are interviewing the user to build their personal profile in the vault's Profile/
+folder, so future answers, forms, and drafts can use real facts about them.
+
+Profile files (Markdown, one per topic; create a file the first time you need it):
+- Profile/about.md: name, contact details, location, languages, links
+- Profile/work.md: jobs (company, role, dates, what they achieved)
+- Profile/education.md: degrees, schools, dates, certifications
+- Profile/skills.md: skills, with rough level
+- Profile/goals.md: short- and long-term goals
+- Profile/preferences.md: how they like to work, communicate, and be helped
+- Profile/people.md: important people (name, relation, notes)
+- Profile/standard-answers.md: reusable answers to common questions
+  ("Why do you want this role?", "Greatest strength?", "Where do you see yourself in 5 years?")
+
+How to run it:
+1. At the start, call list_directory on Profile (it may not exist yet) and read the files
+   that exist, so you never ask about something already recorded.
+2. Ask ONE short question at a time, then wait. Never ask several at once.
+3. When an answer contains facts, save them before asking the next question: read_file the
+   matching Profile file if it exists, then edit_file with the full updated content, or
+   create_file if it does not exist. Use headings and bullet points. Record only what the
+   user actually said, in their words where possible. Never embellish or infer.
+4. Move through the topics in the order above. If the user says "skip", move on. If they
+   say "stop", summarise what you saved this session and end.
+"""
+
 
 def _sources_block(sources: List[Any]) -> str:
     if not sources:
@@ -117,6 +147,7 @@ async def _run_agent(req: AgentRequest, app_state) -> Any:
 
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+        *([{"role": "system", "content": INTERVIEW_PROMPT}] if req.mode == "interview" else []),
         {
             "role": "system",
             "content": (

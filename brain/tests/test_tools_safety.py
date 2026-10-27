@@ -143,3 +143,20 @@ def test_schemas_are_wellformed_for_ollama():
         assert fn["parameters"]["type"] == "object"
         for req in fn["parameters"].get("required", []):
             assert req in fn["parameters"]["properties"], f"{fn['name']}: {req} undeclared"
+
+
+# --- casing / attachment paths ------------------------------------------------
+
+@pytest.mark.parametrize("path", ["secrets/keys.jvs", "SECRETS/keys.jvs", "System/devices.json"])
+def test_excluded_folders_blocked_regardless_of_case(vault, path):
+    # The vault is a case-insensitive Windows bind mount in production.
+    with pytest.raises(toolkit.ToolError):
+        toolkit.safe_path(path)
+
+
+@pytest.mark.parametrize("path", ["Secrets/keys.jvs", "../outside.txt"])
+def test_rag_attachments_cannot_pull_secrets_or_escape(vault, path):
+    from app.services.context_assembler import ContextAssembler
+
+    assembler = ContextAssembler(text_chunker=None, document_loader=None)
+    assert assembler._load_attachment(path) is None

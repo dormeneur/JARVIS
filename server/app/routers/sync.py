@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, Depends, Form, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.dependencies import get_current_device
+from app.dependencies import ensure_path_access, get_current_device
 from app.models.sync_models import (
     ManifestEntry,
     ManifestRequest,
@@ -17,7 +17,7 @@ from app.models.sync_models import (
     SyncPathEntry,
 )
 from app.services import sync
-from app.services.path_validator import validate_path
+from app.services.path_validator import is_reserved_path, is_secrets_path, validate_path
 from app.services.version_tracker import VersionTracker
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -28,6 +28,9 @@ async def sync_manifest(
     body: ManifestRequest,
     _device: dict = Depends(get_current_device),
 ) -> ManifestResponse:
+    # Drop reserved server paths rather than 400 the whole sync if a client
+    # mirror ever cached one before they were blocked.
+    body.manifest = [e for e in body.manifest if not is_reserved_path(e.path)]
     for entry in body.manifest:
         validate_path(entry.path)
 
@@ -38,7 +41,7 @@ async def sync_manifest(
     if not _device.get("is_secrets_authorized", False):
         server_manifest = {
             p: e for p, e in server_manifest.items()
-            if not p.startswith("Secrets/")
+            if not is_secrets_path(p)
         }
 
     client_entries = [
@@ -74,9 +77,7 @@ async def sync_push(
     validate_path(meta.path)
 
     # Secrets/ paths are restricted to secrets-authorized devices only.
-    if meta.path.startswith("Secrets/") and not _device.get("is_secrets_authorized", False):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Unauthorized to push to Secrets directory")
+    ensure_path_access(meta.path, _device)
 
     file_data = b""
     if file is not None:
@@ -109,9 +110,7 @@ async def sync_pull(
     validate_path(body.path)
 
     # Secrets/ paths are restricted to secrets-authorized devices only.
-    if body.path.startswith("Secrets/") and not _device.get("is_secrets_authorized", False):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Unauthorized to pull from Secrets directory")
+    ensure_path_access(body.path, _device)
 
     filename, file_size, stream = await sync.pull_file(body.path)
 

@@ -39,7 +39,12 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   SyncNotifier(this._syncRepo) : super(const SyncState());
 
+  DateTime? _lastBackgroundAttempt;
+
+  /// The only entry point into SyncRepository.performSync, so this guard is
+  /// what keeps a background trigger and the Sync button from overlapping.
   Future<void> performSync() async {
+    if (state.status == SyncStatus.syncing) return;
     state = state.copyWith(status: SyncStatus.syncing, error: null);
 
     try {
@@ -47,6 +52,22 @@ class SyncNotifier extends StateNotifier<SyncState> {
       state = SyncState(status: SyncStatus.complete, lastResult: result);
     } catch (e) {
       state = SyncState(status: SyncStatus.error, error: e.toString());
+    }
+  }
+
+  /// Quiet sync for app-resume / reconnect / timer triggers: throttled, and a
+  /// failure (usually just offline) doesn't raise the error banner.
+  Future<void> performBackgroundSync() async {
+    final now = DateTime.now();
+    final last = _lastBackgroundAttempt;
+    if (last != null && now.difference(last) < const Duration(minutes: 2)) return;
+    if (state.status == SyncStatus.syncing) return;
+    _lastBackgroundAttempt = now;
+
+    final previous = state;
+    await performSync();
+    if (state.status == SyncStatus.error) {
+      state = SyncState(status: SyncStatus.idle, lastResult: previous.lastResult);
     }
   }
 

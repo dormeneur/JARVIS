@@ -272,3 +272,40 @@ def test_tools_are_offered_to_the_model(agent_env, monkeypatch):
     names = {t["function"]["name"] for t in fake.seen_tools[0]}
 
     assert {"create_file", "read_file", "delete_file", "search_vault"} <= names
+
+
+# --- interview mode -------------------------------------------------------------
+
+def test_interview_mode_adds_profile_instructions(agent_env, monkeypatch):
+    agent_mod, _ = agent_env
+    fake = FakeOllama([turn_saying("What's your full name?")])
+    monkeypatch.setattr(agent_mod, "OllamaClient", fake)
+
+    run_agent(agent_mod, AgentRequest(query="Start the interview.", mode="interview"))
+
+    system = " ".join(m["content"] for m in fake.seen_messages[0] if m["role"] == "system")
+    assert "Interview mode" in system and "Profile/about.md" in system
+
+
+def test_chat_mode_has_no_interview_prompt(agent_env, monkeypatch):
+    agent_mod, _ = agent_env
+    fake = FakeOllama([turn_saying("Hi.")])
+    monkeypatch.setattr(agent_mod, "OllamaClient", fake)
+
+    run_agent(agent_mod, AgentRequest(query="hello"))
+
+    assert not any("Interview mode" in m["content"] for m in fake.seen_messages[0] if m["role"] == "system")
+
+
+def test_interview_writes_still_need_approval(agent_env, monkeypatch):
+    agent_mod, vault = agent_env
+    monkeypatch.setattr(
+        agent_mod,
+        "OllamaClient",
+        FakeOllama([turn_calling("create_file", path="Profile/about.md", content="# About - Name: A")]),
+    )
+
+    events = run_agent(agent_mod, AgentRequest(query="My name is A", mode="interview"))
+
+    assert any(e.get("type") == "approval_required" for e in events)
+    assert not (vault / "Profile" / "about.md").exists()

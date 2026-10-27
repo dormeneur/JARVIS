@@ -22,6 +22,9 @@ build/
 venv/
 .hypothesis/
 
+# Vault backups (default JARVIS_BACKUP_HOST_PATH)
+backups/
+
 # Test artifacts & logs
 *.log
 *.db

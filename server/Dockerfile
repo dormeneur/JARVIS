@@ -9,7 +9,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     # Create a non-root user: containers must not run as root (06-Security-Model.md)
-    && adduser --system --no-create-home --uid 1001 jarvis
+    && adduser --system --no-create-home --uid 1001 jarvis \
+    && mkdir /backups && chown jarvis /backups
 
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn

@@ -9,6 +9,7 @@ from app.models.ask_models import Source
 from app.services.document_loader import DocumentLoader
 from app.services.text_chunker import TextChunker
 from app.config import settings
+from app.services.tools import ToolError, safe_path
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,11 @@ Answer:"""
         Returns:
             File content as text, or None if failed
         """
-        full_path = Path(settings.vault_path) / path
+        try:
+            full_path = safe_path(path)
+        except ToolError as e:
+            logger.warning(f"Attachment rejected: {path} ({e})")
+            return None
         logger.info(f"Loading attachment: {path} -> {full_path}")
         try:
             if full_path.exists():

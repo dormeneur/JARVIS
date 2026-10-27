@@ -90,6 +90,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _isGenerating = false;
   bool _isReindexing = false;
   bool _isArchiving = false;
+  // Interview mode: JARVIS asks questions and records answers in Profile/.
+  // Not persisted per session; switching or starting a chat returns to normal.
+  bool _interviewMode = false;
   bool? _aiAvailable; // null = checking, true = online, false = offline
   String? _currentSessionId;
   String? _activeSessionId; // The session that can be texted
@@ -212,6 +215,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _currentSessionId = sessionId;
       _activeSessionId = sessionId;
       _messages.clear();
+      _interviewMode = false;
     });
   }
 
@@ -224,6 +228,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     setState(() {
       _currentSessionId = sessionId;
       _messages.clear();
+      _interviewMode = false;
     });
     await _loadChatHistory();
   }
@@ -310,6 +315,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  /// Fresh chat in which JARVIS asks about the user and saves answers to
+  /// Profile/. Every write still goes through the normal approval prompt.
+  Future<void> _startInterview() async {
+    if (_isGenerating) return;
+    await _startNewChat();
+    if (!mounted) return;
+    setState(() => _interviewMode = true);
+    _textController.text = 'Start the interview.';
+    _sendMessage();
+  }
+
   void _sendMessage() async {
     final query = _textController.text.trim();
     if (query.isEmpty || _isGenerating) return;
@@ -390,6 +406,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           grantedTools: ref.read(toolPermissionProvider).granted,
           toolTranscript: transcript,
           cancelToken: _cancelToken,
+          mode: _interviewMode ? 'interview' : 'chat',
         )) {
           if (!mounted) return;
           final i = _messages.length - 1;
@@ -732,6 +749,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             const Text('JARVIS'),
             const SizedBox(width: 8),
             _buildStatusChip(theme),
+            if (_interviewMode) ...[
+              const SizedBox(width: 8),
+              const Chip(
+                label: Text('Interview'),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
           ],
         ),
         actions: [
@@ -755,8 +779,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             onSelected: (value) {
               if (value == 'delete') _deleteCurrentSession();
               if (value == 'status') _checkAiStatus();
+              if (value == 'interview') _startInterview();
             },
             itemBuilder: (_) => [
+              const PopupMenuItem(
+                  value: 'interview', child: Text('Interview me (build Profile)')),
               const PopupMenuItem(
                   value: 'delete', child: Text('Delete Session', style: TextStyle(color: Colors.red))),
               const PopupMenuItem(
