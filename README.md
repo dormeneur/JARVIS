@@ -15,6 +15,13 @@ The central nervous system. Built for speed and extensibility.
 - **Security**: JWT-based authentication. Stateless and scalable.
 - **Deployment**: Dockerized for instant spin-up.
 
+### 🖱️ Desktop Companion
+A Windows assistant that lives next to your cursor: hold a key and talk, and it sees your screen,
+answers out loud, points and draws on screen, and runs longer jobs in the background.
+- **Stack**: .NET 9, WinUI 3, Direct2D/DirectComposition overlays.
+- **Voice**: Whisper (speech-to-text) and Kokoro (text-to-speech), both on-device.
+- **Privacy**: anything from your vault is answered by the local brain only.
+
 ### 📱 Mobile Link (Synapse)
 The peripheral interface. Fast, reactive, and always available.
 - **Framework**: Flutter (Dart). Native performance on Android.

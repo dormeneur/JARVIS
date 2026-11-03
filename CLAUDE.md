@@ -5,13 +5,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 JARVIS: a self-hosted, offline-first personal knowledge OS. A plain-files vault folder (path set by
-`JARVIS_HOST_PATH` in `.env`) is the single source of truth; everything else is derived. Three parts:
-`server/` (jv-api, FastAPI), `brain/` (jv-brain, RAG pipeline), `mobile/` (Flutter Android app).
+`JARVIS_HOST_PATH` in `.env`) is the single source of truth; everything else is derived. Four parts:
+`server/` (jv-api, FastAPI), `brain/` (jv-brain, RAG pipeline), `mobile/` (Flutter Android app) and
+`desktop/` (the Windows cursor companion, .NET 9 / WinUI 3; its own guide is `desktop/CLAUDE.md`).
 Full architecture, phase status, and gotchas: `PROJECT_OVERVIEW.md`. Setup: `HOW_TO_RUN.md`.
+
+## The privacy split (applies to every part)
+
+- **Vault content never reaches a cloud model.** Anything answered from the vault (notes,
+  `Profile/`, memory, form answers) is answered by the local brain: jv-brain + Ollama.
+- The desktop app may use the owner's `claude` CLI for general screen help (pointing, drawing,
+  "how do I…"), but those turns carry no vault data. A request that needs the vault is routed to
+  the local brain instead; Private mode routes everything, screenshots included, locally.
+- The desktop app reaches the vault only through jv-api on `127.0.0.1:8000`, as a registered
+  device, so the `/Secrets` exclusion and auth apply to it like to any phone.
 
 ## Commands
 
 ```bash
+# Desktop (from desktop/; .NET SDK is per-user, see desktop/CLAUDE.md)
+dotnet build -p:Platform=x64
+dotnet test tests/Jarvis.Tests
+
 # Backend stack (api :8000 host-exposed; brain :8001, chromadb, ollama internal-only)
 docker compose up -d --build
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build  # NVIDIA GPU

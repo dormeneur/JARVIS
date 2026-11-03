@@ -64,6 +64,26 @@ jobs:
         run: python -m pytest -q
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Desktop companion (desktop/) unit tests: Core logic, no Windows UI needed
+  # ─────────────────────────────────────────────────────────────────────────
+  desktop-tests:
+    name: Desktop tests (.NET)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: desktop/global.json
+
+      - name: Run tests
+        run: dotnet test tests/Jarvis.Tests
+
+  # ─────────────────────────────────────────────────────────────────────────
   # jv-brain (brain/) Python tests
   # ─────────────────────────────────────────────────────────────────────────
   brain-tests:

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Jarvis.App.Settings.Pages.ShortcutsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:settings="using:Jarvis.App.Settings"
+    xmlns:vm="using:Jarvis.App.Settings.ViewModels">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel MaxWidth="760" Padding="{StaticResource PagePadding}" HorizontalAlignment="Left" Spacing="6">
+      <TextBlock Style="{StaticResource PageTitle}" Text="Shortcuts" />
+      <settings:SettingRow Description="Hold, ask about anything on your screen, let go." Header="Talk to Jarvis">
+        <ComboBox MinWidth="160" ItemsSource="{x:Bind ViewModel.Choices}" SelectedItem="{x:Bind ViewModel.Talk, Mode=TwoWay}" />
+      </settings:SettingRow>
+      <settings:SettingRow Description="Tap Ctrl twice, type your question, press Enter." Header="Type to Jarvis">
+        <TextBlock FontFamily="{StaticResource FontMono}" Text="Ctrl, Ctrl" />
+      </settings:SettingRow>
+      <settings:SettingRow Description="Hold and speak; release to type it where your cursor is." Header="Dictate">
+        <ComboBox MinWidth="160" ItemsSource="{x:Bind ViewModel.Choices}" SelectedItem="{x:Bind ViewModel.Dictate, Mode=TwoWay}" />
+      </settings:SettingRow>
+      <InfoBar
+          IsClosable="False"
+          IsOpen="{x:Bind ViewModel.Clash, Mode=OneWay}"
+          Message="Talk and Dictate need different keys. Nothing changes until they differ."
+          Severity="Warning" />
+      <settings:SettingRow Description="Tap the dictate keys twice and talk as long as you like; tap them once more to type it." Header="Dictate hands-free">
+        <TextBlock FontFamily="{StaticResource FontMono}">
+          <Run Text="{x:Bind ViewModel.Dictate, Mode=OneWay}" /><Run Text=", twice" />
+        </TextBlock>
+      </settings:SettingRow>
+      <settings:SettingRow Description="Stops Jarvis talking and clears anything it drew." Header="Stop">
+        <TextBlock FontFamily="{StaticResource FontMono}" Text="Esc" />
+      </settings:SettingRow>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -1,0 +1,157 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+The JARVIS desktop app: a Windows AI buddy that lives next to your cursor. It sees the screen, talks, points and draws, and can run background jobs. It runs on free engines: the user's own `claude` CLI for general screen help, Whisper for speech-to-text, Kokoro for text-to-speech. Anything that touches the user's vault stays on the PC (see the root `CLAUDE.md`). All paths below are relative to `desktop/`.
+
+## Commands
+
+The .NET 9 SDK is installed per-user, **not on PATH**. Prefix shell sessions with:
+```bash
+export PATH="$HOME/AppData/Local/Microsoft/dotnet:$PATH" DOTNET_ROOT="$(cygpath -m "$HOME")/AppData/Local/Microsoft/dotnet"
+```
+Run from `desktop/`:
+- Build everything: `dotnet build -p:Platform=x64`. The WinUI app needs the x64 platform. Warnings are errors.
+- All tests: `dotnet test tests/Jarvis.Tests`
+- One test: `dotnet test tests/Jarvis.Tests --filter "FullyQualifiedName~ShakeDetectorTests.VigorousShake_IsDetected"`
+- Run the app: `src/Jarvis.App/bin/x64/Debug/net9.0-windows10.0.22621.0/win-x64/Jarvis.exe`. It's self-contained and single-instance; a second launch focuses the first. It lives in the tray (Settings, Hide cursor, Quit; Debug builds add test items). Closing Settings only hides it. **Pause** (tray) keeps the process (a tray icon needs one) but hides the cursor and notch, ignores shortcuts and greys the icon; launching the exe again resumes it. **Quit** exits fully. Every launch makes sure `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Jarvis.lnk` points at the running exe (`StartMenuShortcut`), so Start search finds it.
+- VS Code: point C# Dev Kit at the solution and the per-user SDK in the (untracked) `.vscode/settings.json`: `"dotnet.defaultSolution": "desktop/Jarvis.sln"` plus `"dotnet.dotnetPath"`.
+- Visual debugging env vars: `JARVIS_OVERLAY_CAPTURABLE=1` lets screenshots see the overlay (it's normally excluded from capture). `JARVIS_DEMO` (Debug builds only) drives the app at startup:
+  - `thinking|point` drive the cursor; `draw` sketches every kind of mark on the primary display, plus two turning 3D figures.
+  - `notch` cycles every notch state; `notch:<idle|listening|thinking|speaking|response|working|result>` holds one (`result` has buttons).
+  - `listening` shows the cursor's listening meter driven by a fake voice.
+  - `pause` pauses at startup (launch the exe again to resume).
+  - `compose` opens the notch's text box 6 s after the engines are ready, as double-tapping Ctrl does (the hook ignores synthetic keys, so it can't be triggered with SendInput).
+  - `ask:<question>` runs a full typed turn (screenshot, Claude, speech, pointing) without the mic.
+  - `dictate:<transcript>` cleans up and types (then watches for a correction, as a real dictation does) the transcript into whatever has focus 6 s after the engines are ready. Open Notepad in that window; the clipboard should come back unchanged.
+  - `agent:<brief>` starts a background job directly (it skips the voice brain).
+  - `selftest` makes Kokoro speak a sentence and Whisper transcribe it back, then records 1.5 s from the mic and logs the level.
+- Models download on first run to `%LOCALAPPDATA%\Jarvis\models` (Whisper base 141 MB, Kokoro 310 MB; about 4 min at ~1.3 MB/s). The notch shows the working light meanwhile.
+- Logs go to the Windows Application event log (source ".NET Runtime"). Cursor phase changes log at Debug: set `Logging__EventLog__LogLevel__Default=Debug`.
+
+## Design notes (local only)
+- The look-and-feel spec (`DESIGN-FACTS.md`, cited in code comments as "DESIGN-FACTS.md §n"), the architecture and tech-stack notes and the research notes live **outside this repo**, on the owner's machine, and are never committed. Every spring, size, timing, colour and threshold comes from that spec; don't invent values. If it isn't available, keep the existing constants.
+
+## Architecture in brief
+- `Jarvis.Contracts`: interfaces and records only, with no dependencies. AI engines sit behind `ISpeechToText`, `ITextToSpeech` and `IAssistantBrain`. All audio is PCM16 LE described by `AudioFormat`.
+- `Jarvis.Core/Companion`: the voice loop. `CompanionSession` covers hold, record, transcribe, capture, brain, then speak each sentence while the next is written, and point. It is thread-safe, a new press interrupts the current turn, and `Ask(text)` gives a typed turn. `ReplyParser` streams sentences and `[POINT:x,y:label:screenN]` tags out of the reply. `CompanionPrompt` owns that protocol, so brains stay interchangeable (they only stream text). `Compose()` (double-tap Ctrl) shows `NotchState.Composing(Submit: Ask, Dismiss: Cancel)`.
+- `Jarvis.Core/Dictation`: hold Ctrl+Win. `DictationSession` remembers the focused field at press, records, transcribes, cleans up and inserts; the dictated text itself is never logged. `DictationCleaner` makes the clean-up model fix punctuation and filler without ever answering the dictation, and falls back to the raw transcript if the output is empty or suspiciously long.
+  - Word learning: after a verified insert, `DictationSession` re-reads the field every 1 s for 20 s. Once an edit has settled, `CorrectionDetector` checks whether exactly one dictated word was swapped for one that has a capital or a digit (names, brands, acronyms; "sdk"→"SDK" counts). If so, the word goes to `IVocabularyStore`, implemented by `SettingsVocabularyStore` as `Dictation:Words` (max 50, oldest dropped), and the notch says "Learned …". These words feed Whisper's prompt and clean-up. Line endings are normalised because Notepad reports `
+`. `Input/ChordDetector` covers the hold chords (any other key spoils one; Escape cancels) and the double-tap Ctrl (`Chord.Compose`: tap ≤ 400 ms, second press ≤ 500 ms after the first release, nothing else between), timed by the hook's event timestamps. Double-tapping Ctrl+Win (second press ≤ 400 ms after the first tap ends) swallows the second release, so dictation keeps recording hands-free; the next chord press of any kind emits `Dictate Released` instead of starting anything, and Escape cancels.
+- `Jarvis.Core/Drawing` (screen drawing):
+  - Claude writes a `[DRAW:screenN]…[/DRAW]` block, first in its reply, so it draws while it talks. Lines use `ring|box|arrow|num|note` with screenshot coordinates. `ReplyParser` holds the block back until it closes and never speaks it.
+  - `DrawingScript` parses it, skipping bad lines.
+  - `SceneBuilder` maps the marks onto the desktop and schedules the pen-reveal. `Sketch` makes wobbly hand-drawn paths from a seeded random. A label pill lifts above any numbered badge that would cover it.
+  - `StrokeOutline` builds a tapered, pressure-sensitive ink polygon. Pressure must never be NaN (sin(π) < 0 in float), or Direct2D silently drops the whole shape. There's a regression test.
+- `Jarvis.Core/Agents` (background jobs):
+  - For bigger asks the brain writes `[AGENT]brief[/AGENT]` plus a short "on it". The prompt says the brief must not dictate file locations.
+  - `AgentJobManager` (`IAgentJobs`) gives each job a folder `jobs/<stamp>-<slug>/` containing `brief.md`, `output/`, `tmp/` and `result.md`. It runs at most 3 at once and can cancel them. When a job finishes it moves stray files from the folder root into `output/`.
+  - `AgentInstructions` is the agent's system prompt.
+  - `AgentAnnouncer` puts the result in the notch and speaks its first sentence, with Markdown stripped.
+  - `AmbientNotch` is the `INotchPresenter` everyone injects: it decorates `NotchPresenter` and turns "idle" into the working sliver while any job is queued or running.
+  - Job events are never spoken mid-turn except on completion; the tray lists the last 5 jobs (Stop / Open). A finished or failed job's notch result has Open / Dismiss buttons.
+  - Routines (`Routines.cs`): `[ROUTINE:schedule]brief[/ROUTINE]` from the brain, or Settings → Routines. Schedules are `daily HH:MM`, `weekdays HH:MM`, `<day> HH:MM` and `every N hours|minutes` (at least 15 minutes). `RoutineScheduler.Tick` (every 30 s via `RoutineTimer`) starts due ones as normal jobs, at most one catch-up run after sleep, and nothing while paused. `SettingsRoutineStore` keeps `Routines:Items` and reads it back with System.Text.Json, because the configuration binder can't rebuild records whose `LastRun` is null.
+  - Connectors (`Connectors.cs`): remote MCP servers (https, or http on loopback) that jobs may use. Each has a `ConnectorAuth`: None, ApiKey or SignIn. `SettingsConnectorStore` keeps `Connectors:Items`; API keys go to Windows Credential Manager (`Platform/Shell/CredentialVault`, target `Jarvis/connector/<name>`), and sign-in tokens to a DPAPI file (`Platform/Shell/ProtectedFile`, `connectors/<name>.token`), because tokens outgrow Credential Manager's 2.5 KB. `McpOAuth` signs in per the MCP authorization spec: it discovers the authorization server (the 401's `resource_metadata`, then the well-known URLs, falling back to the server's origin), registers Jarvis with dynamic client registration (public client), runs PKCE with a loopback `HttpListener` callback in the default browser, and refreshes tokens a minute before they expire (`TokenAsync`, called when each job starts). `McpOAuthTests` runs the whole flow against a fake server; discovery and registration were also checked against Linear's real server. `ClaudeCliAgentRuntime` passes `--mcp-config` JSON whose headers say `Bearer ${JARVIS_MCP_KEY_n}` and sets that variable only on the job's process (Claude Code expands it; verified), and it adds `mcp__<name>` to `--allowedTools`. Settings → Connectors has Test (a real MCP `initialize`) and, for sign-in connectors, Sign in again.
+- Privacy (`Companion/ScreenPrivacy`, Settings → Privacy & memory):
+  - Jarvis captures the screen only inside a turn, and never when `Privacy:ScreenAccess` is off. In that case the request gets `CompanionPrompt.ScreenOff` and the turn has no images.
+  - Each capture is appended to `%LOCALAPPDATA%\Jarvis\screen-looks.log` (time, displays, reason; never the request).
+  - `NotchState.Thinking(Caption)` shows "Looking at your screen" when `ShowWhenLooking` is on, and the tray tooltip shows the last look.
+- Memory:
+  - `Memory:UnloadVoiceAfterMinutes` (0 = keep loaded). `Providers/IdleEngines` wraps the selected STT/TTS (`TrackedSpeechToText`/`TrackedTextToSpeech`, via `AddSelectedProvider`'s `decorate`), counts work in flight, and calls `IUnloadable.Unload` on Whisper/Kokoro once they've been idle that long. They reload on next use.
+  - Conversation memory is `Brain:ClaudeCli:FreshConversationAfter` (restart to apply); `IAssistantBrain.ForgetConversation` makes the next turn fresh.
+- Companion extras:
+  - `ChildProcessJob` (ClaudeCli) puts every `claude` process in a kill-on-close job object, so they die with Jarvis even on a crash or Task Manager kill.
+  - Fullscreen guard (`Platform/Shell/Fullscreen`, `Cursor:HideInFullscreen`): the foreground window covering its whole monitor, or Windows' D3D-fullscreen/presentation state, hides the idle cursor and the resting notch. Don't use `QUNS_BUSY`: it fires for ordinary windows too.
+  - `Privacy:ShowInRecordings` (read at start-up into `WindowChrome.ShowInRecordings`) turns capture exclusion off.
+  - `Agents:SpeakResults` and an agent rule never to delete, send, post, buy or spend unless the brief says so.
+  - Highlighter (`Gestures/Highlighter`, `Overlay/HighlightRenderer`, `Cursor:Highlighter`): while listening, the mouse leaves a translucent trail (spec: starts after 8 DIPs of movement, points 1.5 apart, width 8, alpha 0.55, 1 s fade; resting 0.35 s within 12 DIPs = a point). The overlay keeps the result, `ICursorOverlay.TakeHighlight()` hands it to the turn once, and `CompanionPrompt.DescribeHighlight` tells the brain the area in screenshot pixels (the trail is capture-excluded, so it's never in the image).
+  - Notch chat: `ConversationLog` (in memory, last 20, cleared by Forget) feeds `NotchState.Composing(History)`, which the presenter shows above the text box, sized to its content.
+  - Let Jarvis drive (`Privacy:LetJarvisDrive`, off by default, needs screen access):
+    - When it's on, the request gets `CompanionPrompt.DriveOn` and the brain may add `[DO:click|doubleclick|rightclick|scrollup|scrolldown x,y:label:screenN]`, `[DO:type:text]` and `[DO:key:ctrl+s]`. They're parsed as `ReplyItem.Act` and capped at 8.
+    - `CompanionSession.DriveAsync` runs them after the answer is spoken, one at a time. For each, the cursor flies to the target and the notch shows `DriveDescription.Of(step)` with Do it / Stop. Nothing is pre-approvable; Stop, Escape, a new turn or 1 minute without an answer ends it.
+    - `Platform/Input/ComputerControl` does it with SendInput (`KEYEVENTF_UNICODE` for typing), and gives focus back to the last non-Jarvis window before typing.
+    - Tasks span rounds: a reply ending in `[MORE]` (`ReplyItem.More`) gets a fresh screenshot after its steps, plus `CompanionPrompt.ContinueTask`, for up to 10 rounds (`DriveTaskAsync`/`RunStepsAsync`).
+    - `Privacy:AskEveryStep`: true (default) asks Do it / Stop per step. False asks "Take control" once, then runs on its own with `IComputerControl.WatchForUser` armed: the mouse moving more than 6 px from where Jarvis put it (polled every 50 ms; `Place` updates the expected spot) or any real key (`ShortcutHook.UserKeyDown`, injected keys excluded) cancels at once.
+    - `ICursorOverlay.ShowControlBorder` shows `Overlay/ControlBorderRenderer` for the whole task: 4 strips per display, 22 DIPs, the accent palette flowing clockwise, a 300 ms fade, repainting only the edges.
+    - The `chat:<question>` demo asks, then opens the text box.
+  - Browser link:
+    - `jarvis/browser-extension/` is an MV3 extension (tabs, scripting, alarms; no debugger permission) that is copied next to the exe and loaded unpacked.
+    - It connects to `Platform/Browser/BrowserLinkServer` (`IBrowserLink`), a WebSocket on `127.0.0.1:47613/jarvis`. A handshake is accepted only when Origin is `chrome-extension://<id>` and the id is in `Browser:AllowedExtensions`. Web pages can't set that Origin; unknown ids raise `ApprovalWanted` (Settings → Browser shows Allow) and get a 403.
+    - Requests are `page` (url, title, selection, innerText ≤ 12k) and `open`.
+    - When a browser is the foreground app and `Browser:ReadPage` is on, the turn adds `CompanionPrompt.DescribePage` and logs a "browser page" look.
+    - `[DO:open:url]` is a drive step: through the extension, or the default browser without it.
+  - Cursor bubble (`Overlay/BubbleRenderer`, spec sizes): `PointAt(x, y, label)` shows the POINT label, or one of our own phrases in turn, once the cursor reaches `Pointing`.
+  - 3D figures (`Drawing/Figure3D`): inside a DRAW block, `figure x y size "title"` starts a figure and the lines after it add solids in its own -1..1 space (y up, z toward the viewer): `block`, `ball`, `cylinder`, `cone` and `rod` (between two points), each with an optional colour name or `#rrggbb` before the label. `SceneBuilder` puts them in `ScreenDrawing.Figures` (max 3 figures, 16 parts). `Figure3D.Project` does the whole 3D pipeline in Core: meshes (24 segments), grow-in (0.6 s), a 14 s turn under a 0.4 rad tilt, perspective, back-face culling, Lambert shading from the upper left and a back-to-front sort; `DrawingRenderer` only fills the polygons (each also outlined in its own colour so no seams show) and paints the moving labels. A drawing with a figure repaints every frame while shown (its dirty rect only).
+  - Proactive (`Core/Proactive`, Settings → Proactive): `ProactiveCoach.TickAsync` runs every 30 s (`ProactiveTimer`). It does nothing while paused, in fullscreen, or unless `INotchPresenter.Current` is idle (`AmbientNotch` reports the requested state).
+    - Meeting heads-up `Proactive:MeetingHeadsUpMinutes` (5) before each meeting, once, with Join when the invite has a Meet/Zoom/Teams/Webex link.
+    - Morning brief (`MorningBrief`, from `MorningFrom` until noon, only while the user is active, i.e. input within 2 min): "Good morning" plus today's meetings; the day is stored in `morning.txt` so restarts don't repeat it.
+    - Meetings come from `Proactive:CalendarAddress`, a private iCal URL (https or webcal) read by `CalendarFeed` every 15 min (last good copy kept). `IcsCalendar` handles TZID, all-day (skipped), cancelled, EXDATE, RECURRENCE-ID overrides, and DAILY/WEEKLY(BYDAY)/MONTHLY rules with INTERVAL/COUNT/UNTIL in the event's wall clock; other rules are ignored.
+    - Suggestions (`Proactive:Suggestions`, **off by default**): `ActivityWatch` (Platform) samples the foreground app and title each tick (never Jarvis or private browser windows; kept in memory for an hour). At most every `SuggestEveryMinutes` (≥ 15), after 10+ samples, a fresh tool-less `ClaudeCliBrain` (disposed after) gets `SuggestInstructions` and replies `SUGGEST: offer | brief` or `NONE`. The offer shows with Do it (starts an agent job) / Not now; recent offers are passed back so they aren't repeated. Each request is a privacy-log entry with 0 displays (shown as "no screenshot").
+    - Everything is said through `AgentAnnouncer.SayAsync`, spoken when `Proactive:Speak`, and it only returns the notch to idle if nothing else took it meanwhile.
+- Recordings stop by themselves after `MaxRecording` (120 s, DESIGN-FACTS §4) in both `CompanionSession` and `DictationSession`, so hands-free dictation or click-to-talk can't leave the mic open; the turn then runs as if released.
+- Cursor extras: while the mic is open the cursor becomes `ListeningBars` (5 bars driven by `AudioLevel` of each mic chunk via `ICursorOverlay.ShowLevel`; it rises at once and falls with a 0.15 s time constant). After a shake, `Overlay/ClickCatcher` (a 44-DIP, alpha-1 layered window; zero alpha would not take clicks) sits on the parked cursor: a click raises `ICursorOverlay.Clicked`, and `CompanionSession` starts listening, with a second click finishing. A clicked cursor stays parked while listening, then 5 s; an unclicked one for 3 s.
+- `Sound/SoundEffects` (`ISoundEffects`): our own synthesised earcons (sine plus overtones, 48 kHz) at the reference volumes, for:
+  - the composer opening, sending and closing;
+  - a typed answer starting (`AnswerReady`);
+  - jobs starting, finishing and failing;
+  - a seeded band-passed-noise pen scratch while drawing (`Drawing`).
+  Each has 3 variants (pitch ±3% / different seeds), played in turn. `Sounds:Enabled` and `Sounds:DrawingSounds` toggle them (General page).
+- `PauseSwitch` (Core): the paused flag. `ShortcutHook` drops signals, `OverlayService` hides the cursor, and `NotchPresenter` hides its window while it's set.
+- `Jarvis.Core`: pure, unit-tested logic (`net9.0`, no Windows APIs): `Motion` (closed-form `Spring`, `Springs` presets, `SpringPoint`, `FlightPath`), `Gestures` (`ShakeDetector`), `Cursor` (`CursorCompanion`, the per-frame state machine Following/Flying/Pointing/Detached; `ThinkingDots`; `CursorOptions`) and `Providers` (keyed-DI engine selection).
+- `Jarvis.Platform` (x64 only; CsWin32 P/Invoke listed in `NativeMethods.txt`, Vortice for DirectX):
+  - `Overlay/`: one click-through, capture-excluded `OverlayWindow` per monitor.
+    - `OverlayGraphics` owns the shared D3D11, D2D, DirectWrite and DirectComposition devices.
+    - `CursorRenderer` draws into a small surface and moves it by visual offset, repainting only when the `Appearance` changes.
+    - `DrawingRenderer` uses one display-sized surface and repaints only while the pen moves or the drawing fades, so a finished drawing costs nothing. The **first** `BeginDraw` on a new surface must cover all of it (DComp rejects a partial first update); after that only the dirty rectangle is repainted. Drawings clear on the next press or Escape, or 30 s after they finish.
+    - `OverlayService` implements `ICursorOverlay` + `IScreenDrawing` and is a hosted service. It runs the frame loop on its own thread, and other threads enqueue commands. A failing drawing is logged and dropped without killing the loop. Overlay windows are raised back above other topmost windows (the taskbar) whenever something is shown.
+    - `FramePacer` waits on vsync with a high-resolution timer fallback (DwmFlush spins when the screen is idle).
+  - `Shell/TrayIcon`: the notification-area icon and menu. The icon is the exe's own (resource 32512 from `ApplicationIcon`, loaded with `LoadImage` at the DPI's small-icon size; `LoadIconMetric` needs a Common Controls v6 manifest we don't have). It's `jarvis/assets/jarvis.ico`, drawn by `assets/make-icon.py` (Pillow): an arrowhead pointer in the cursor's blue. WinUI windows don't inherit the exe icon, so Settings sets it from the copied `jarvis.ico`.
+  - `Input/ShortcutHook`: routes Talk to `CompanionSession` and Dictate to `DictationSession`. On a Dictate press it injects VK 0xFF so releasing Win doesn't open Start. It is a `WH_KEYBOARD_LL` hook on its own message-loop thread. It observes keys and never swallows them, ignores injected input (so it can't be tested with SendInput), and dispatches signals in order. Each dispatch is isolated (a failing action is logged, not fatal to later shortcuts), and the hook re-installs itself every 15 s (new before old), because Windows silently drops a low-level hook whose callback was ever too slow.
+  - `Audio/`: `WasapiMicrophone` converts any device to the engine's PCM16 format; `WasapiAudioPlayer` converts to the device's mix format. Both use NAudio, **pinned to 2.2.1** because 3.x changed its API.
+  - `Text/UiaTextInsertion` + `Text/Clipboard`:
+    1. UI Automation captures the focused field and its text (password fields are never read), within a 600 ms budget.
+    2. It waits for the chord's modifiers to come up.
+    3. It saves the clipboard, sets the text (CRLF, excluded from Win+V history), sends Ctrl+V, then re-reads the field to confirm the text landed.
+    4. It restores the clipboard after 0.8 s, but only if nothing else was copied meanwhile.
+    - If focus moved or the text didn't land, it leaves the text on the clipboard and the notch says "press Ctrl+V".
+  - `Capture/GdiScreenCapture`: BitBlt per display, then a WinRT JPEG encode (longest edge 1280, quality 0.8). The mouse's display comes first. Capture-excluded windows (ours) are left out by the OS.
+  - `Shell/WindowChrome`: turns any window into a floating surface. It sets popup style, layered + transparent + no-activate + tool-window, a DWM glass frame, no rounding or border, capture exclusion, and a subclass that returns 0 for `WM_NCCALCSIZE`, paints black on `WM_ERASEBKGND` and refuses activation. **Call it after `AppWindow.Show`**, which re-applies frame styles. Also `RaiseToTop` and `EnsureSystemDispatcherQueue`.
+- `Jarvis.App/Notch`: the top-centre panel. `NotchWindow` is a transparent WinUI window (`TransparentBackdrop`) sized to the largest envelope, 820×288 DIP. `NotchSurface` builds the shape, concave shoulders (Win2D path), corner glow and working sweep as composition visuals driven by expressions over one property set, which is spring-animated on the compositor thread. `NotchPresenter` implements `INotchPresenter`, maps `NotchState` to `NotchLayout`/`NotchAccent` (Core) and owns the response text.
+  - Performance rule: WinUI's compositor runs in-process, so any forever-animation costs CPU every frame. Loops (glow orbit and pulse, sweep) run only while their effect is visible; a response's glow is static.
+  - Buttons: `NotchState.Response(Text, Actions)` shows 24-DIP pills; a click runs the action and closes the panel. While buttons show, `NotchWindow.SetClickablePanel` drops `WS_EX_TRANSPARENT` and sets a window region of just the panel, so only the panel takes clicks (without focus).
+  - The notch is otherwise click-through, except while composing: `NotchWindow.BeginTyping` drops `WS_EX_TRANSPARENT`/`NOACTIVATE` and takes focus (`WindowChrome.Activate` sends an empty mouse input first, or Windows refuses a background app); `EndTyping` restores both and hands focus back to the previous app before the turn starts. While composing, the whole 820-DIP envelope takes clicks. Enter submits, Escape or clicking away dismisses.
+- `Jarvis.Providers.*` each implement one contract:
+  - `ClaudeCli`: a warm `claude -p` stream-json process. There are two instances: the main brain (sonnet) and dictation clean-up (`Dictation:CleanupModel`, haiku, keyed `dictation-cleanup`). The clean-up instance uses `FreshConversationAfter = 0`, meaning one turn per process, with the next process started right after each turn so it is always warm. It is isolated from the user's Claude Code setup with `--setting-sources ""`, `--strict-mcp-config`, `--tools ""` and an empty working directory. `--bare` is off-limits because it disables the Pro OAuth login. It is restarted after a cancelled turn or 10 idle minutes.
+  - `ClaudeCliAgentRuntime` (`IAgentRuntime`): one `claude -p` per job, run in its folder.
+    - Tools are **limited** with `--tools Read,Write,Edit,Glob,Grep,WebSearch,WebFetch` (anything unlisted doesn't exist), pre-approved via `--allowedTools`, with `--permission-mode acceptEdits`. There is no Bash, so jobs can't run programs.
+    - The brief goes in on stdin; the stream-json `assistant`/`result` lines are parsed by `ClaudeProtocol.ParseAgent`.
+    - The model is `Agents:Model`.
+  - `Whisper`: buffers a press, then transcribes it in one pass.
+  - `Kokoro`: renders one sentence at a time via `KokoroModel.Infer` (24 kHz); voices ship in the package.
+- `Jarvis.App/Settings`: the Settings window.
+  - The pages are General, Privacy & memory, Voice, Microphone, Dictation, Shortcuts, Cursor, Agents, Routines and Connectors. Each is a `UserControl` with its own view model (MVVM Toolkit partial properties), created fresh through DI (`ActivatorUtilities`) whenever it's shown.
+  - The rows use the shared `SettingRow` control (styled in `Design/Controls.xaml`).
+  - All writes go through `SettingsStore` → `SettingsFile.Set`, which turns a `Section:Sub` key into nested JSON.
+  - View models load current values in the constructor behind a `_ready` guard, so opening a page never writes anything. Read them through `IOptionsMonitor.CurrentValue`: `IOptions` is a start-up snapshot and would show stale values when a page is reopened. Restart-only settings compare the two to decide whether to show the restart bar.
+  - When Windows' "Let desktop apps access your microphone" is off, WASAPI `Initialize` fails with E_ACCESSDENIED. `WasapiMicrophone` turns that into `MicrophoneBlockedException`; both sessions show a notch message with an "Open Windows settings" button (`ms-settings:privacy-microphone`), and the Microphone page warns via `WasapiMicrophone.BlockedByWindows()` (ConsentStore registry). Never flip that switch for the user.
+  - Microphone: `Microphone:DeviceId` (empty = Windows default; an unplugged choice falls back to the default). Shortcuts: `Shortcuts:Talk`/`Dictate` are modifier pairs from `ShortcutOptions.HoldChoices`, applied live via `ChordDetector.UseChords`, and saved only when they differ. Double-tap Ctrl and Esc are fixed.
+  - Settings read once at start-up (brain model, agents model, concurrency) show "applies after restart" with a Restart button (`AppInstance.Restart`). Everything else applies live through `IOptionsMonitor`.
+  - Launch at login is the HKCU `Run` key, with `--background` so a sign-in launch stays in the tray without opening Settings. `GeneralViewModel.RefreshLoginCommand` updates older entries at startup.
+  - New pages follow the same shape: a `PageTitle`, then `SettingRow` cards, then `GroupTitle` headings between groups.
+- `Jarvis.App`: WinUI 3, unpackaged and self-contained. `Program.Main` enforces a single instance; `Hosting/AppHost` is the only composition root. Settings live in `%LOCALAPPDATA%\Jarvis\settings.json`, and the `Providers` section selects engines.
+- To add an engine (e.g. paid Deepgram): implement the contract in a new `Jarvis.Providers.*` project, register it with `AddKeyedSingleton<ISpeechToText, X>("deepgram")`, and select it in settings. Consumers never change.
+- Done: every phase in ARCHITECTURE.md §6 (1–6, including drawing and background agents), and the whole post-phase backlog.
+
+## Conventions
+- Central package versions live in `jarvis/Directory.Packages.props`. Never put versions in csproj files.
+- Private fields use `_camelCase`; constants and static readonly fields use PascalCase (enforced by `.editorconfig` in the build).
+- Inject `TimeProvider` and pass timestamps in; Core never reads the clock or randomness directly.
+- Window sizes are in DIPs. Use `WindowSizing.ResizeDips`, because `AppWindow.Resize` takes physical pixels. Overlay and cursor positions are physical pixels on the virtual desktop; distances inside Core are DIPs × display scale.
+- Settings writes go through `SettingsFile.Set` (atomic). The config file is watched, so `IOptionsMonitor` consumers update live.
+
+## Ground rules
+- This repo is public. Never commit research material about other products (dumps, their prompts, assets, sounds, fonts, videos), personal data, tokens or keys.
+- Use the official `claude` CLI as a subprocess (stream-json). Never extract or reuse its OAuth tokens.
+- Vault content (notes, Profile, memory) never goes to Claude: it is answered by the local brain only (root `CLAUDE.md`).

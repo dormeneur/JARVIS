@@ -47,6 +47,7 @@ Host machine (Windows or Mac)
 | `server/` | jv-api — FastAPI: auth, file CRUD, sync, AI proxy. Tests in `server/tests/`. |
 | `brain/` | jv-brain — RAG pipeline: loader → chunker → embedder → ChromaDB → retriever → Ollama. Tests in `brain/tests/`. |
 | `mobile/` | Flutter app (Riverpod + Drift + Dio). Features: explorer, editor, viewer, sync, chat, secrets, auth, settings. |
+| `desktop/` | Windows cursor companion (.NET 9, WinUI 3): talks, sees the screen, points, draws, runs background jobs. Vault questions go to the local brain via jv-api; guide in `desktop/CLAUDE.md`. |
 | `docker-compose.yml`, `.env` | The whole backend stack. `.env` from `.env.template` (never committed). |
 | `DOCUMENTATION/OFFICIAL-DOCS/` | Design specs 01–11 + `walkthrough.md` (historical Phase 3 handover). |
 | `DOCUMENTATION/AI-AGENT-DOCS/` | Context docs for AI coding agents + debugging postmortems. `5-version-control.md` = **the sync bible**. |

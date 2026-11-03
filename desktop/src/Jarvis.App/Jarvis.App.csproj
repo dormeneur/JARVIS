@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>Jarvis.App</RootNamespace>
+    <!-- CommunityToolkit.Mvvm partial-property generators need preview language features. -->
+    <LangVersion>preview</LangVersion>
+    <AssemblyName>Jarvis</AssemblyName>
+    <!-- Explorer, Task Manager, taskbar and the Start menu shortcut. -->
+    <ApplicationIcon>../../assets/jarvis.ico</ApplicationIcon>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <WindowsPackageType>None</WindowsPackageType>
+    <!-- Ship our own .NET and Windows App SDK runtimes, like the reference app: nothing to install. -->
+    <SelfContained>true</SelfContained>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Program.cs owns Main so it can enforce a single instance before XAML starts. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Window and tray icons (WinUI windows don't take the exe's icon; the tray swaps to grey while paused). -->
+    <Content Include="../../assets/jarvis.ico" Link="jarvis.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../assets/jarvis-paused.ico" Link="jarvis-paused.ico" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The Jarvis Browser Link extension, loaded unpacked from next to the exe (Settings → Browser). -->
+    <Content Include="../../browser-extension/**" LinkBase="browser-extension" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Jarvis.Platform\Jarvis.Platform.csproj" />
+    <ProjectReference Include="..\Jarvis.Providers.ClaudeCli\Jarvis.Providers.ClaudeCli.csproj" />
+    <ProjectReference Include="..\Jarvis.Providers.Kokoro\Jarvis.Providers.Kokoro.csproj" />
+    <ProjectReference Include="..\Jarvis.Providers.Whisper\Jarvis.Providers.Whisper.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+</Project>

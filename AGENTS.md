@@ -6,7 +6,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 JARVIS: a self-hosted, offline-first personal knowledge OS. A plain-files vault folder (path set by
 `JARVIS_HOST_PATH` in `.env`) is the single source of truth; everything else is derived. Three parts:
-`server/` (jv-api, FastAPI), `brain/` (jv-brain, RAG pipeline), `mobile/` (Flutter Android app).
+`server/` (jv-api, FastAPI), `brain/` (jv-brain, RAG pipeline), `mobile/` (Flutter Android app),
+`desktop/` (Windows cursor companion, .NET 9 / WinUI 3; see `desktop/CLAUDE.md`). Vault content
+never reaches a cloud model: anything from the vault is answered by jv-brain + Ollama.
 Full architecture, phase status, and gotchas: `PROJECT_OVERVIEW.md`. Setup: `HOW_TO_RUN.md`.
 
 ## Commands
