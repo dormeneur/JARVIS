@@ -1,4 +1,5 @@
-# Optional override: NVIDIA GPU acceleration for Ollama (Windows/Linux).
+# Optional override: NVIDIA GPU acceleration for the Docker Ollama (only with --profile docker-ollama;
+# a host-installed Ollama uses the GPU by itself).
 # Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 services:
   ollama:

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/auth/presentation/setup_screen.dart';
-import 'package:jarvis_mobile/features/explorer/presentation/explorer_screen.dart';
+import 'package:jarvis_mobile/features/home/presentation/home_screen.dart';
 import 'package:jarvis_mobile/features/settings/presentation/app_lock.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_provider.dart';
 
@@ -115,7 +115,7 @@ class _JarvisAppState extends ConsumerState<JarvisApp> with WidgetsBindingObserv
       case AuthStatus.unauthenticated:
         return const SetupScreen();
       case AuthStatus.authenticated:
-        return const ExplorerScreen();
+        return const HomeScreen();
     }
   }
 }

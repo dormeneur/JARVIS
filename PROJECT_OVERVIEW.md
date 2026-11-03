@@ -28,7 +28,7 @@ Host machine (Windows or Mac)
 │     ├── jv-api      FastAPI, port 8000  ← ONLY host-exposed service
 │     ├── jv-brain    FastAPI, port 8001  ← RAG engine (internal only)
 │     ├── jv-chromadb ChromaDB 0.5.23     ← vector store (internal only)
-│     └── jv-ollama   Ollama, port 11434  ← LLM runtime (internal only)
+│     (Ollama runs on the host, port 11434, reached as host.docker.internal)
 │           ├── llama3:8b            ← answer generation
 │           └── nomic-embed-text     ← 768-dim embeddings
 ├── B:\JARVIS (vault folder)               ← bind-mounted as /data/JARVIS
@@ -37,7 +37,7 @@ Host machine (Windows or Mac)
 ```
 
 - The phone talks **only to jv-api** (JWT auth). jv-api proxies AI calls to jv-brain.
-- jv-brain talks to jv-ollama (`http://ollama:11434`) and ChromaDB, all inside the Docker network.
+- jv-brain talks to the host's Ollama (`http://host.docker.internal:11434`) and to ChromaDB inside the Docker network.
 - Everything AI streams as **NDJSON** through the chain: Ollama → brain → api → mobile.
 
 ## 3. Repo layout
@@ -107,8 +107,9 @@ shipped, and a guest-privilege audit closed several holes (see TODO.md §0).
 
 ## 7. MUST-KNOW gotchas (hard-won, respect them)
 
-1. **Ollama runs in Docker** (jv-ollama). Model weights live in the `jarvis-ollama-models` volume —
-   after `docker exec jv-ollama ollama pull llama3` / `nomic-embed-text` once, they persist across
+1. **Ollama runs on the host**, not in Docker (since 2026-11-03: one copy of the models, GPU without
+   extra setup). Pull models with `ollama pull …`. The old jv-ollama container is an opt-in profile
+   (`--profile docker-ollama`); its weights would live in the `jarvis-ollama-models` volume and persist across
    restarts. Deleting the volume means re-downloading ~5 GB. On Windows with an NVIDIA GPU, start
    with the extra `docker-compose.gpu.yml` override for GPU inference; on Mac it runs CPU-only.
 2. **ChromaDB image has no curl/wget** — you cannot healthcheck it with CMD curl; compose uses
@@ -134,7 +135,7 @@ shipped, and a guest-privilege audit closed several holes (see TODO.md §0).
 | Layer | Tech |
 |---|---|
 | Backend | Python 3.12/3.13, FastAPI, Pydantic v2, httpx, uvicorn |
-| AI | Ollama (llama3:8b + nomic-embed-text), ChromaDB 0.5.23, tiktoken, PyMuPDF |
+| AI | Ollama on the host (qwen3 + nomic-embed-text), ChromaDB 0.5.23, tiktoken, PyMuPDF |
 | Mobile | Flutter 3.38 / Dart ^3.10, Riverpod, Drift (SQLite), Dio, flutter_secure_storage, pointycastle |
 | Infra | Docker Compose, Tailscale, JWT (HS256), AES-256-GCM + PBKDF2 |
 

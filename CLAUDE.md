@@ -27,9 +27,9 @@ Full architecture, phase status, and gotchas: `PROJECT_OVERVIEW.md`. Setup: `HOW
 dotnet build -p:Platform=x64
 dotnet test tests/Jarvis.Tests
 
-# Backend stack (api :8000 host-exposed; brain :8001, chromadb, ollama internal-only)
+# Backend stack (api :8000 host-exposed; brain :8001 and chromadb internal-only).
+# Ollama runs on the host (ollama.com install), reached as host.docker.internal:11434.
 docker compose up -d --build
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build  # NVIDIA GPU
 
 # Python tests (run from server/ or brain/ — tests import `app.*`)
 cd server && python -m pytest tests/                       # all
@@ -46,7 +46,7 @@ flutter run
 
 ## Architecture facts that span files
 
-- **Request path:** mobile → jv-api (JWT auth) → jv-brain → jv-ollama/ChromaDB. Mobile never talks
+- **Request path:** mobile → jv-api (JWT auth) → jv-brain → host Ollama/ChromaDB. Mobile never talks
   to brain directly; every brain route gets a `/ask/*` proxy in `server/app/routers/ask.py`.
 - **Streaming is NDJSON at every hop** (ollama → brain → api → mobile). On the Flutter side a TCP
   chunk may hold a partial JSON line — buffer to newline.

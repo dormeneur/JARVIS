@@ -9,6 +9,7 @@ import 'package:jarvis_mobile/features/settings/presentation/settings_provider.d
 import 'package:jarvis_mobile/features/settings/presentation/device_management_screen.dart';
 import 'package:jarvis_mobile/features/settings/presentation/app_lock.dart';
 import 'package:jarvis_mobile/features/chat/presentation/tool_permission_provider.dart';
+import 'package:jarvis_mobile/features/voice/voice_service.dart';
 
 /// Settings screen — shows device info, server URL, and logout.
 class SettingsScreen extends ConsumerWidget {
@@ -95,6 +96,13 @@ class SettingsScreen extends ConsumerWidget {
             onChanged: (value) {
               ref.read(autoArchiveProvider.notifier).toggle(value);
             },
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.record_voice_over_outlined),
+            title: const Text('Read Spoken Answers Aloud'),
+            subtitle: const Text("When you ask by voice, JARVIS answers in the phone's own voice. Speech never leaves the phone."),
+            value: ref.watch(speakAnswersProvider),
+            onChanged: (value) => ref.read(speakAnswersProvider.notifier).set(value),
           ),
           _ToolPermissionsTile(),
           const Divider(),

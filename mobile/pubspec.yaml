@@ -29,6 +29,8 @@ dependencies:
   qr_flutter: ^4.1.0
   mobile_scanner: ^6.0.5
   local_auth: ^3.0.2
+  speech_to_text: ^7.5.0
+  flutter_tts: ^4.2.5
 
 dev_dependencies:
   flutter_test:

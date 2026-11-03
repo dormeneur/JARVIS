@@ -171,6 +171,16 @@ def get_or_create_setup_secret() -> str | None:
     return secret
 
 
+def issue_admin_setup_secret() -> str:
+    """A fresh one-time setup secret even though devices exist, for re-registering an admin
+    device that lost its key (e.g. the app was reinstalled). Only reachable from the host
+    (python -m app.invite --admin): whoever can run that already has the vault on disk.
+    It is consumed by the first registration that uses it; a server restart also clears it."""
+    secret = secrets.token_urlsafe(9)
+    _setup_secret_path().write_text(secret, encoding="utf-8")
+    return secret
+
+
 def _validate_setup_secret(provided: str) -> None:
     path = _setup_secret_path()
     if not path.exists():

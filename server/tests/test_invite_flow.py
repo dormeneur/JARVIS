@@ -226,3 +226,15 @@ def test_host_invite_code_registers_a_device_without_secrets(client, vault_setti
 
 def test_form_answers_proxy_needs_a_device(client):
     assert client.post("/ask/ai/form-answers", json={"questions": []}).status_code in (401, 403, 422)  # no Authorization header
+
+
+def test_host_admin_secret_registers_one_admin_device_once(client, vault_settings, registered_device):
+    """`python -m app.invite --admin`: recover an admin phone that lost its key."""
+    from app.services import auth
+
+    secret = auth.issue_admin_setup_secret()
+    first = client.post("/auth/register", json={"device_name": "Phone again", "setup_secret": secret})
+    assert first.status_code == 201
+    assert first.json()["is_secrets_authorized"] is True
+    again = client.post("/auth/register", json={"device_name": "Someone else", "setup_secret": secret})
+    assert again.status_code != 201

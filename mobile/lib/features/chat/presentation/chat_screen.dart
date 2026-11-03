@@ -6,6 +6,7 @@ import 'package:drift/drift.dart' as drift;
 import 'package:uuid/uuid.dart';
 import 'package:dio/dio.dart' show CancelToken;
 import '../data/agent_models.dart';
+import '../../voice/voice_service.dart';
 import '../data/chat_repository.dart';
 import '../data/chat_archive_service.dart';
 import 'tool_permission_provider.dart';
@@ -76,7 +77,14 @@ class ChatMessage {
 }
 
 class ChatScreen extends ConsumerStatefulWidget {
-  const ChatScreen({super.key});
+  /// [listenOnOpen]: start listening right away (the home's Ask button).
+  /// [interviewOnOpen]: start interview mode right away (the home's Interview tile).
+  /// [openSessionId]: show that past conversation (the home's recent list).
+  const ChatScreen({super.key, this.listenOnOpen = false, this.interviewOnOpen = false, this.openSessionId});
+
+  final bool listenOnOpen;
+  final bool interviewOnOpen;
+  final String? openSessionId;
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
@@ -103,9 +111,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// Lets the Stop button abort an in-flight agent turn.
   CancelToken? _cancelToken;
 
+  /// The microphone is open (on-device recognition).
+  bool _listening = false;
+
+  /// Kept from start-up: ref can't be used in dispose, where listening and speech must stop.
+  late final VoiceService _voice;
+
+  /// The question being answered was spoken, so its answer is read aloud (if that's on).
+  bool _askedByVoice = false;
+
   @override
   void initState() {
     super.initState();
+    _voice = ref.read(voiceServiceProvider);
     _initializeApp();
   }
 
@@ -114,6 +132,62 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _loadChatHistory();
     await _checkAiStatus();
     _maybeRunArchiveJob();
+    if (!mounted) return;
+    final open = widget.openSessionId;
+    if (open != null && open != _currentSessionId) {
+      await _selectSession(open);
+    } else if (widget.interviewOnOpen) {
+      await _startInterview();
+    } else if (widget.listenOnOpen) {
+      await _toggleListening();
+    }
+  }
+
+  @override
+  void dispose() {
+    _voice.stop();
+    _voice.stopSpeaking();
+    _textController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  /// Mic button: listen on the phone, then send what was heard as the question.
+  Future<void> _toggleListening() async {
+    final voice = _voice;
+    if (_listening) {
+      await voice.stop();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+
+    final reason = await voice.unavailableReason();
+    if (!mounted) return;
+    if (reason != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(reason), duration: const Duration(seconds: 8)));
+      return;
+    }
+
+    setState(() => _listening = true);
+    await voice.listen(
+      onWords: (words, done) {
+        if (!mounted) return;
+        setState(() {
+          _textController.text = words;
+          _textController.selection = TextSelection.collapsed(offset: words.length);
+          if (done) _listening = false;
+        });
+        if (done && words.trim().isNotEmpty) {
+          _askedByVoice = true;
+          _sendMessage();
+        }
+      },
+      onError: (message) {
+        if (!mounted) return;
+        setState(() => _listening = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      },
+    );
   }
 
   Future<void> _ensureSessionExists() async {
@@ -491,6 +565,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _saveChatPair(query, attachments);
         // Tools may have changed the vault — refresh the explorer view.
         ref.invalidate(directoryEntriesProvider);
+        // A spoken question gets a spoken answer, in the phone's own voice.
+        if (_askedByVoice && ref.read(speakAnswersProvider) && _messages.isNotEmpty) {
+          _voice.speak(_messages.last.text);
+        }
+        _askedByVoice = false;
       }
     }
   }
@@ -1104,7 +1183,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           enabled: !_isGenerating && _aiAvailable != false,
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      if (!_isGenerating)
+                        IconButton(
+                          icon: Icon(_listening ? Icons.mic : Icons.mic_none),
+                          color: _listening ? theme.colorScheme.error : null,
+                          tooltip: _listening ? 'Stop listening' : 'Speak your question (heard on this phone)',
+                          onPressed: _aiAvailable == false ? null : _toggleListening,
+                        ),
+                      const SizedBox(width: 4),
                       // Send turns into Stop while a turn is in flight, so a
                       // runaway tool loop is always one tap from cancellable.
                       _isGenerating

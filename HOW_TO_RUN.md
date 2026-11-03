@@ -1,13 +1,15 @@
 # How to Run JARVIS
 
-Everything backend (API + AI + vector DB + Ollama) runs in Docker. One command starts it all.
-The only things installed on your machine: **Docker Desktop**, **Flutter**, **Git**.
+The backend (API + AI + vector DB) runs in Docker; one command starts it all. The AI models run in
+**Ollama** installed on your machine, which uses your GPU on its own.
+Installed on your machine: **Docker Desktop**, **Ollama**, **Flutter**, **Git**.
 
 ---
 
 ## 1. Install (one time)
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [Ollama](https://ollama.com/download)
 - [Flutter SDK](https://docs.flutter.dev/get-started/install) — then run `flutter doctor` and fix anything red
 - Android Studio (for an emulator) or just plug in an Android phone
 
@@ -39,13 +41,11 @@ JARVIS_JWT_SECRET=<paste any long random string>
 docker compose up -d --build
 ```
 
-> **Windows with NVIDIA GPU** (faster AI): use this instead:
-> `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build`
-
-Download the two AI models (one time, ~5 GB total):
+Download the two AI models into Ollama (one time; `qwen3:8b` instead if your GPU has 6 GB or more,
+and set `JARVIS_LLM_MODEL` to match):
 ```bash
-docker exec jv-ollama ollama pull llama3
-docker exec jv-ollama ollama pull nomic-embed-text
+ollama pull qwen3:4b
+ollama pull nomic-embed-text
 ```
 
 Check it works:
@@ -124,7 +124,7 @@ Every run snapshots the tracker, job list and profile files first, so the run sc
 |---|---|
 | `flutter run` stuck at "Resolving dependencies" | Slow internet to pub.dev — just wait or retry |
 | `docker pull` fails with "TLS handshake timeout" | Restart Docker Desktop, run the command again |
-| AI chat says offline | `docker exec jv-api curl -s http://brain:8001/brain/status` — if ollama unreachable, `docker restart jv-ollama`; if models missing, redo the `ollama pull` step |
+| AI chat says offline | `docker exec jv-api curl -s http://brain:8001/brain/status`: if Ollama is unreachable, start the Ollama app on this machine; if models are missing, redo the `ollama pull` step |
 | Changed a database table in `mobile/` and build breaks | `dart run build_runner build --delete-conflicting-outputs` |
 | Lost the setup secret | It shows only on the server's first boot — check `docker logs jv-api` |
 

@@ -40,8 +40,10 @@ services:
     depends_on:
       chromadb:
         condition: service_started
-      ollama:
-        condition: service_started
+    # Ollama runs on the host (the normal install), reached as host.docker.internal; this line
+    # makes that name work on Linux too (Docker Desktop provides it already).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - jarvis-internal
     restart: unless-stopped
@@ -61,7 +63,10 @@ services:
     restart: unless-stopped
     # ChromaDB image has no curl/wget — use service_started, not service_healthy.
 
+  # Optional: Ollama in Docker instead of on the host. Off by default; to use it, start the stack
+  # with --profile docker-ollama and set JARVIS_OLLAMA_URL=http://ollama:11434 in .env.
   ollama:
+    profiles: ["docker-ollama"]
     image: ollama/ollama:latest
     container_name: jv-ollama
     volumes:
