@@ -38,6 +38,32 @@ jobs:
             -v --tb=short -q
 
   # ─────────────────────────────────────────────────────────────────────────
+  # jv-jobs (jobs/) Python tests — a fake `claude` replays stream-json, so no
+  # tokens are spent and no Claude login is needed.
+  # ─────────────────────────────────────────────────────────────────────────
+  jobs-tests:
+    name: Jobs tests (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jobs
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: jobs/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  # ─────────────────────────────────────────────────────────────────────────
   # jv-brain (brain/) Python tests
   # ─────────────────────────────────────────────────────────────────────────
   brain-tests:

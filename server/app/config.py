@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     backup_path: Path = Path("/backups")
     backup_keep: int = 10
     backup_interval_hours: int = 24  # 0 disables automatic backups
+    jobs_url: str = "http://jv-jobs:8002"
+    jobs_secret: str = ""
 
     model_config = {"env_prefix": "JARVIS_"}
 

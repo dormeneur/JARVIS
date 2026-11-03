@@ -27,6 +27,7 @@ import 'package:jarvis_mobile/features/sync/presentation/sync_provider.dart';
 import 'package:jarvis_mobile/features/sync/presentation/sync_summary_dialog.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_screen.dart';
 import 'package:jarvis_mobile/features/chat/presentation/chat_screen.dart';
+import 'package:jarvis_mobile/features/jobs/presentation/jobs_screen.dart';
 import 'package:jarvis_mobile/features/secrets/presentation/secrets_screen.dart';
 import 'package:jarvis_mobile/core/network/server_connection_provider.dart';
 import 'package:jarvis_mobile/shared/models/file_entry.dart';
@@ -1504,6 +1505,18 @@ class _ExplorerScreenState extends ConsumerState<ExplorerScreen>
               );
             },
           ),
+          // Admin only: runs spend the owner's Claude subscription.
+          if (ref.watch(authProvider).isSecretsAuthorized)
+            ListTile(
+              leading: const Icon(Icons.work_outline),
+              title: const Text('Job Search'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const JobsScreen()),
+                );
+              },
+            ),
           const Divider(),
           ListTile(
             leading: const Icon(Icons.settings_outlined),

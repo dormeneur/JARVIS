@@ -1,5 +1,8 @@
 # Secrets & local config — never commit
 .env
+# Claude subscription token for jv-jobs
+jobs.env
+.jobs-workspace-not-set/
 *.pem
 *.key
 *.jks

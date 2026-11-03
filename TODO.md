@@ -71,6 +71,11 @@ analyze/test, docker build); chat auto-archive.
 
 ---
 
+- [ ] 🙋 **Job search first live run** — v1 is built (spec 12). Needs `claude setup-token` →
+      `jobs.env`, `JARVIS_JOBS_WORKSPACE`, `docker compose --profile jobs up -d --build`, then one
+      `/rank` and one `/apply` from the phone. Tune the allowlist from the run's "Blocked" lines,
+      and work through spec 12 Part 6.
+
 ## 2. NEXT — decided in the docs, not yet started
 
 - [ ] **Per-file version history + diff preview** in the conflict screen. Needs the server to

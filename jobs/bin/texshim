@@ -1,0 +1,13 @@
+#!/bin/sh
+# Installed as /opt/jv/bin/lualatex and /opt/jv/bin/xelatex, ahead of the real
+# binaries on PATH. Refuses every way of turning shell escape on, then runs the
+# real engine with it forced off.
+for arg in "$@"; do
+  case "$arg" in
+    -shell-escape|--shell-escape|-enable-write18|--enable-write18|-shell-restricted|--shell-restricted)
+      echo "jv-jobs: shell escape is disabled in this container" >&2
+      exit 1
+      ;;
+  esac
+done
+exec "/usr/bin/$(basename "$0")" -no-shell-escape "$@"

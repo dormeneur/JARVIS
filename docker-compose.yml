@@ -70,11 +70,43 @@ services:
       - jarvis-internal
     restart: unless-stopped
 
+  jobs:
+    # Optional ai-job-search runner (DOCUMENTATION/OFFICIAL-DOCS/12-Job-Search-Integration.md).
+    # Not started by a plain `docker compose up`; use:
+    #   docker compose --profile jobs up -d --build
+    profiles: ["jobs"]
+    build:
+      context: ./jobs
+      dockerfile: Dockerfile
+    container_name: jv-jobs
+    volumes:
+      # The ai-job-search workspace. The vault is deliberately NOT mounted:
+      # Claude only ever sees this folder.
+      - ${JARVIS_JOBS_WORKSPACE:-./.jobs-workspace-not-set}:/work
+      - jobs-state:/state
+      # Claude sessions, so a run paused at a question survives restarts.
+      - jobs-claude:/home/jarvis/.claude
+    # No `env_file: .env` here on purpose: this container gets only what it
+    # needs. The Claude token lives in jobs.env, which no other service reads.
+    environment:
+      JARVIS_JOBS_SECRET: ${JARVIS_JOBS_SECRET:-}
+      JARVIS_MAX_PARALLEL: ${JARVIS_JOBS_MAX_PARALLEL:-2}
+    env_file:
+      - path: jobs.env
+        required: false
+    networks:
+      - jarvis-internal
+    restart: unless-stopped
+
 volumes:
   chroma-data:
     name: jarvis-chroma-data
   ollama-models:
     name: jarvis-ollama-models
+  jobs-state:
+    name: jarvis-jobs-state
+  jobs-claude:
+    name: jarvis-jobs-claude
 
 networks:
   jarvis-internal:

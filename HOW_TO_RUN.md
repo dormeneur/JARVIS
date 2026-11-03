@@ -99,6 +99,25 @@ Restore onto a clean machine: stop the stack, unzip the newest `jarvis-vault-*.z
 **empty** folder, set `JARVIS_HOST_PATH` to it, `docker compose up -d`. Devices, versions, and
 encrypted Secrets come back as they were, so phones reconnect without re-registering.
 
+## Job search (optional)
+
+Runs your private [ai-job-search](https://github.com/ai-job-search-dev/ai-job-search) clone on your
+own Claude subscription, driven from the app (drawer → **Job Search**, admin devices only). Design:
+`DOCUMENTATION/OFFICIAL-DOCS/12-Job-Search-Integration.md`.
+
+1. On the host, with your subscription logged in: `claude setup-token`. Put the token in a file
+   called `jobs.env` next to `docker-compose.yml` (gitignored, read by no other container):
+   ```
+   CLAUDE_CODE_OAUTH_TOKEN=<token>
+   ```
+2. In `.env`: `JARVIS_JOBS_WORKSPACE=B:/DEV/ai-job-search` and a random `JARVIS_JOBS_SECRET`.
+3. `docker compose --profile jobs up -d --build` (first build is slow: it installs TeX Live).
+4. Check: `docker exec jv-jobs claude auth status`. The Job Search screen shows the same.
+
+Claude only sees the ai-job-search folder, never the vault. Nothing is ever submitted for you:
+the app prepares the CV, cover letter and answers; you submit, then tap **I submitted it**.
+Every run snapshots the tracker, job list and profile files first, so the run screen can undo it.
+
 ## If something breaks
 
 | Problem | Fix |

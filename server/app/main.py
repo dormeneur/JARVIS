@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.errors import AuthError, VaultError, auth_error_handler, vault_error_handler
-from app.routers import auth, backup as backup_router, files, health, sync, ask
+from app.routers import auth, backup as backup_router, files, health, jobs, sync, ask
 from app.services import audit, backup, rate_limit
 from app.services import auth as auth_service
 from app.services.path_validator import is_secrets_path
@@ -113,3 +113,4 @@ app.include_router(sync.router)
 app.include_router(files.router)
 app.include_router(ask.router)
 app.include_router(backup_router.router)
+app.include_router(jobs.router)
