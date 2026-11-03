@@ -54,6 +54,15 @@ public sealed partial class App : Application
         _host.Services.GetRequiredService<AgentAnnouncer>();
         _trayIcon = new TrayIcon("Jarvis", TrayIconFile(paused: false), BuildTrayMenu);
 
+        _host.Services.GetRequiredService<Notch.NotchPresenter>().Escape = () => _host.Services.GetRequiredService<CompanionSession>().Cancel();
+
+        // Resting the mouse on the sleeping notch opens its home.
+        var overlay = _host.Services.GetRequiredService<Jarvis.Platform.Overlay.OverlayService>();
+        var notch = _host.Services.GetRequiredService<INotchPresenter>();
+        var pause = _host.Services.GetRequiredService<PauseSwitch>();
+        overlay.DwellAllowed = () => notch.Current is NotchState.IdleState or NotchState.Working && !pause.IsPaused;
+        overlay.NotchDwelled += () => _host.Services.GetRequiredService<DispatcherQueue>().TryEnqueue(ShowHome);
+
         // Hovering the tray icon always tells you when Jarvis last looked at your screen.
         _host.Services.GetRequiredService<ScreenPrivacy>().Looked += look => _host.Services.GetRequiredService<DispatcherQueue>().TryEnqueue(() =>
         {
@@ -124,6 +133,9 @@ public sealed partial class App : Application
             case { } demo when demo.StartsWith("agent:", StringComparison.Ordinal):
                 _host.Services.GetRequiredService<IAgentJobs>().Start(demo["agent:".Length..]);
                 break;
+            case { } demo when demo.StartsWith("connect:", StringComparison.Ordinal):
+                _ = ConnectVaultAsync(demo["connect:".Length..]);
+                break;
             case "pause":
                 SetPaused(true);
                 break;
@@ -136,6 +148,9 @@ public sealed partial class App : Application
             case "selftest":
                 _ = SpeechSelfTestAsync();
                 break;
+            case { } demo when demo.StartsWith("hear:", StringComparison.Ordinal):
+                _ = HearTestAsync(demo["hear:".Length..].Split('|'));
+                break;
             case { } demo when demo.StartsWith("notch:", StringComparison.Ordinal):
                 var pinned = DemoNotchStates.FirstOrDefault(entry => entry.Label == demo["notch:".Length..]);
                 if (pinned.State is not null)
@@ -145,6 +160,21 @@ public sealed partial class App : Application
                 }
 
                 break;
+        }
+    }
+
+    /// <summary>Registers with the vault using an invite code, as Settings → Vault → Connect does.</summary>
+    private async Task ConnectVaultAsync(string inviteCode)
+    {
+        var logger = _host.Services.GetRequiredService<ILogger<App>>();
+        try
+        {
+            await _host.Services.GetRequiredService<Jarvis.Contracts.Vault.IVault>().ConnectAsync(inviteCode, CancellationToken.None);
+            logger.LogInformation("Demo: connected to the vault");
+        }
+        catch (Jarvis.Contracts.Vault.VaultException exception)
+        {
+            logger.LogWarning("Demo: vault connect failed: {Reason}", exception.Message);
         }
     }
 
@@ -217,6 +247,28 @@ public sealed partial class App : Application
         _host.Services.GetRequiredService<CompanionSession>().Ask(request);
     }
 
+    /// <summary>Kokoro speaks each request, Whisper hears it back, and the log says where the router would send it.</summary>
+    private async Task HearTestAsync(IEnumerable<string> requests)
+    {
+        await _enginesReady;
+        var tts = _host.Services.GetRequiredService<Jarvis.Contracts.Speech.ITextToSpeech>();
+        var stt = _host.Services.GetRequiredService<Jarvis.Contracts.Speech.ISpeechToText>();
+        var logger = _host.Services.GetRequiredService<ILogger<App>>();
+        foreach (var request in requests)
+        {
+            var spoken = new List<byte>();
+            await foreach (var chunk in tts.SynthesizeAsync(request, new("af_heart"), CancellationToken.None))
+            {
+                spoken.AddRange(chunk.ToArray());
+            }
+
+            await using var session = await stt.StartSessionAsync(new(null, []), CancellationToken.None);
+            await session.WriteAsync(Resample(spoken.ToArray(), tts.OutputFormat.SampleRate, stt.InputFormat.SampleRate), CancellationToken.None);
+            var heard = await session.CompleteAsync(CancellationToken.None);
+            logger.LogInformation("Hear test: said \"{Said}\", heard \"{Heard}\", routed to {Route}", request, heard, Jarvis.Core.Vault.TurnRouter.Route(heard, privateMode: false, browserInFront: true));
+        }
+    }
+
     /// <summary>Kokoro speaks a known sentence, Whisper transcribes it back: proves both engines and the audio maths.</summary>
     private async Task SpeechSelfTestAsync()
     {
@@ -257,21 +309,22 @@ public sealed partial class App : Application
         var rms = samples.Length == 0 ? 0 : Math.Sqrt(samples.ToArray().Average(sample => (double)sample * sample)) / short.MaxValue;
         _host.Services.GetRequiredService<ILogger<App>>().LogInformation(
             "Self-test microphone: {Seconds:F2} s of audio at {Rate} Hz, RMS level {Rms:F4}", samples.Length / (double)stt.InputFormat.SampleRate, stt.InputFormat.SampleRate, rms);
+    }
 
-        static byte[] Resample(byte[] pcm16, int from, int to)
+    /// <summary>Linear resampling of mono PCM16, for the speech tests.</summary>
+    private static byte[] Resample(byte[] pcm16, int from, int to)
+    {
+        var input = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, short>(pcm16);
+        var output = new short[(int)((long)input.Length * to / from)];
+        for (var i = 0; i < output.Length; i++)
         {
-            var input = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, short>(pcm16);
-            var output = new short[(int)((long)input.Length * to / from)];
-            for (var i = 0; i < output.Length; i++)
-            {
-                var position = (double)i * from / to;
-                var left = (int)position;
-                var right = Math.Min(left + 1, input.Length - 1);
-                output[i] = (short)(input[left] + ((input[right] - input[left]) * (position - left)));
-            }
-
-            return System.Runtime.InteropServices.MemoryMarshal.AsBytes(output.AsSpan()).ToArray();
+            var position = (double)i * from / to;
+            var left = (int)position;
+            var right = Math.Min(left + 1, input.Length - 1);
+            output[i] = (short)(input[left] + ((input[right] - input[left]) * (position - left)));
         }
+
+        return System.Runtime.InteropServices.MemoryMarshal.AsBytes(output.AsSpan()).ToArray();
     }
 
     private static readonly (string Label, NotchState State)[] DemoNotchStates =
@@ -280,9 +333,21 @@ public sealed partial class App : Application
         ("listening", new NotchState.Listening()),
         ("thinking", new NotchState.Thinking()),
         ("speaking", new NotchState.Speaking()),
-        ("response", new NotchState.Response("That's the Start button, bottom-left of your taskbar. Click it, then type the app's name to open it.\n\nTip: the Windows key does the same thing.")),
+        ("response", new NotchState.Response("(Sample reply, for checking the notch's look.) Replies wrap onto more lines as they grow.\n\nA blank line starts a new paragraph.")),
         ("working", new NotchState.Working()),
         ("result", new NotchState.Response("Lisbon trip plan: a 3-day itinerary with food spots near each stop, saved as plan.md.", [new("Open", () => { }), new("Dismiss", () => { })])),
+        ("form", new NotchState.Form(
+            "Volunteer sign-up",
+            [
+                new("q0", "Full name", "Sam Example", "your past forms", FormCardState.Answered, ["Sam", "S. Example"], Filled: true),
+                new("q1", "Which days can you help?", "Saturday", "Profile/about.md", FormCardState.Answered, ["Saturday", "Sunday", "Weekdays"]),
+                new("q2", "Why do you want to volunteer?", "I grew up near the shelter and", null, FormCardState.Working, Note: "Writing from your vault, on this PC… 7 s"),
+                new("q3", "T-shirt size", null, null, FormCardState.Unknown, ["S", "M", "L"]),
+            ],
+            "Filling 2 of 3…",
+            new FormActions(edits => Task.FromResult($"Saved {edits.Count} (demo: nothing written)."), () => { }, StopFilling: () => { }, Used: (_, _) => { }, Hear: (_, _) => Task.FromResult(string.Empty), Remember: _ => "Added (demo)."),
+            FillProgress: 0.4,
+            Fillable: 2)),
     ];
 
     /// <summary>Holds each notch state for 2.5 s, forever, so captures can be taken of each.</summary>
@@ -298,6 +363,49 @@ public sealed partial class App : Application
         }
     }
 #endif
+
+    /// <summary>The notch's home: things to start, then the latest jobs and form.</summary>
+    private void ShowHome()
+    {
+        var notch = _host.Services.GetRequiredService<INotchPresenter>();
+        var companion = _host.Services.GetRequiredService<CompanionSession>();
+        var privacy = _host.Services.GetRequiredService<ScreenPrivacy>();
+        var dispatcher = _host.Services.GetRequiredService<DispatcherQueue>();
+        var hour = DateTime.Now.Hour;
+        var greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+        HomeItem[] actions =
+        [
+            new("\uE8BD", "Ask", "Type a question (or double-tap Ctrl)", companion.Compose),
+            new("\uE70F", "Fill a form", "Fill the form in your browser from your vault", companion.FillForm),
+            new(privacy.PrivateMode ? "\uE72E" : "\uE785", privacy.PrivateMode ? "Private: on" : "Private: off", "Keep everything on this PC", () =>
+            {
+                var on = !privacy.PrivateMode;
+                SettingsFile.Set(PrivacyOptions.SectionName, nameof(PrivacyOptions.PrivateMode), on);
+                notch.Show(new NotchState.Response(on ? "Private mode is on: everything stays on this PC." : "Private mode is off."));
+                _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => notch.Show(NotchState.Idle), TaskScheduler.Default);
+            }),
+            new("\uE713", "Settings", null, () => dispatcher.TryEnqueue(() => ShowSettings(null))),
+        ];
+
+        var agents = _host.Services.GetRequiredService<IAgentJobs>();
+        var recent = new List<HomeItem>();
+        if (_host.Services.GetRequiredService<Jarvis.Core.Vault.FormFiller>().LastTitle is { Length: > 0 } form)
+        {
+            recent.Add(new("\uE70F", form, "fill again", companion.FillForm));
+        }
+
+        foreach (var job in agents.Jobs.Take(3))
+        {
+            recent.Add(job.Status switch
+            {
+                AgentJobStatus.Running or AgentJobStatus.Queued => new HomeItem("\uE916", job.Title, job.Activity ?? "working", () => notch.Show(NotchState.Idle)),
+                AgentJobStatus.Finished => new HomeItem("\uE73E", job.Title, "open", () => OpenFolder(Path.Combine(job.Folder, "output"))),
+                _ => new HomeItem("\uE7BA", job.Title, job.Status.ToString().ToLowerInvariant(), () => OpenFolder(job.Folder)),
+            });
+        }
+
+        notch.Show(new NotchState.Home(greeting, actions, recent, () => notch.Show(NotchState.Idle)));
+    }
 
     /// <summary>The five most recent background jobs: stop the running ones, open the finished ones.</summary>
     private IEnumerable<TrayMenuItem> JobMenuItems()
@@ -348,6 +456,7 @@ public sealed partial class App : Application
         {
             new(paused ? "Resume Jarvis" : "Pause Jarvis", () => SetPaused(!paused)),
             new("Settings", ShowSettings),
+            new("Fill this form from my vault", () => _host.Services.GetRequiredService<CompanionSession>().FillForm()),
             new(cursorVisible ? "Hide floating cursor" : "Show floating cursor", () => SettingsFile.Set(CursorOptions.SectionName, nameof(CursorOptions.Visible), !cursorVisible)),
         };
         menu.AddRange(JobMenuItems());
@@ -355,7 +464,7 @@ public sealed partial class App : Application
         var overlay = _host.Services.GetRequiredService<ICursorOverlay>();
         menu.Add(TrayMenuItem.Separator);
         var screen = Microsoft.UI.Windowing.DisplayArea.Primary.OuterBounds;
-        menu.Add(new("Test: point at the Start button", () => overlay.PointAt(screen.X + 24, screen.Y + screen.Height - 24)));
+        menu.Add(new("Test: point at the bottom-left corner", () => overlay.PointAt(screen.X + 24, screen.Y + screen.Height - 24)));
         menu.Add(new("Test: point at screen centre", () => overlay.PointAt(screen.X + (screen.Width / 2), screen.Y + (screen.Height / 2))));
         menu.Add(new("Test: toggle thinking dots", () => overlay.SetThinking(_debugThinking = !_debugThinking)));
         var notch = _host.Services.GetRequiredService<INotchPresenter>();
@@ -400,7 +509,10 @@ public sealed partial class App : Application
 
     private static string TrayIconFile(bool paused) => Path.Combine(AppContext.BaseDirectory, paused ? "jarvis-paused.ico" : "jarvis.ico");
 
-    private void ShowSettings()
+    private void ShowSettings() => ShowSettings(null);
+
+    /// <summary>Opens Settings, on the page titled <paramref name="section"/> when given (the notch's form panel opens "Vault").</summary>
+    internal void ShowSettings(string? section)
     {
         if (_settingsWindow is null)
         {
@@ -408,7 +520,20 @@ public sealed partial class App : Application
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         }
 
+        if (section is not null && _settingsWindow.ViewModel.Sections.FirstOrDefault(page => page.Title == section) is { } page)
+        {
+            _settingsWindow.ViewModel.SelectedSection = page;
+        }
+
+        // Bring it to the front even when it was minimised, hidden or behind other windows.
+        if (_settingsWindow.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter { State: Microsoft.UI.Windowing.OverlappedPresenterState.Minimized } presenter)
+        {
+            presenter.Restore();
+        }
+
+        _settingsWindow.AppWindow.Show(true);
         _settingsWindow.Activate();
+        WindowChrome.Activate(WinRT.Interop.WindowNative.GetWindowHandle(_settingsWindow));
     }
 
     /// <summary>Quits Jarvis: the notch, cursor, shortcuts and engines all stop.</summary>

@@ -22,4 +22,5 @@ public static class ProviderKeys
     public const string Kokoro = "kokoro";
     public const string WindowsSpeech = "windows";
     public const string ClaudeCli = "claude-cli";
+    public const string Ollama = "ollama";
 }

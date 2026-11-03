@@ -43,6 +43,12 @@ public sealed partial class OverlayService : ICursorOverlay, IScreenDrawing, IHo
 
     public void ShowControlBorder(bool on) => _controlBorder = on;
 
+    /// <summary>Raised (on a worker thread) when the mouse has rested on the sleeping notch long enough to open it.</summary>
+    public event Action? NotchDwelled;
+
+    /// <summary>Whether resting on the notch may open it now (the notch is asleep); unset means never.</summary>
+    public Func<bool>? DwellAllowed { get; set; }
+
     public void SetThinking(bool thinking) => _commands.Enqueue((layers, now) => layers.Cursor.SetThinking(thinking, now));
 
     public void SetListening(bool listening) => _commands.Enqueue((layers, _) => layers.Cursor.SetListening(listening));
@@ -100,6 +106,7 @@ public sealed partial class OverlayService : ICursorOverlay, IScreenDrawing, IHo
             var layers = new Layers(new CursorCompanion(), drawingRenderer, () => windows);
             CursorPose? lastDrawn = null;
             var lastPhase = layers.Cursor.Phase;
+            var dwell = new Jarvis.Core.Notch.NotchDwell();
 
             while (!_stopping.IsCancellationRequested)
             {
@@ -145,6 +152,17 @@ public sealed partial class OverlayService : ICursorOverlay, IScreenDrawing, IHo
 
                 var visible = options.Visible && !_pause.IsPaused
                               && !(options.HideInFullscreen && layers.Cursor.IsIdle && Fullscreen.IsActive);
+
+                // Resting on the sleeping notch fills a ring beside the cursor, then opens the notch's home.
+                var primary = windows.Find(window => window.Display.Contains(0, 0))?.Display;
+                var onSliver = primary is not null && Jarvis.Core.Notch.NotchDwell.OnSliver(mouse.X, mouse.Y, primary.Left, primary.Top, primary.Width, primary.Scale);
+                var mayOpen = visible && !layers.Cursor.IsListening && (PInvoke.GetAsyncKeyState(0x01) & 0x8000) == 0 && DwellAllowed?.Invoke() == true;
+                var (ring, opened) = dwell.Update(now, onSliver, mayOpen);
+                pose = pose with { Dwell = ring };
+                if (opened && NotchDwelled is { } open)
+                {
+                    _ = Task.Run(open);
+                }
                 cursorRenderer.AttachTo(visible ? HostFor(windows, pose) ?? host : null);
                 if (visible && pose != lastDrawn)
                 {

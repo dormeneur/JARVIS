@@ -31,6 +31,13 @@ public sealed class PrivacyOptions
     /// its own with the control border showing, until done or the user takes back.
     /// </summary>
     public bool AskEveryStep { get; set; } = true;
+
+    /// <summary>
+    /// Everything is answered on this PC by the local model: nothing goes to Claude, except a
+    /// screenshot the user agrees to send when a question needs the screen. Background jobs,
+    /// routines and suggestions (which run on Claude) wait until it's off.
+    /// </summary>
+    public bool PrivateMode { get; set; }
 }
 
 /// <summary>One screenshot Jarvis took: when, how many displays, and why.</summary>
@@ -66,6 +73,8 @@ public sealed class ScreenPrivacy
     public bool LetJarvisDrive => _options.CurrentValue.LetJarvisDrive;
 
     public bool AskEveryStep => _options.CurrentValue.AskEveryStep;
+
+    public bool PrivateMode => _options.CurrentValue.PrivateMode;
 
     public void Record(int displays, string reason)
     {

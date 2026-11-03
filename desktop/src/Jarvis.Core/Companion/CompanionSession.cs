@@ -11,6 +11,7 @@ using Jarvis.Contracts.Speech;
 using Jarvis.Core.Agents;
 using Jarvis.Core.Cursor;
 using Jarvis.Core.Drawing;
+using Jarvis.Core.Vault;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -39,6 +40,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
     private readonly ILogger<CompanionSession> _logger;
     private readonly Lock _gate = new();
     private Recording? _recording;
+    private ReplyItem.FillForm? _formWanted; // the last cloud reply asked for the form to be filled here
+    private Jarvis.Contracts.Browser.BrowserPage? _page; // the browser page the brain last saw (its element and tab ids)
+    private string _copied = string.Empty; // what a copy step last copied (the extension keeps it too)
     private CancellationTokenSource? _turn;
 
     public CompanionSession(
@@ -235,7 +239,16 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 _services.Privacy.Record(screens.Count, "Jarvis looked again while doing a task for you");
                 _services.Notch.Show(new NotchState.Thinking(_services.Privacy.ShowWhenLooking ? "Looking at your screen" : null));
                 var next = CompanionPrompt.DriveOn + CompanionPrompt.ContinueTask(question, round + 1);
-                (_, steps, more) = await AnswerAsync(next, screens, _time.GetTimestamp(), typed: false, control.Token).ConfigureAwait(false);
+                if (_services.Browser.IsConnected && _services.Browser.IsBrowserInFront
+                    && await _services.Browser.ReadPageAsync(control.Token).ConfigureAwait(false) is { } page)
+                {
+                    // The page changed (or another tab is in front): fresh ids for the next steps.
+                    _services.Privacy.Record(0, "Read the page open in your browser");
+                    next = CompanionPrompt.DescribePage(page) + next;
+                    _page = page;
+                }
+
+                (_, steps, more, _) = await AnswerAsync(_services.Brain, CompanionPrompt.Instructions, next, screens, _time.GetTimestamp(), typed: false, control.Token).ConfigureAwait(false);
                 if (steps.Count == 0)
                 {
                     break; // the brain says it's done (or can't go on); it already said why
@@ -275,7 +288,8 @@ public sealed partial class CompanionSession : IAsyncDisposable
         for (var i = 0; i < planned.Count; i++)
         {
             var step = planned[i];
-            var pointer = step.Kind is not (ComputerActionKind.Type or ComputerActionKind.Key or ComputerActionKind.Open);
+            var browser = IsBrowserStep(step.Kind);
+            var pointer = !browser && step.Kind is not (ComputerActionKind.Type or ComputerActionKind.Key or ComputerActionKind.Open);
             var (x, y) = (0, 0);
             if (pointer)
             {
@@ -291,20 +305,21 @@ public sealed partial class CompanionSession : IAsyncDisposable
             if (askEachStep)
             {
                 var prefix = planned.Count > 1 ? $"Step {i + 1} of {planned.Count}: " : string.Empty;
-                if (!await ApproveAsync($"{prefix}{DriveDescription.Of(step)}?", "Do it", "Stop", cancellationToken).ConfigureAwait(false))
+                if (!await ApproveAsync($"{prefix}{DriveDescription.Of(step, NameOnPage)}?", "Do it", "Stop", cancellationToken).ConfigureAwait(false))
                 {
                     return DriveOutcome.Declined;
                 }
             }
             else
             {
-                _services.Notch.Show(new NotchState.Thinking(DriveDescription.Of(step)));
+                _services.Notch.Show(new NotchState.Thinking(DriveDescription.Of(step, NameOnPage)));
                 await Task.Delay(pointer ? DriveShowTarget : DriveStepPause, _time, cancellationToken).ConfigureAwait(false);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
             _services.Cursor.ReturnToMouse();
-            var done = step.Kind == ComputerActionKind.Open && _services.Browser.IsConnected
+            var done = browser ? await BrowserStepAsync(step, cancellationToken).ConfigureAwait(false)
+                : step.Kind == ComputerActionKind.Open && _services.Browser.IsConnected
                 ? await _services.Browser.OpenAsync(step.Text ?? string.Empty, cancellationToken).ConfigureAwait(false)
                 : _services.Control.Perform(new ComputerAction(step.Kind, x, y, step.Text));
             if (!done)
@@ -319,12 +334,65 @@ public sealed partial class CompanionSession : IAsyncDisposable
         return DriveOutcome.Done;
     }
 
+    private static bool IsBrowserStep(ComputerActionKind kind) => kind is ComputerActionKind.Press or ComputerActionKind.Fill or ComputerActionKind.Copy
+        or ComputerActionKind.Paste or ComputerActionKind.PageScroll or ComputerActionKind.TabSwitch or ComputerActionKind.TabClose;
+
+    /// <summary>A page element or tab id in words, from the page the brain last saw.</summary>
+    private string? NameOnPage(string id)
+        => _page?.Elements?.FirstOrDefault(element => element.Id == id) is { } element ? $"{element.Label}{(element.Kind is "button" or "link" ? string.Empty : $" {element.Kind}")}"
+            : _page?.Tabs?.FirstOrDefault(tab => tab.Id == id)?.Title;
+
+    /// <summary>
+    /// One browser step through the extension. The cursor flies to what it acted on. A field that
+    /// ignores a scripted value is left focused, and the text goes in with real keystrokes.
+    /// </summary>
+    private async Task<bool> BrowserStepAsync(ReplyItem.Act step, CancellationToken cancellationToken)
+    {
+        var action = step.Kind switch
+        {
+            ComputerActionKind.Press => "press",
+            ComputerActionKind.Fill => "fill",
+            ComputerActionKind.Copy => "copy",
+            ComputerActionKind.Paste => "paste",
+            ComputerActionKind.PageScroll => "scroll",
+            ComputerActionKind.TabSwitch => "tab-switch",
+            _ => "tab-close",
+        };
+        if (!_services.Browser.IsConnected
+            || await _services.Browser.ActAsync(new Jarvis.Contracts.Browser.BrowserAct(action, step.Label, step.Text), cancellationToken).ConfigureAwait(false) is not { } result)
+        {
+            return false;
+        }
+
+        if (result is { X: { } x, Y: { } y })
+        {
+            _services.Cursor.PointAt(x, y);
+        }
+
+        if (step.Kind == ComputerActionKind.Copy && result is { Done: true, Text: { } copied })
+        {
+            _copied = copied;
+        }
+
+        if (!result.Done && result.Focused && (step.Kind == ComputerActionKind.Fill ? step.Text : _copied) is { Length: > 0 } text)
+        {
+            return _services.Control.Perform(new ComputerAction(ComputerActionKind.Type, 0, 0, text)); // real keystrokes into the focused field
+        }
+
+        if (!result.Done)
+        {
+            LogBrowserStepFailed(action, result.Reason ?? "unknown");
+        }
+
+        return result.Done;
+    }
+
     /// <summary>Shows a question with two buttons in the notch; false for the second, cancellation or a minute's silence.</summary>
     private async Task<bool> ApproveAsync(string question, string yes, string no, CancellationToken cancellationToken)
     {
         var decision = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancelled = cancellationToken.Register(() => decision.TrySetResult(false));
-        _services.Notch.Show(new NotchState.Response(question, [new NotchAction(yes, () => decision.TrySetResult(true)), new NotchAction(no, () => decision.TrySetResult(false))]));
+        _services.Notch.Show(new NotchState.Response(question, [new NotchAction(yes, () => decision.TrySetResult(true)), new NotchAction(no, () => decision.TrySetResult(false))], KeepOnClickAway: true));
         var answered = await Task.WhenAny(decision.Task, Task.Delay(DriveDecisionTimeout, _time, CancellationToken.None)).ConfigureAwait(false);
         return answered == decision.Task && await decision.Task.ConfigureAwait(false);
     }
@@ -410,6 +478,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
         _ = RespondAsync(request.Trim(), typed: true, token);
     }
 
+    /// <summary>Fills the browser's form from the vault (tray menu): the same as asking to.</summary>
+    public void FillForm() => Ask("Fill this form");
+
     private async Task RunTurnAsync(Recording recording, CancellationToken cancellationToken)
     {
         try
@@ -448,6 +519,11 @@ public sealed partial class CompanionSession : IAsyncDisposable
             }
 
             var privacy = _services.Privacy;
+            if (_services.Local is { } local && await AnswerOnThisPcAsync(local, request, typed, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
             _services.Notch.Show(new NotchState.Thinking(privacy.ScreenAccess && privacy.ShowWhenLooking ? "Looking at your screen" : null));
             _services.Cursor.SetThinking(true);
             var started = _time.GetTimestamp();
@@ -474,6 +550,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
             {
                 privacy.Record(0, "Read the page open in your browser");
                 request = CompanionPrompt.DescribePage(page) + request;
+                _page = page;
             }
 
             var mayDrive = privacy.ScreenAccess && privacy.LetJarvisDrive;
@@ -482,8 +559,18 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 request = CompanionPrompt.DriveOn + request;
             }
 
-            var (answer, steps, more) = await AnswerAsync(request, screens, started, typed, cancellationToken).ConfigureAwait(false);
+            var (answer, steps, more, _) = await AnswerAsync(_services.Brain, CompanionPrompt.Instructions, request, screens, started, typed, cancellationToken).ConfigureAwait(false);
             _services.History.Add(question, answer);
+            if (_formWanted is { } wanted && _services.Local is { } forms)
+            {
+                // Claude saw a form to fill: hand it back to this PC, where the vault is.
+                _formWanted = null;
+                privacy.Record(0, "Read the form in your browser and answered it on this PC");
+                var fillIn = wanted.FillIn || TurnRouter.WantsFillIn(question);
+                await forms.Forms.RunAsync(fillIn, cancellationToken, () => Ask(fillIn ? "Fill this form for me" : "Fill this form")).ConfigureAwait(false);
+                return;
+            }
+
             if (mayDrive && steps.Count > 0)
             {
                 await DriveTaskAsync(question, steps, more, screens, cancellationToken).ConfigureAwait(false);
@@ -508,15 +595,78 @@ public sealed partial class CompanionSession : IAsyncDisposable
         }
     }
 
-    /// <returns>The answer as captioned (what was said, without tags or drawings), and any mouse/keyboard steps.</returns>
-    private async Task<(string Answer, List<ReplyItem.Act> Steps, bool More)> AnswerAsync(string request, IReadOnlyList<CapturedScreen> screens, long started, bool typed, CancellationToken cancellationToken)
+    /// <summary>
+    /// Turns that stay on this PC: forms and vault questions always, everything else in private
+    /// mode. False when the turn should go on to Claude after all: private mode's local model
+    /// needed the screen and the user agreed to send a screenshot.
+    /// </summary>
+    private async Task<bool> AnswerOnThisPcAsync(LocalTurns local, string request, bool typed, CancellationToken cancellationToken)
+    {
+        var privacy = _services.Privacy;
+        var browser = _services.Browser;
+        var route = TurnRouter.Route(request, privacy.PrivateMode, browser.IsBrowserInFront);
+
+        // Misheard ("feel this farm")? If it sounds form-ish and the page in front has a form, it's that.
+        if (route is TurnRoute.Cloud or TurnRoute.Local && browser.IsConnected && browser.IsBrowserInFront && TurnRouter.MightMeanForm(request)
+            && await browser.ReadFormAsync(cancellationToken).ConfigureAwait(false) is { Questions.Count: > 0 })
+        {
+            route = TurnRoute.Form;
+        }
+
+        LogRoute(route);
+        switch (route)
+        {
+            case TurnRoute.Cloud:
+                return false;
+
+            case TurnRoute.Form:
+                privacy.Record(0, "Read the form in your browser and answered it on this PC");
+                var fillIn = TurnRouter.WantsFillIn(request);
+                await local.Forms.RunAsync(fillIn, cancellationToken, () => Ask(fillIn ? "Fill this form for me" : "Fill this form")).ConfigureAwait(false);
+                return true;
+
+            case TurnRoute.Vault when !local.Vault.IsConnected:
+                _services.Notch.Show(new NotchState.Response("That needs your vault, and Jarvis isn't connected to it yet. Connect it in Settings → Vault."));
+                return true;
+        }
+
+        var vault = route == TurnRoute.Vault;
+        privacy.Record(0, vault ? "Answered from your vault on this PC" : "Answered on this PC (private mode)");
+        _services.Notch.Show(new NotchState.Thinking(vault ? "Looking in your vault" : null));
+        _services.Cursor.SetThinking(true);
+        var started = _time.GetTimestamp();
+        var (answer, _, _, needScreen) = vault
+            ? await AnswerAsync(local.VaultBrain, string.Empty, request, [], started, typed, cancellationToken).ConfigureAwait(false)
+            : await AnswerAsync(local.LocalBrain, CompanionPrompt.PrivateInstructions, request, [], started, typed, cancellationToken).ConfigureAwait(false);
+        _services.Cursor.SetThinking(false);
+        if (needScreen && !vault)
+        {
+            if (privacy.ScreenAccess && await ApproveAsync(
+                    "Private mode is on, and this needs a look at your screen. Only Claude can see images: send it a screenshot for this question?", "Send to Claude", "No", cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+
+            answer = "Okay, I kept it on this PC. Tell me what you see and I'll help from that.";
+            _services.Notch.Show(new NotchState.Response(answer));
+        }
+
+        _services.History.Add(request, answer);
+        await Task.Delay(TimeSpan.FromSeconds(_options.CurrentValue.CaptionSeconds), _time, cancellationToken).ConfigureAwait(false);
+        _services.Notch.Show(NotchState.Idle);
+        return true;
+    }
+
+    /// <returns>The answer as captioned (what was said, without tags or drawings), any mouse/keyboard steps, and whether the brain needs the screen.</returns>
+    private async Task<(string Answer, List<ReplyItem.Act> Steps, bool More, bool NeedScreen)> AnswerAsync(
+        IAssistantBrain brain, string instructions, string request, IReadOnlyList<CapturedScreen> screens, long started, bool typed, CancellationToken cancellationToken)
     {
         var images = screens
             .Select((screen, index) => new LabeledImage(
                 CompanionPrompt.DescribeScreen(index + 1, screens.Count, screen.Image.Width, screen.Image.Height, screen.Image.HasCursor),
                 screen.Image.Jpeg))
             .ToList();
-        var turn = new BrainTurn(CompanionPrompt.Instructions, request, images);
+        var turn = new BrainTurn(instructions, request, images);
 
         var lines = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
         var speaking = SpeakAsync(lines.Reader, cancellationToken);
@@ -525,10 +675,11 @@ public sealed partial class CompanionSession : IAsyncDisposable
         var raw = new StringBuilder();
         var steps = new List<ReplyItem.Act>();
         var more = false;
+        var needScreen = false;
 
         try
         {
-            await foreach (var brainEvent in _services.Brain.RunTurnAsync(turn, cancellationToken).ConfigureAwait(false))
+            await foreach (var brainEvent in brain.RunTurnAsync(turn, cancellationToken).ConfigureAwait(false))
             {
                 if (brainEvent is BrainEvent.TextDelta delta)
                 {
@@ -546,7 +697,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
         }
 
         await speaking.ConfigureAwait(false);
-        return (captions.ToString(), steps, more);
+        return (captions.ToString(), steps, more, needScreen);
 
         void Handle(IReadOnlyList<ReplyItem> items)
         {
@@ -588,6 +739,14 @@ public sealed partial class CompanionSession : IAsyncDisposable
 
                     case ReplyItem.More:
                         more = true;
+                        break;
+
+                    case ReplyItem.NeedScreen:
+                        needScreen = true;
+                        break;
+
+                    case ReplyItem.FillForm form:
+                        _formWanted = form;
                         break;
 
                     case ReplyItem.Delegate job:
@@ -638,6 +797,13 @@ public sealed partial class CompanionSession : IAsyncDisposable
         }
     }
 
+    // Who answered, never what was asked.
+    [LoggerMessage(Level = LogLevel.Information, Message = "Turn routed to {Route}")]
+    private partial void LogRoute(Jarvis.Core.Vault.TurnRoute route);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Browser step {Action} failed: {Reason}")]
+    private partial void LogBrowserStepFailed(string action, string reason);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Did an approved {Kind} step")]
     private partial void LogDriveStep(ComputerActionKind kind);
 
@@ -687,4 +853,8 @@ public sealed record CompanionServices(
     ConversationLog History,
     IComputerControl Control,
     Jarvis.Contracts.Browser.IBrowserLink Browser,
-    IOptionsMonitor<BrowserOptions> BrowserOptions);
+    IOptionsMonitor<BrowserOptions> BrowserOptions,
+    LocalTurns? Local = null);
+
+/// <summary>What answers on this PC: the vault (its brain and form filling) and the local model for private mode.</summary>
+public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms);

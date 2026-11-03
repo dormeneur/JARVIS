@@ -274,4 +274,7 @@ public readonly record struct CursorPose(double X, double Y, double RotationDegr
 
     /// <summary>Text for the bubble beside the cursor once it has arrived where it points.</summary>
     public string? Bubble { get; init; }
+
+    /// <summary>How full the ring beside the cursor is (0..1) while it rests on the sleeping notch; <see langword="null"/> otherwise.</summary>
+    public double? Dwell { get; init; }
 }

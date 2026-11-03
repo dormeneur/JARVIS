@@ -101,7 +101,17 @@ internal sealed class NotchWindow : Window
 
     public void RaiseToTop() => WindowChrome.RaiseToTop(Handle);
 
-    private nint Handle => WinRT.Interop.WindowNative.GetWindowHandle(this);
+    /// <summary>Whether a desktop point (physical pixels) is on the top-centred panel of this size (DIPs).</summary>
+    public bool IsOnPanel(int x, int y, double width, double height)
+    {
+        var scale = Content.XamlRoot?.RasterizationScale ?? 1;
+        var origin = AppWindow.Position;
+        var left = origin.X + ((AppWindow.Size.Width - (width * scale)) / 2);
+        return x >= left && x <= left + (width * scale) && y >= origin.Y && y <= origin.Y + (height * scale);
+    }
+
+    /// <summary>The window handle (file pickers need an owner).</summary>
+    public nint Handle => WinRT.Interop.WindowNative.GetWindowHandle(this);
 
     private void PlaceAtTopCentre()
     {

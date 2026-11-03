@@ -34,6 +34,7 @@
     <ProjectReference Include="..\Jarvis.Platform\Jarvis.Platform.csproj" />
     <ProjectReference Include="..\Jarvis.Providers.ClaudeCli\Jarvis.Providers.ClaudeCli.csproj" />
     <ProjectReference Include="..\Jarvis.Providers.Kokoro\Jarvis.Providers.Kokoro.csproj" />
+    <ProjectReference Include="..\Jarvis.Providers.Local\Jarvis.Providers.Local.csproj" />
     <ProjectReference Include="..\Jarvis.Providers.Whisper\Jarvis.Providers.Whisper.csproj" />
   </ItemGroup>
   <ItemGroup>

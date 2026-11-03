@@ -41,13 +41,21 @@ internal sealed class NotchPresenter : INotchPresenter
     private IReadOnlyList<ChatTurn>? _shownHistory;
     private (double Width, double Height)? _clickable;
     private NotchState.Composing? _composing;
+    private NotchFormView? _formView;
+    private NotchHomeView? _homeView;
     private NotchState _current = NotchState.Idle;
+    private Button? _close;
+    private DispatcherQueueTimer? _clickAway;
+    private bool _wasDown;
 
     public NotchPresenter(DispatcherQueue dispatcher, IOptionsMonitor<CursorOptions> cursorOptions)
     {
         _dispatcher = dispatcher;
         _cursorOptions = cursorOptions;
     }
+
+    /// <summary>What the close button does: the same as Escape (stop the turn, close the panel). Set by the app.</summary>
+    public Action? Escape { get; set; }
 
     /// <summary>Creates and shows the notch. Call once on the UI thread after the app has launched.</summary>
     public void Initialize(PauseSwitch pause)
@@ -57,6 +65,19 @@ internal sealed class NotchPresenter : INotchPresenter
         _surface = new NotchSurface(_window.SurfaceHost, (float)NotchWindow.EnvelopeHeight);
         BuildResponseContent(_window.ContentArea);
         BuildComposer(_window.ContentArea);
+        _formView = new NotchFormView(
+            _window,
+            _window.ContentArea,
+            () =>
+            {
+                if (_clickable is { } panel)
+                {
+                    _window.SetClickablePanel(panel.Width, panel.Height);
+                }
+            },
+            () => ((App)Application.Current).ShowSettings("Vault"));
+        _homeView = new NotchHomeView(_window.ContentArea);
+        BuildClose(_window.ContentArea);
         _caption = new TextBlock
         {
             FontSize = 12,
@@ -72,6 +93,7 @@ internal sealed class NotchPresenter : INotchPresenter
             if (e.WindowActivationState == WindowActivationState.Deactivated)
             {
                 CloseComposer(submit: false); // clicked away
+                _formView?.Deactivated(); // back to the page: the form panel stays
             }
         };
         _window.ShowPassively();
@@ -86,6 +108,11 @@ internal sealed class NotchPresenter : INotchPresenter
 
             UpdateVisibility();
         });
+
+        // A click anywhere else closes a message or the home (not the form panel, nor a question waiting for an answer).
+        _clickAway = _dispatcher.CreateTimer();
+        _clickAway.Interval = TimeSpan.FromMilliseconds(50);
+        _clickAway.Tick += (_, _) => CheckClickAway();
 
         // The resting sliver steps aside for fullscreen games, videos and presentations.
         _fullscreenCheck = _dispatcher.CreateTimer();
@@ -139,7 +166,7 @@ internal sealed class NotchPresenter : INotchPresenter
         }
 
         var frame = NotchLayout.FrameFor(state);
-        _surface.Apply(frame, NotchAccent.GlowFor(state), NotchAccent.GlowMoves(state), state is NotchState.Working);
+        _surface.Apply(frame, NotchAccent.GlowFor(state), NotchAccent.GlowMoves(state), state is NotchState.Working, NotchAccent.GlowReach(state), NotchAccent.GlowStrength(state));
 
         var wasComposing = _composing is not null;
         _composing = state as NotchState.Composing;
@@ -150,7 +177,8 @@ internal sealed class NotchPresenter : INotchPresenter
 
         var actions = (state as NotchState.Response)?.Actions ?? [];
         ShowActions(actions);
-        (double, double)? clickable = actions.Count > 0 ? (frame.Width, frame.Height) : null;
+        // Every open panel takes clicks: it has a close button.
+        (double, double)? clickable = state is NotchState.Response or NotchState.Form or NotchState.Home ? (frame.Width, frame.Height) : null;
         if (clickable != _clickable)
         {
             _clickable = clickable;
@@ -159,7 +187,25 @@ internal sealed class NotchPresenter : INotchPresenter
 
         var area = _window.ContentArea;
         var caption = (state as NotchState.Thinking)?.Caption;
-        if (state is NotchState.Response or NotchState.Composing || caption is not null)
+        if (state is NotchState.Form form)
+        {
+            _formView?.Show(form);
+        }
+        else
+        {
+            _formView?.Hide();
+        }
+
+        if (state is NotchState.Home home)
+        {
+            _homeView?.Show(home);
+        }
+        else
+        {
+            _homeView?.Hide();
+        }
+
+        if (state is NotchState.Response or NotchState.Composing or NotchState.Form or NotchState.Home || caption is not null)
         {
             _responseView.Visibility = state is NotchState.Response ? Visibility.Visible : Visibility.Collapsed;
             _composer.Visibility = state is NotchState.Composing ? Visibility.Visible : Visibility.Collapsed;
@@ -200,6 +246,83 @@ internal sealed class NotchPresenter : INotchPresenter
 
         _current = state;
         UpdateVisibility();
+        if (_close is not null)
+        {
+            // The form panel has its own, in its header; the composer and every other open panel get this one.
+            _close.Visibility = state is NotchState.Response or NotchState.Home or NotchState.Composing ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (ClosesOnClickAway(state))
+        {
+            _wasDown = Jarvis.Platform.Shell.Mouse.LeftDown;
+            _clickAway?.Start();
+        }
+        else
+        {
+            _clickAway?.Stop();
+        }
+    }
+
+    private static bool ClosesOnClickAway(NotchState state) => state is NotchState.Home or NotchState.Response { KeepOnClickAway: false };
+
+    /// <summary>A fresh press outside the panel closes it (the answer may still be speaking; only Escape stops that).</summary>
+    private void CheckClickAway()
+    {
+        var down = Jarvis.Platform.Shell.Mouse.LeftDown;
+        var pressed = down && !_wasDown;
+        _wasDown = down;
+        if (!pressed || _window is null || !ClosesOnClickAway(_current))
+        {
+            return;
+        }
+
+        var frame = NotchLayout.FrameFor(_current);
+        var (x, y) = Jarvis.Platform.Shell.Mouse.Position;
+        if (!_window.IsOnPanel(x, y, frame.Width, frame.Height))
+        {
+            Apply(NotchState.Idle);
+        }
+    }
+
+    /// <summary>The × in the top-right corner of an open panel: Escape, by mouse.</summary>
+    private void BuildClose(Grid area)
+    {
+        _close = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE711", FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"), FontSize = 10 },
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(11),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 6, 8, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_close, "Close (Esc)");
+        ToolTipService.SetToolTip(_close, "Close (Esc)");
+        _close.Click += (_, _) => CloseNow();
+        area.Children.Add(_close);
+    }
+
+    private void CloseNow()
+    {
+        if (_composing is not null)
+        {
+            CloseComposer(submit: false);
+            return;
+        }
+
+        if (Escape is { } escape)
+        {
+            _ = Task.Run(escape);
+        }
+        else
+        {
+            Apply(NotchState.Idle);
+        }
     }
 
     private void BuildComposer(Grid area)
@@ -361,7 +484,7 @@ internal sealed class NotchPresenter : INotchPresenter
             LineHeight = 18,
             FontFamily = (FontFamily)Application.Current.Resources["FontText"],
             Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"],
-            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, ContentTopPadding, NotchLayout.ContentHorizontalPadding, 15),
+            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, ContentTopPadding, NotchLayout.ContentHorizontalPadding + 22, 15),
         };
 
         area.Opacity = 0;

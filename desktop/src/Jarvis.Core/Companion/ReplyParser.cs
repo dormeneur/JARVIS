@@ -58,6 +58,18 @@ public sealed partial class ReplyParser
             text = MoreTag().Replace(text, string.Empty);
         }
 
+        if (ScreenTag().IsMatch(text))
+        {
+            items.Add(new ReplyItem.NeedScreen());
+            text = ScreenTag().Replace(text, string.Empty);
+        }
+
+        if (FormTag().Match(text) is { Success: true } form)
+        {
+            items.Add(new ReplyItem.FillForm(form.Groups["fill"].Success));
+            text = FormTag().Replace(text, string.Empty);
+        }
+
         foreach (Match block in DrawBlock().Matches(text))
         {
             var screen = block.Groups["screen"].Success ? int.Parse(block.Groups["screen"].Value, CultureInfo.InvariantCulture) : 1;
@@ -155,6 +167,11 @@ public sealed partial class ReplyParser
 
     private static ReplyItem.Act? ParseAct(Match tag)
     {
+        if (tag.Groups["page"].Success)
+        {
+            return ParsePageAct(tag.Groups["page"].Value.ToUpperInvariant(), tag.Groups["target"].Value.Trim(), tag.Groups["value"].Success ? tag.Groups["value"].Value : null);
+        }
+
         var kind = tag.Groups["kind"].Value.ToUpperInvariant() switch
         {
             "CLICK" => ComputerActionKind.Click,
@@ -181,13 +198,43 @@ public sealed partial class ReplyParser
         return new ReplyItem.Act(kind, x, y, tag.Groups["label"].Value.Trim(), screen, null);
     }
 
-    /// <summary>[DO:click x,y:label:screenN] (doubleclick, rightclick, scrollup, scrolldown), [DO:type:text], [DO:key:ctrl+s].</summary>
-    [GeneratedRegex(@"\[DO:(?:(?<kind>click|doubleclick|rightclick|scrollup|scrolldown)[\s:]+(?<x>-?\d+(?:\.\d+)?)\s*,\s*(?<y>-?\d+(?:\.\d+)?)(?::(?<label>[^:\]]*))?(?::screen(?<screen>\d+))?|(?<kind>type|key|open):(?<text>[^\]]*))\]", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// Browser steps: [DO:press:e12], [DO:fill:e3:text], [DO:copy:e5] or [DO:copy:selection],
+    /// [DO:paste:e7], [DO:scroll:down] (up, top, bottom), [DO:tab:switch:T12], [DO:tab:close] or
+    /// [DO:tab:close:T12], [DO:tab:open:https://…]. The target is kept in Label, any text in Text.
+    /// </summary>
+    private static ReplyItem.Act? ParsePageAct(string verb, string target, string? value)
+    {
+        ReplyItem.Act Step(ComputerActionKind kind, string label, string? text) => new(kind, 0, 0, label, 1, text);
+        return verb switch
+        {
+            "PRESS" when target.Length > 0 => Step(ComputerActionKind.Press, target, null),
+            "FILL" when target.Length > 0 && value is not null => Step(ComputerActionKind.Fill, target, value),
+            "COPY" => Step(ComputerActionKind.Copy, target.Length > 0 ? target : "selection", null),
+            "PASTE" when target.Length > 0 => Step(ComputerActionKind.Paste, target, null),
+            "SCROLL" when target.ToUpperInvariant() is "UP" or "DOWN" or "TOP" or "BOTTOM" => Step(ComputerActionKind.PageScroll, string.Empty, target.ToLowerInvariant()),
+            "TAB" when target.Equals("switch", StringComparison.OrdinalIgnoreCase) && value is { Length: > 0 } => Step(ComputerActionKind.TabSwitch, value.Trim(), null),
+            "TAB" when target.Equals("close", StringComparison.OrdinalIgnoreCase) => Step(ComputerActionKind.TabClose, value?.Trim() ?? string.Empty, null),
+            "TAB" when target.Equals("open", StringComparison.OrdinalIgnoreCase) && value is { Length: > 0 } => Step(ComputerActionKind.Open, string.Empty, value.Trim()),
+            _ => null,
+        };
+    }
+
+    /// <summary>[DO:click x,y:label:screenN] (doubleclick, rightclick, scrollup, scrolldown), [DO:type:text], [DO:key:ctrl+s], and the browser steps above.</summary>
+    [GeneratedRegex(@"\[DO:(?:(?<kind>click|doubleclick|rightclick|scrollup|scrolldown)[\s:]+(?<x>-?\d+(?:\.\d+)?)\s*,\s*(?<y>-?\d+(?:\.\d+)?)(?::(?<label>[^:\]]*))?(?::screen(?<screen>\d+))?|(?<page>press|fill|copy|paste|scroll|tab)(?::(?<target>[^:\]]*))?(?::(?<value>[^\]]*))?|(?<kind>type|key|open):(?<text>[^\]]*))\]", RegexOptions.IgnoreCase)]
     private static partial Regex ActTag();
 
     /// <summary>[MORE]: after these steps the task continues from a fresh look at the screen.</summary>
     [GeneratedRegex(@"\[MORE\]", RegexOptions.IgnoreCase)]
     private static partial Regex MoreTag();
+
+    /// <summary>[FORM] / [FORM:fill]: fill the browser's form from the vault on this PC (and type it into the page).</summary>
+    [GeneratedRegex(@"\[FORM(?<fill>:fill)?\]", RegexOptions.IgnoreCase)]
+    private static partial Regex FormTag();
+
+    /// <summary>[SCREEN]: the local (private mode) brain can't answer without seeing the screen.</summary>
+    [GeneratedRegex(@"\[SCREEN\]", RegexOptions.IgnoreCase)]
+    private static partial Regex ScreenTag();
 
     /// <summary>[AGENT] brief for a background job [/AGENT].</summary>
     [GeneratedRegex(@"\[AGENT\](?<brief>.*?)\[/AGENT\]", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
@@ -246,6 +293,13 @@ public abstract record ReplyItem
 
     /// <summary>The task needs another look at the screen after these steps.</summary>
     public sealed record More : ReplyItem;
+
+    /// <summary>The local brain needs to see the screen to answer (only the cloud brain can).</summary>
+    public sealed record NeedScreen : ReplyItem;
+
+    /// <summary>The user wants the form on screen filled: Jarvis does it from the vault on this PC.</summary>
+    /// <param name="FillIn">Put the answers into the page, too.</param>
+    public sealed record FillForm(bool FillIn) : ReplyItem;
 
     /// <summary>Run this background job on a schedule (see <see cref="Agents.RoutineSchedule"/>).</summary>
     public sealed record Recurring(string Schedule, string Brief) : ReplyItem;

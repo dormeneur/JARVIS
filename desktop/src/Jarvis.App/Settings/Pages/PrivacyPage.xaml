@@ -8,6 +8,11 @@
     <StackPanel MaxWidth="760" Padding="{StaticResource PagePadding}" HorizontalAlignment="Left" Spacing="6">
       <TextBlock Style="{StaticResource PageTitle}" Text="Privacy &amp; memory" />
 
+      <TextBlock Style="{StaticResource GroupTitle}" Text="Private mode" />
+      <settings:SettingRow Description="Everything is answered on this PC by your own Ollama model, and dictation is cleaned up here too: nothing goes to Claude. When a question needs a look at your screen, Jarvis asks before sending that one screenshot to Claude (only Claude can see images). Background jobs, routines and suggestions run on Claude, so they wait while this is on." Header="Keep everything on this PC">
+        <ToggleSwitch IsOn="{x:Bind ViewModel.PrivateMode, Mode=TwoWay}" OffContent="" OnContent="" />
+      </settings:SettingRow>
+
       <TextBlock Style="{StaticResource GroupTitle}" Text="Your screen" />
       <settings:SettingRow Description="Jarvis never watches your screen. It takes one screenshot only when you ask it something (talk keys, typed question or clicking the cursor). Off: it answers from your words alone." Header="Let Jarvis see my screen when I ask">
         <ToggleSwitch IsOn="{x:Bind ViewModel.ScreenAccess, Mode=TwoWay}" OffContent="" OnContent="" />
@@ -71,7 +76,8 @@
       <TextBlock Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap">
         <Run Text="• Your voice never leaves the PC: speech is turned into text here (Whisper), and Jarvis's voice is made here (Kokoro)." /><LineBreak />
         <Run Text="• The microphone is on only while you hold the talk or dictate keys, or after you click the cursor (2 minutes at most)." /><LineBreak />
-        <Run Text="• Your question (as text) and, if allowed above, the screenshot go to Claude through your own Claude Code login." /><LineBreak />
+        <Run Text="• Your question (as text) and, if allowed above, the screenshot go to Claude through your own Claude Code login, unless private mode is on." /><LineBreak />
+        <Run Text="• Questions about your vault (notes, profile) and forms to fill are always answered on this PC by your vault's own brain; Claude never sees your vault." /><LineBreak />
         <Run Text="• Background jobs send their brief to Claude and use the web and the connectors you added. They can't see your screen." /><LineBreak />
         <Run Text="• Jarvis's own windows (cursor, notch) are hidden from its screenshots and from screen recordings." /><LineBreak />
         <Run Text="• Jarvis only clicks or types for you if the switch above is on, and then only each step you approve." />

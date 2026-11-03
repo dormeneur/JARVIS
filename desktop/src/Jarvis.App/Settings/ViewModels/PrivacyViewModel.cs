@@ -47,6 +47,7 @@ public sealed partial class PrivacyViewModel : ObservableObject
         _time = time;
         _runningConversation = brain.Value.FreshConversationAfter;
 
+        PrivateMode = privacyOptions.CurrentValue.PrivateMode;
         ScreenAccess = privacyOptions.CurrentValue.ScreenAccess;
         ShowWhenLooking = privacyOptions.CurrentValue.ShowWhenLooking;
         ShowInRecordings = privacyOptions.CurrentValue.ShowInRecordings;
@@ -82,6 +83,11 @@ public sealed partial class PrivacyViewModel : ObservableObject
 
     [ObservableProperty]
     public partial string LastLook { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool PrivateMode { get; set; }
+
+    partial void OnPrivateModeChanged(bool value) => Save(nameof(PrivacyOptions.PrivateMode), value);
 
     [ObservableProperty]
     public partial bool ScreenAccess { get; set; }

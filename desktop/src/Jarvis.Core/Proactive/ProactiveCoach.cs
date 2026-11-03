@@ -134,7 +134,7 @@ public sealed partial class ProactiveCoach
             return;
         }
 
-        if (options.Suggestions && active && now - _lastSuggestion >= TimeSpan.FromMinutes(Math.Max(15, options.SuggestEveryMinutes)) && _activity.Count >= MinimumSamples)
+        if (options.Suggestions && !_services.Privacy.PrivateMode && active && now - _lastSuggestion >= TimeSpan.FromMinutes(Math.Max(15, options.SuggestEveryMinutes)) && _activity.Count >= MinimumSamples)
         {
             _lastSuggestion = now;
             await SuggestAsync(options, cancellationToken).ConfigureAwait(false);

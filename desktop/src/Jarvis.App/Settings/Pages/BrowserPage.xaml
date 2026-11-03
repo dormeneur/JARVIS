@@ -10,7 +10,7 @@
       <TextBlock
           Margin="0,0,0,8"
           Foreground="{StaticResource TextSecondaryBrush}"
-          Text="Link Chrome, Brave, Edge or Arc so Jarvis can read the page you're on when you ask about it, including the parts scrolled off screen, and open links you approve. The extension talks only to Jarvis on this PC."
+          Text="Link Chrome, Brave, Edge or Arc so Jarvis can read the page you're on when you ask about it (including the parts scrolled off screen), fill forms from your vault, and, with Let Jarvis use my mouse and keyboard on, do the steps you approve: press buttons, type, copy and paste between tabs, scroll, and switch or close tabs. The extension talks only to Jarvis on this PC."
           TextWrapping="Wrap" />
       <TextBlock FontWeight="SemiBold" Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
 
@@ -33,7 +33,8 @@
       <TextBlock Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap">
         <Run Text="1. In your browser, open the extensions page (chrome://extensions, brave://extensions or edge://extensions) and turn on Developer mode." /><LineBreak />
         <Run Text="2. Click Load unpacked and choose the Jarvis extension folder (buttons below)." /><LineBreak />
-        <Run Text="3. Come back here and click Allow when Jarvis asks." />
+        <Run Text="3. Come back here and click Allow when Jarvis asks." /><LineBreak />
+        <Run Text="4. For private (incognito) windows: on the extensions page, open Details for Jarvis Browser Link and turn on Allow in Private. After Jarvis updates, click the extension's reload button there." />
       </TextBlock>
       <StackPanel Orientation="Horizontal" Spacing="8">
         <Button Command="{x:Bind ViewModel.OpenFolderCommand}" Content="Open the extension folder" />

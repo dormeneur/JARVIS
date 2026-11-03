@@ -84,6 +84,44 @@ async def ask_jarvis_agent(
     )
 
 
+@router.post("/ask/ai/form-answers")
+async def ask_form_answers(
+    request: Request,
+    device=Depends(get_current_device),
+):
+    """Proxy form filling (questions read off a web page) to the Brain service (Streaming)."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/ai/form-answers"
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    return StreamingResponse(
+        proxy_stream(payload, url),
+        media_type="application/x-ndjson",
+    )
+
+
+@router.post("/ask/ai/compose-answer")
+async def ask_compose_answer(
+    request: Request,
+    device=Depends(get_current_device),
+):
+    """Proxy drafting an open form answer from the vault to the Brain service (Streaming)."""
+    url = f"{settings.brain_url.rstrip('/')}/brain/ai/compose-answer"
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    return StreamingResponse(
+        proxy_stream(payload, url),
+        media_type="application/x-ndjson",
+    )
+
+
 @router.get("/ask/ai/tools")
 async def ask_list_tools(device=Depends(get_current_device)):
     """List the AI tool catalogue (names, risk classes) for permission UI."""

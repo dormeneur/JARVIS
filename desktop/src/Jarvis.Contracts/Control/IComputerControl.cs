@@ -12,6 +12,29 @@ public enum ComputerActionKind
 
     /// <summary>Open a web link (<see cref="ComputerAction.Text"/>) in the user's browser.</summary>
     Open,
+
+    // Steps in the browser, done through the extension on a page element or tab (not the mouse).
+
+    /// <summary>Press a button or link on the page.</summary>
+    Press,
+
+    /// <summary>Type text into a field on the page.</summary>
+    Fill,
+
+    /// <summary>Copy an element's text (or the selection) to Jarvis's clipboard.</summary>
+    Copy,
+
+    /// <summary>Paste what Jarvis copied into a field, in any tab.</summary>
+    Paste,
+
+    /// <summary>Scroll the page: up, down, top or bottom.</summary>
+    PageScroll,
+
+    /// <summary>Bring a tab to the front.</summary>
+    TabSwitch,
+
+    /// <summary>Close a tab.</summary>
+    TabClose,
 }
 
 /// <param name="X">Desktop pixels (pointer actions only).</param>

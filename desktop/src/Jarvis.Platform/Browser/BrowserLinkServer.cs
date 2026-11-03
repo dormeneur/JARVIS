@@ -25,6 +25,12 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
     public const int Port = 47613;
     private const string ExtensionScheme = "chrome-extension://";
     private static readonly TimeSpan ReplyTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>Filling waits for the page: scrolling, and a dropdown opening before its option is clicked.</summary>
+    private static readonly TimeSpan FillTimeout = TimeSpan.FromSeconds(6);
+
+    /// <summary>Reading every frame of a big page can take a few seconds.</summary>
+    private static readonly TimeSpan FormTimeout = TimeSpan.FromSeconds(6);
     private static readonly string[] Browsers = ["chrome", "msedge", "brave", "arc", "vivaldi", "opera", "chromium"];
 
     private readonly IOptionsMonitor<BrowserOptions> _options;
@@ -110,8 +116,109 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
         }
 
         string Read(string key) => page[key]?.GetValue<string>() ?? string.Empty;
-        return new BrowserPage(Read("url"), Read("title"), Read("selection"), Read("text"));
+        var elements = (page["elements"] as JsonArray ?? []).OfType<JsonObject>()
+            .Select(element => new PageElement(
+                element["id"]?.GetValue<string>() ?? string.Empty,
+                element["kind"]?.GetValue<string>() ?? "button",
+                element["label"]?.GetValue<string>() ?? string.Empty,
+                element["onScreen"]?.GetValue<bool>() == true))
+            .Where(element => element.Id.Length > 0)
+            .ToList();
+        var tabs = (page["tabs"] as JsonArray ?? []).OfType<JsonObject>()
+            .Select(tab => new BrowserTab(tab["id"]?.GetValue<string>() ?? string.Empty, tab["title"]?.GetValue<string>() ?? string.Empty, tab["active"]?.GetValue<bool>() == true))
+            .Where(tab => tab.Id.Length > 0)
+            .ToList();
+        return new BrowserPage(Read("url"), Read("title"), Read("selection"), Read("text"), elements, tabs);
     }
+
+    public async Task<BrowserActResult?> ActAsync(BrowserAct act, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(act);
+        var request = new JsonObject { ["type"] = "act", ["action"] = act.Action, ["target"] = act.Target, ["text"] = act.Text };
+        if (await RequestAsync(request, cancellationToken, FillTimeout).ConfigureAwait(false) is not JsonObject result)
+        {
+            return null;
+        }
+
+        int? Number(string key) => result[key] is JsonValue number && number.TryGetValue<double>(out var n) ? (int)n : null;
+        return new BrowserActResult(
+            result["done"]?.GetValue<bool>() == true,
+            Number("x"),
+            Number("y"),
+            result["focused"]?.GetValue<bool>() == true,
+            result["reason"]?.GetValue<string>(),
+            result["text"]?.GetValue<string>());
+    }
+
+    public async Task<BrowserForm?> ReadFormAsync(CancellationToken cancellationToken)
+    {
+        if (!IsConnected)
+        {
+            return null;
+        }
+
+        if (await RequestAsync(new JsonObject { ["type"] = "form" }, cancellationToken, FormTimeout).ConfigureAwait(false) is not JsonObject form)
+        {
+            return new BrowserForm(string.Empty, string.Empty, [], Problem: "The browser extension didn't answer. Reload Jarvis Browser Link on your browser's extensions page, then try again.");
+        }
+
+        string Read(JsonNode? node, string key) => node?[key]?.GetValue<string>() ?? string.Empty;
+        var questions = (form["questions"] as JsonArray ?? [])
+            .OfType<JsonObject>()
+            .Select(question => new FormQuestion(
+                Read(question, "id"),
+                Read(question, "text"),
+                Read(question, "kind"),
+                [.. (question["options"] as JsonArray ?? []).Select(option => option?.GetValue<string>() ?? string.Empty).Where(option => option.Length > 0)],
+                question["required"]?.GetValue<bool>() == true))
+            .Where(question => question.Id.Length > 0 && question.Text.Length > 0)
+            .ToList();
+        // The extension only sees windows it's allowed in: a private window it can't see makes it read
+        // the last normal window instead. Never fill a page other than the one in front.
+        var tabTitle = Read(form, "tabTitle");
+        if (IsBrowserInFront && tabTitle.Length > 0 && FrontWindowTitle() is { Length: > 0 } front && !front.Contains(tabTitle, StringComparison.Ordinal))
+        {
+            var allowed = form["allowedInPrivate"]?.GetValue<bool>() == true;
+            return new BrowserForm(Read(form, "url"), Read(form, "title"), [], Problem: allowed
+                ? "The page I can read isn't the one in front. Click into the form's tab, then try again."
+                : "I can't see the window in front. If it's a private (incognito) window, turn on \"Allow in Private\" for Jarvis Browser Link: open your browser's extensions page, then Details.");
+        }
+
+        var problem = form["reason"]?.GetValue<string>() is { Length: > 0 } reason ? $"I couldn't read a form here: {reason}." : null;
+        if (form["version"] is null)
+        {
+            problem = "The browser extension is out of date. Reload Jarvis Browser Link on your browser's extensions page, then try again.";
+        }
+
+        return new BrowserForm(Read(form, "url"), Read(form, "title"), questions, Read(form, "description"), questions.Count == 0 ? problem ?? "I couldn't find any questions on this page." : null);
+    }
+
+    /// <summary>The title bar text of the window in front (browsers put the tab's title there).</summary>
+    private static unsafe string FrontWindowTitle()
+    {
+        Span<char> buffer = stackalloc char[512];
+        fixed (char* text = buffer)
+        {
+            var length = PInvoke.GetWindowText(PInvoke.GetForegroundWindow(), text, buffer.Length);
+            return new string(buffer[..Math.Max(0, length)]);
+        }
+    }
+
+    public async Task<FormFill?> FillFormAsync(string questionId, string value, CancellationToken cancellationToken)
+    {
+        var request = new JsonObject { ["type"] = "fill", ["question"] = questionId, ["value"] = value };
+        if (await RequestAsync(request, cancellationToken, FillTimeout).ConfigureAwait(false) is not JsonObject fill)
+        {
+            return null;
+        }
+
+        int? Number(string key) => fill[key] is JsonValue number && number.TryGetValue<double>(out var n) ? (int)n : null;
+        return new FormFill(fill["filled"]?.GetValue<bool>() == true, Number("x"), Number("y"), fill["focused"]?.GetValue<bool>() == true, fill["reason"]?.GetValue<string>());
+    }
+
+    public async Task<bool> CheckFormAsync(string questionId, string value, CancellationToken cancellationToken)
+        => await RequestAsync(new JsonObject { ["type"] = "check", ["question"] = questionId, ["value"] = value }, cancellationToken).ConfigureAwait(false) is JsonValue shown
+           && shown.TryGetValue<bool>(out var yes) && yes;
 
     public async Task<bool> OpenAsync(string url, CancellationToken cancellationToken)
         => await RequestAsync(new JsonObject { ["type"] = "open", ["url"] = url }, cancellationToken).ConfigureAwait(false) is not null;
@@ -122,7 +229,7 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
             ? origin[ExtensionScheme.Length..].TrimEnd('/')
             : null;
 
-    private async Task<JsonNode?> RequestAsync(JsonObject request, CancellationToken cancellationToken)
+    private async Task<JsonNode?> RequestAsync(JsonObject request, CancellationToken cancellationToken, TimeSpan? timeLimit = null)
     {
         if (_socket is not { State: WebSocketState.Open } socket)
         {
@@ -137,7 +244,7 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
         {
             await SendAsync(socket, request.ToJsonString(), cancellationToken).ConfigureAwait(false);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(ReplyTimeout);
+            timeout.CancelAfter(timeLimit ?? ReplyTimeout);
             return await reply.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is OperationCanceledException or WebSocketException)

@@ -25,6 +25,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         new("Proactive", "", typeof(ProactivePage)),
         new("Connectors", "", typeof(ConnectorsPage)),
         new("Browser", "", typeof(BrowserPage)),
+        new("Vault", "", typeof(VaultPage)),
     ];
 
     [ObservableProperty]

@@ -48,7 +48,7 @@ class OllamaClient:
         # We need a longer timeout for LLM generation
         self.timeout = httpx.Timeout(120.0, connect=10.0)
 
-    async def generate_streaming(self, prompt: str) -> AsyncGenerator[str, None]:
+    async def generate_streaming(self, prompt: str, think: bool | None = False) -> AsyncGenerator[str, None]:
         """Generate response tokens iteratively using NDJSON streaming length.
         
         Args:
@@ -71,7 +71,11 @@ class OllamaClient:
                 "num_predict": MAX_TOKENS
             }
         }
-        
+        # Thinking off by default: a vault answer should start in seconds, not after a long
+        # hidden monologue. Models without a thinking mode reject the flag: ask again without it.
+        if think is not None:
+            payload["think"] = think
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream(
@@ -79,6 +83,10 @@ class OllamaClient:
                     f"{self.ollama_url}{OLLAMA_GENERATE_API_PATH}", 
                     json=payload
                 ) as response:
+                    if response.status_code == 400 and "think" in payload:
+                        async for token in self.generate_streaming(prompt, think=None):
+                            yield token
+                        return
                     response.raise_for_status()
                     
                     # Read streaming NDJSON lines
@@ -115,6 +123,7 @@ class OllamaClient:
         self,
         messages: list,
         tools: list | None = None,
+        think: bool | None = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Stream one assistant turn from /api/chat, with native tool calling.
 
@@ -138,6 +147,8 @@ class OllamaClient:
         }
         if tools:
             payload["tools"] = tools
+        if think is not None:
+            payload["think"] = think
 
         collected_calls: list = []
 
@@ -146,6 +157,12 @@ class OllamaClient:
                 async with client.stream(
                     "POST", f"{self.ollama_url}{OLLAMA_CHAT_API_PATH}", json=payload
                 ) as response:
+                    if response.status_code == 400 and "think" in payload:
+                        # Models without a thinking mode reject `think`: ask again without it.
+                        payload.pop("think")
+                        async for event in self.chat_with_tools(messages, tools):
+                            yield event
+                        return
                     if response.status_code >= 400:
                         body = (await response.aread()).decode("utf-8", "replace")
                         logger.error("Ollama /api/chat %s: %s", response.status_code, body)
@@ -188,6 +205,30 @@ class OllamaClient:
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to stream chat from Ollama: %s", exc)
             yield {"error": str(exc)}
+
+    async def chat_json(self, messages: list, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """One deterministic /api/chat reply constrained to a JSON schema, thinking off.
+
+        Models without a thinking mode reject `think`, so that call is retried without it.
+        No num_ctx: a value different from the other callers' makes Ollama reload the model.
+        """
+        payload: Dict[str, Any] = {
+            "model": LLM_MODEL,
+            "messages": messages,
+            "stream": False,
+            "format": schema,
+            "think": False,
+            "options": {"temperature": 0, "num_predict": MAX_TOKENS},
+        }
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(f"{self.ollama_url}{OLLAMA_CHAT_API_PATH}", json=payload)
+            if response.status_code == 400 and "think" in response.text.lower():
+                payload.pop("think")
+                response = await client.post(f"{self.ollama_url}{OLLAMA_CHAT_API_PATH}", json=payload)
+            if response.status_code >= 400:
+                raise RuntimeError(_friendly_chat_error(response.text))
+            content = (response.json().get("message") or {}).get("content") or "{}"
+            return json.loads(content)
 
     async def generate(self, prompt: str) -> Tuple[str, int]:
         """Generate a complete response (non-streaming).

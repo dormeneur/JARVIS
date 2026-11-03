@@ -76,15 +76,18 @@ internal sealed partial class ProactiveTimer(Jarvis.Core.Proactive.ProactiveCoac
     private partial void LogTickFailed(Exception exception);
 }
 
-/// <summary>Checks for due routines every 30 seconds.</summary>
-internal sealed class RoutineTimer(RoutineScheduler scheduler, TimeProvider time) : BackgroundService
+/// <summary>Checks for due routines every 30 seconds, except in private mode (routines run on Claude).</summary>
+internal sealed class RoutineTimer(RoutineScheduler scheduler, Jarvis.Core.Companion.ScreenPrivacy privacy, TimeProvider time) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), time);
         do
         {
-            scheduler.Tick();
+            if (!privacy.PrivateMode)
+            {
+                scheduler.Tick(); // a routine due meanwhile runs once private mode is off
+            }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
     }

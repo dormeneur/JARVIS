@@ -17,12 +17,17 @@ public static class NotchLayout
     public const double ShoulderRadius = 10;
     public const double ContentHorizontalPadding = 18;
 
-    private const double SliverWidth = 60;
-    private const double SliverHeight = 8;
+    public const double SliverWidth = 60;
+    public const double SliverHeight = 8;
     private const double ActivityWidth = 360;
     private const double ActivityHeight = 32;
     private const double CharactersPerLine = 74;
     private const double LineHeight = 18;
+
+    /// <summary>The home's greeting and tiles; each recent item adds a row.</summary>
+    public const double HomeHeight = 8 + 22 + 10 + 64 + 14;
+
+    public const double HomeRowHeight = 34;
 
     /// <summary>Action buttons are 24 DIPs tall (DESIGN-FACTS.md §2.1), plus a gap above.</summary>
     public const double ActionBarHeight = 24 + 8;
@@ -43,6 +48,8 @@ public static class NotchLayout
             22,
             IsSliver: false,
             Springs.NotchOpen),
+        NotchState.Form => new NotchFrame(ExpandedWidth, MaxExpandedHeight, 22, IsSliver: false, Springs.NotchOpen),
+        NotchState.Home home => new NotchFrame(ExpandedWidth, Math.Min(MaxExpandedHeight, HomeHeight + (home.Recent.Count * HomeRowHeight) + (home.Recent.Count > 0 ? 26 : 0)), 22, IsSliver: false, Springs.NotchOpen),
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown notch state."),
     };
 

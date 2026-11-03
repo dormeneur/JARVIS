@@ -124,3 +124,9 @@ SetCursorPos
 SetTimer
 GetWindowText
 GetLastInputInfo
+// Spell checking (is this an English word?)
+SpellCheckerFactory
+ISpellCheckerFactory
+ISpellChecker
+IEnumSpellingError
+ISpellingError

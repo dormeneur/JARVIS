@@ -48,7 +48,7 @@ internal sealed class NotchSurface
     {
         _compositor = ElementCompositionPreview.GetElementVisual(host).Compositor;
         _props = _compositor.CreatePropertySet();
-        foreach (var name in new[] { "Width", "Height", "Radius", "Sliver", "Concavity", "Gap", "Orbit", "Pulse" })
+        foreach (var name in new[] { "Width", "Height", "Radius", "Sliver", "Concavity", "Gap", "Orbit", "Pulse", "GlowH" })
         {
             _props.InsertScalar(name, 0);
         }
@@ -81,8 +81,11 @@ internal sealed class NotchSurface
     }
 
     /// <summary>Springs (or snaps) the shape to <paramref name="frame"/> and fades the lighting in or out.</summary>
-    public void Apply(NotchFrame frame, IReadOnlyList<uint>? glowColors, bool glowMoves, bool working)
+    /// <param name="glowReach">How tall the glow may reach (DIPs); null for the panel's own height (the spec).</param>
+    /// <param name="glowStrength">0..1 of the glow's usual opacity.</param>
+    public void Apply(NotchFrame frame, IReadOnlyList<uint>? glowColors, bool glowMoves, bool working, double? glowReach = null, double glowStrength = 1)
     {
+        Animate("GlowH", (float)Math.Min(frame.Height, glowReach ?? frame.Height), frame.Spring);
         var sliver = frame.IsSliver ? 1f : 0f;
         Animate("Width", (float)frame.Width, frame.Spring);
         Animate("Height", (float)frame.Height, frame.Spring);
@@ -96,7 +99,7 @@ internal sealed class NotchSurface
             SetGlowColors(glowColors);
         }
 
-        Fade(_glow, glowColors is null ? 0 : GlowOpacity);
+        Fade(_glow, glowColors is null ? 0 : GlowOpacity * (float)glowStrength);
         SetGlowRunning(glowColors is not null && glowMoves);
         Fade(_sweep, working ? 1 : 0);
         SetSweepRunning(working);
@@ -212,8 +215,8 @@ internal sealed class NotchSurface
             blob.ColorStops.Add(_blobStops[index][stop]);
         }
 
-        Bind(blob, "EllipseCenter", Invariant($"Vector2(p.Width * {1 - fromRight} + 6 * Cos(p.Orbit + {phase}), p.Height * {down} + 6 * Sin(p.Orbit + {phase}))"));
-        Bind(blob, "EllipseRadius", Invariant($"Vector2(Max(p.Height, 40) * {radius}, Max(p.Height, 40) * {radius})"));
+        Bind(blob, "EllipseCenter", Invariant($"Vector2(p.Width * {1 - fromRight} + 6 * Cos(p.Orbit + {phase}), p.Height - p.GlowH * {1 - down} + 6 * Sin(p.Orbit + {phase}))"));
+        Bind(blob, "EllipseRadius", Invariant($"Vector2(Max(p.GlowH, 40) * {radius}, Max(p.GlowH, 40) * {radius})"));
 
         var mask = _compositor.CreateRadialGradientBrush();
         mask.MappingMode = CompositionMappingMode.Absolute;
@@ -223,7 +226,7 @@ internal sealed class NotchSurface
         }
 
         Bind(mask, "EllipseCenter", "Vector2(p.Width, p.Height)");
-        Bind(mask, "EllipseRadius", "Vector2(p.Height * 1.6, p.Height * 1.6)");
+        Bind(mask, "EllipseRadius", "Vector2(p.GlowH * 1.6, p.GlowH * 1.6)");
 
         var masked = _compositor.CreateMaskBrush();
         masked.Source = blob;

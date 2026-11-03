@@ -17,6 +17,9 @@ internal sealed class CursorRenderer : IDisposable
     /// <summary>Square drawing area around the cursor, in DIPs; fits the glow and the mid-flight swell.</summary>
     private const float CanvasDips = 72;
     private const float TriangleSide = 16;
+
+    /// <summary>The dwell ring sits down and to the right of the cursor, clear of the triangle (ours).</summary>
+    private const float DwellRingOffset = 16;
     private const float CornerRadiusFraction = 0.09f;
     private const float GlowDeviationDips = 3.5f;
     private const float GlowOpacity = 0.75f;
@@ -62,7 +65,7 @@ internal sealed class CursorRenderer : IDisposable
         _visual.SetOffsetY((float)(pose.Y - _host.Display.Top) - half);
 
         // Moving is a compositor property change; only repaint when the cursor looks different.
-        var appearance = new Appearance(Math.Round(pose.RotationDegrees, 1), Math.Round(pose.Scale, 3), pose.ThinkingSeconds, pose.ListeningLevel, rgb, scale);
+        var appearance = new Appearance(Math.Round(pose.RotationDegrees, 1), Math.Round(pose.Scale, 3), pose.ThinkingSeconds, pose.ListeningLevel, rgb, scale, pose.Dwell);
         if (appearance == _drawn)
         {
             return;
@@ -150,10 +153,53 @@ internal sealed class CursorRenderer : IDisposable
             context.FillGeometry(triangle, brush);
         }
 
+        if (pose.Dwell is { } dwell)
+        {
+            DrawDwellRing(context, brush, color, centre, (float)dwell);
+        }
+
         context.EndDraw();
         context.Target = null;
         commands.Close();
         return commands;
+    }
+
+    /// <summary>
+    /// The ring beside the cursor while it rests on the notch: 16 DIPs across with a 2.5 DIP line
+    /// (DESIGN-FACTS.md §3), a faint full track under an arc that fills clockwise from the top.
+    /// </summary>
+    private void DrawDwellRing(ID2D1DeviceContext context, ID2D1SolidColorBrush brush, Color4 color, Matrix3x2 centre, float fill)
+    {
+        const float line = 2.5f;
+        const float radius = (16 - line) / 2;
+        var at = new Vector2(DwellRingOffset, DwellRingOffset);
+        context.Transform = centre;
+        using var track = context.CreateSolidColorBrush(new Color4(color.R, color.G, color.B, 0.25f));
+        context.DrawEllipse(new Ellipse(at, radius, radius), track, line);
+        if (fill <= 0)
+        {
+            return;
+        }
+
+        var start = -MathF.PI / 2;
+        var end = start + (2 * MathF.PI * Math.Min(fill, 0.999f));
+        using var arc = _graphics.Factory.CreatePathGeometry();
+        using (var sink = arc.Open())
+        {
+            sink.BeginFigure(at + (new Vector2(MathF.Cos(start), MathF.Sin(start)) * radius), FigureBegin.Hollow);
+            sink.AddArc(new ArcSegment
+            {
+                Point = at + (new Vector2(MathF.Cos(end), MathF.Sin(end)) * radius),
+                Size = new Vortice.Mathematics.Size(radius, radius),
+                SweepDirection = SweepDirection.Clockwise,
+                ArcSize = fill > 0.5f ? ArcSize.Large : ArcSize.Small,
+            });
+            sink.EndFigure(FigureEnd.Open);
+            sink.Close();
+        }
+
+        using var round = _graphics.Factory.CreateStrokeStyle(new StrokeStyleProperties { StartCap = CapStyle.Round, EndCap = CapStyle.Round });
+        context.DrawGeometry(arc, brush, line, round);
     }
 
     /// <summary>Equilateral triangle centred on the origin, tip up, corners rounded with quadratic curves.</summary>
@@ -209,5 +255,5 @@ internal sealed class CursorRenderer : IDisposable
     }
 
     /// <summary>Everything that changes the cursor's pixels (position is not among them).</summary>
-    private readonly record struct Appearance(double Rotation, double Scale, double? ThinkingSeconds, double? ListeningLevel, uint Rgb, double DisplayScale);
+    private readonly record struct Appearance(double Rotation, double Scale, double? ThinkingSeconds, double? ListeningLevel, uint Rgb, double DisplayScale, double? Dwell);
 }

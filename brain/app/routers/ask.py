@@ -9,7 +9,7 @@ import json
 
 from app.services.retriever import Retriever
 from app.services.context_assembler import ContextAssembler
-from app.services.ollama_client import OllamaClient
+from app.services.ollama_client import LLM_MODEL, OllamaClient
 from app.services.tools import ToolError, safe_path
 
 # In standard FastAPI patterns, we might inject this via a dependency,
@@ -87,7 +87,7 @@ async def generate_rag_stream(request_data: AskRequest, app_state):
     final_response = AskResponse(
         answer=full_answer,
         sources=final_sources if options.include_sources else [],
-        model="llama3",
+        model=LLM_MODEL,
         tokens_used=tokens_used
     )
     logger.info("Ollama stream finished. Yielding final AskResponse.")
@@ -123,7 +123,7 @@ async def ask_brain(req: AskRequest, request: Request):
         return AskResponse(
             answer=full_answer,
             sources=sources,
-            model="llama3",
+            model=LLM_MODEL,
             tokens_used=tokens
         )
 

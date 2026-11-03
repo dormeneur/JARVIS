@@ -135,24 +135,32 @@ public sealed partial class AgentJobManager : IAgentJobs, IDisposable
             {
                 job = Update(job with { Status = AgentJobStatus.Running, Activity = "Getting started" });
                 LogStarted(job.Id, job.Title);
+                string? result = null;
                 await foreach (var agentEvent in _runtime.RunAsync(new AgentJob(AgentInstructions.Text, brief, Path.GetFullPath(job.Folder), await ConnectorsAsync(cancellationToken).ConfigureAwait(false)), cancellationToken).ConfigureAwait(false))
                 {
-                    job = agentEvent switch
+                    switch (agentEvent)
                     {
-                        AgentEvent.Note note => Update(job with { Activity = FirstLine(note.Text) }),
-                        AgentEvent.ToolUse tool => Update(job with { Activity = Describe(tool) }),
-                        AgentEvent.Finished finished => Update(job with { Status = AgentJobStatus.Finished, Activity = null, Result = finished.Result.Trim() }),
-                        _ => job,
-                    };
+                        case AgentEvent.Note note:
+                            job = Update(job with { Activity = FirstLine(note.Text) });
+                            break;
+                        case AgentEvent.ToolUse tool:
+                            job = Update(job with { Activity = Describe(tool) });
+                            break;
+                        case AgentEvent.Finished finished:
+                            result = finished.Result.Trim();
+                            break;
+                    }
                 }
 
-                if (job.Status != AgentJobStatus.Finished)
+                if (result is null)
                 {
                     throw new InvalidOperationException("The agent stopped without a final message.");
                 }
 
+                // Its files are in place before anyone hears it finished (Open shows them).
                 CollectStrayOutput(job.Folder);
-                File.WriteAllText(Path.Combine(job.Folder, "result.md"), job.Result);
+                File.WriteAllText(Path.Combine(job.Folder, "result.md"), result);
+                job = Update(job with { Status = AgentJobStatus.Finished, Activity = null, Result = result });
                 LogFinished(job.Id, (_time.GetLocalNow() - job.Started).TotalSeconds);
             }
             finally

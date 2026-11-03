@@ -210,3 +210,19 @@ class TestInviteTokenExpiry:
             },
         )
         assert resp.status_code in (400, 403, 422)
+
+
+def test_host_invite_code_registers_a_device_without_secrets(client, vault_settings, registered_device):
+    """`python -m app.invite` mints the same single-use token the QR flow uses."""
+    from app.services import auth
+
+    token, _ = auth.create_invite_token()
+    first = client.post("/auth/invite/register", json={"device_name": "Jarvis desktop", "invite_token": token, "server_url": "http://127.0.0.1:8000"})
+    assert first.status_code == 201
+    assert first.json()["is_secrets_authorized"] is False
+    again = client.post("/auth/invite/register", json={"device_name": "Other", "invite_token": token, "server_url": "http://127.0.0.1:8000"})
+    assert again.status_code != 201
+
+
+def test_form_answers_proxy_needs_a_device(client):
+    assert client.post("/ask/ai/form-answers", json={"questions": []}).status_code in (401, 403, 422)  # no Authorization header

@@ -237,6 +237,30 @@ public sealed class CompanionSessionTests
     }
 
     [Fact]
+    public async Task BrowserSteps_NameWhatTheyActOn_AndGoThroughTheExtensionAfterDoIt()
+    {
+        var fakes = new Fakes("unused", "Pressing it. [DO:press:e2]");
+        fakes.PrivacyOptions.LetJarvisDrive = true;
+        fakes.Browser.IsConnected = true;
+        fakes.Browser.IsBrowserInFront = true;
+        fakes.Browser.Page = new Jarvis.Contracts.Browser.BrowserPage("https://x.test", "Shop", string.Empty, "Buy things",
+            [new("e1", "link", "Home", true), new("e2", "button", "Add to list", true)]);
+        await using var session = fakes.CreateSession();
+
+        session.Ask("add it to my list");
+        await WaitUntil(() => fakes.Notch.Shown.OfType<NotchState.Response>().Any(r => r.Actions is { Count: 2 }));
+        var ask = fakes.Notch.Shown.OfType<NotchState.Response>().Last(r => r.Actions is { Count: 2 });
+
+        Assert.Equal("Press \"Add to list\" on the page?", ask.Text);
+        Assert.Contains("e2 button \"Add to list\"", fakes.Brain.LastTurn!.UserText, StringComparison.Ordinal);
+        Assert.Empty(fakes.Browser.Acts);
+        ask.Actions![0].Invoke(); // Do it
+        await WaitUntil(() => fakes.Browser.Acts.Count == 1);
+        Assert.Equal(new Jarvis.Contracts.Browser.BrowserAct("press", "e2", null), fakes.Browser.Acts[0]);
+        Assert.Empty(fakes.Control.Done); // not the mouse
+    }
+
+    [Fact]
     public async Task DriveOff_StepsAreIgnored_AndTheBrainIsNotInvited()
     {
         var fakes = new Fakes("unused", "Click Settings. [DO:click 100,50:Settings]");
@@ -350,8 +374,74 @@ public sealed class CompanionSessionTests
         Assert.True(condition());
     }
 
+    [Fact]
+    public async Task VaultQuestion_IsAnsweredOnThisPc_WithoutAScreenshotOrClaude()
+    {
+        var fakes = new Fakes("what's in my notes about Lisbon", "Claude would say this.");
+        var vaultBrain = new FakeBrain("Your notes say May.");
+        fakes.UseLocal(vaultBrain, new FakeBrain("Local would say this."));
+        await using var session = fakes.CreateSession();
+
+        session.BeginListening();
+        session.EndListening();
+        await fakes.Player.Finished.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Null(fakes.Brain.LastTurn);
+        Assert.Empty(vaultBrain.LastTurn!.Images);
+        Assert.Equal(["Your notes say May."], fakes.Speech.Spoken);
+        Assert.Equal("Answered from your vault on this PC", fakes.Privacy.Recent()[0].Reason);
+    }
+
+    [Fact]
+    public async Task PrivateMode_AnswersLocally_AndAsksBeforeSendingTheScreenToClaude()
+    {
+        var fakes = new Fakes("what does this error mean", "It means the file is locked.");
+        fakes.PrivacyOptions.PrivateMode = true;
+        var local = new FakeBrain("[SCREEN]");
+        fakes.UseLocal(new FakeBrain("unused"), local);
+        await using var session = fakes.CreateSession();
+
+        session.BeginListening();
+        session.EndListening();
+        await WaitUntil(() => fakes.Notch.Shown.OfType<NotchState.Response>().Any(r => r.Actions is { Count: 2 }));
+
+        Assert.Null(fakes.Brain.LastTurn); // nothing went to Claude yet
+        Assert.Equal(CompanionPrompt.PrivateInstructions, local.LastTurn!.Instructions);
+        Assert.Empty(local.LastTurn.Images);
+        fakes.Notch.Shown.OfType<NotchState.Response>().Last(r => r.Actions is { Count: 2 }).Actions![0].Invoke(); // Send to Claude
+        await WaitUntil(() => fakes.Speech.Spoken.Contains("It means the file is locked."));
+
+        Assert.Equal(2, fakes.Brain.LastTurn!.Images.Count);
+    }
+
+    [Fact]
+    public async Task PrivateMode_DecliningTheScreenshot_KeepsTheTurnOnThisPc()
+    {
+        var fakes = new Fakes("what does this error mean", "Claude would say this.");
+        fakes.PrivacyOptions.PrivateMode = true;
+        fakes.UseLocal(new FakeBrain("unused"), new FakeBrain("[SCREEN]"));
+        await using var session = fakes.CreateSession();
+
+        session.BeginListening();
+        session.EndListening();
+        await WaitUntil(() => fakes.Notch.Shown.OfType<NotchState.Response>().Any(r => r.Actions is { Count: 2 }));
+        fakes.Notch.Shown.OfType<NotchState.Response>().Last(r => r.Actions is { Count: 2 }).Actions![1].Invoke(); // No
+        await WaitUntil(() => fakes.Notch.Shown.LastOrDefault() == NotchState.Idle);
+
+        Assert.Null(fakes.Brain.LastTurn);
+        Assert.Contains(fakes.Notch.Shown, state => state is NotchState.Response { Text: var text } && text.StartsWith("Okay, I kept it on this PC", StringComparison.Ordinal));
+    }
+
     private sealed class Fakes(string transcript, string reply)
     {
+        public LocalTurns? Local { get; private set; }
+
+        public void UseLocal(IAssistantBrain vaultBrain, IAssistantBrain localBrain)
+        {
+            var vault = new Jarvis.Tests.Vault.FakeVault();
+            Local = new LocalTurns(vault, vaultBrain, localBrain, new Jarvis.Core.Vault.FormFiller(new Jarvis.Core.Vault.FormServices(vault, Browser, Notch), TimeProvider.System, NullLogger<Jarvis.Core.Vault.FormFiller>.Instance));
+        }
+
         public TimeSpan BrainDelay { get; init; }
 
         public FakeBrain Brain { get; } = new(reply);
@@ -394,7 +484,7 @@ public sealed class CompanionSessionTests
         {
             Brain.Delay = BrainDelay;
             var options = new OptionsMonitor(new CompanionOptions { CaptionSeconds = 0 });
-            var services = new CompanionServices(Microphone, new FakeStt(transcript), new FakeCapture(), Brain, Speech, Player, Cursor, Drawing, Notch, Agents, Sounds, Routines, Privacy, History, Control, Browser, new BrowserMonitor(BrowserOptions));
+            var services = new CompanionServices(Microphone, new FakeStt(transcript), new FakeCapture(), Brain, Speech, Player, Cursor, Drawing, Notch, Agents, Sounds, Routines, Privacy, History, Control, Browser, new BrowserMonitor(BrowserOptions), Local);
             return new CompanionSession(services, options, new CursorMonitor(), TimeProvider.System, NullLogger<CompanionSession>.Instance)
             {
                 MaxRecording = maxRecording ?? TimeSpan.FromSeconds(120),
@@ -697,6 +787,14 @@ public sealed class CompanionSessionTests
         public Jarvis.Contracts.Browser.BrowserPage? Page { get; set; }
 
         public List<string> Opened { get; } = [];
+
+        public List<Jarvis.Contracts.Browser.BrowserAct> Acts { get; } = [];
+
+        public Task<Jarvis.Contracts.Browser.BrowserActResult?> ActAsync(Jarvis.Contracts.Browser.BrowserAct act, CancellationToken cancellationToken)
+        {
+            Acts.Add(act);
+            return Task.FromResult<Jarvis.Contracts.Browser.BrowserActResult?>(new(true, 10, 20));
+        }
 
         public Task<Jarvis.Contracts.Browser.BrowserPage?> ReadPageAsync(CancellationToken cancellationToken) => Task.FromResult(Page);
 

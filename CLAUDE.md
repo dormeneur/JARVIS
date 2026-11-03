@@ -58,6 +58,11 @@ flutter run
   `MutationQueue` row; there are no conflict files on disk.
 - **Mobile DB is Drift with codegen.** Schema version and migrations live in
   `mobile/lib/core/storage/app_database.dart`. Never alter existing tables' shape; add migrations.
+- **Form filling (desktop):** `/ask/ai/form-answers` (Profile/ + attached resume/context files + nearest
+  vault passages; an answer survives only if its quoted evidence is in the cited file) and
+  `/ask/ai/compose-answer` (drafts "why us?" answers) in `brain/app/routers/forms.py`. Answers the
+  user used live in `Profile/form-memory.json`; each form keeps `Profile/forms/<title>/answers.md`.
+  Local-only invite codes for a device on the host: `docker exec jv-api python -m app.invite`.
 - **Agentic chat:** `/ask/ai/agent` → `brain/app/routers/agent.py` runs an Ollama `/api/chat`
   tool-calling loop. Tools live in `brain/app/services/tools.py` (schema + risk + executor in
   one place). Mutating tools stop the stream with `approval_required`; the client re-POSTs with

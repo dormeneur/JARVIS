@@ -22,6 +22,7 @@ using Jarvis.Platform.Overlay;
 using Jarvis.Platform.Text;
 using Jarvis.Providers.ClaudeCli;
 using Jarvis.Providers.Kokoro;
+using Jarvis.Providers.Local;
 using Jarvis.Providers.Whisper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -84,6 +85,7 @@ internal static class AppHost
         services.AddTransient<Jarvis.App.Settings.ViewModels.BrowserViewModel>();
         services.AddTransient<Jarvis.App.Settings.ViewModels.ConnectorsViewModel>();
         services.AddTransient<Jarvis.App.Settings.ViewModels.ProactiveViewModel>();
+        services.AddTransient<Jarvis.App.Settings.ViewModels.VaultViewModel>();
 
         return builder.Build();
     }
@@ -117,7 +119,62 @@ internal static class AppHost
         services.Configure<ClaudeCliOptions>(configuration.GetSection(ClaudeCliOptions.SectionName));
         services.PostConfigure<ClaudeCliOptions>(options => options.WorkingDirectory = AppPaths.BrainDirectory);
         services.AddKeyedSingleton<IAssistantBrain, ClaudeCliBrain>(ProviderKeys.ClaudeCli);
+        services.Configure<OllamaOptions>(configuration.GetSection(OllamaOptions.SectionName));
+        services.AddKeyedSingleton<IAssistantBrain>(ProviderKeys.Ollama, (provider, _) => new OllamaBrain(
+            new HttpClient { Timeout = TimeSpan.FromMinutes(5) }, // a cold model can take a minute to load
+            provider.GetRequiredService<IOptionsMonitor<OllamaOptions>>(),
+            provider.GetRequiredService<TimeProvider>()));
         services.AddSelectedProvider<IAssistantBrain>(providers => providers.Brain);
+        AddVault(services, configuration);
+    }
+
+    /// <summary>
+    /// The vault, as a registered device of jv-api on this PC, and everything answered on this PC:
+    /// vault questions, form filling and private mode's local model.
+    /// </summary>
+    private static void AddVault(IServiceCollection services, IConfiguration configuration)
+    {
+        const string credential = "Jarvis/vault";
+        services.Configure<VaultOptions>(configuration.GetSection(VaultOptions.SectionName));
+        services.AddSingleton<Jarvis.Contracts.Vault.IVault>(provider => new JvApiVault(
+            new HttpClient { Timeout = TimeSpan.FromMinutes(15) }, // a long form on a small GPU takes minutes
+            provider.GetRequiredService<IOptionsMonitor<VaultOptions>>(),
+            new VaultCredentials(
+                () => Jarvis.Platform.Shell.CredentialVault.Read(credential),
+                secret =>
+                {
+                    if (secret is null)
+                    {
+                        Jarvis.Platform.Shell.CredentialVault.Delete(credential);
+                    }
+                    else
+                    {
+                        Jarvis.Platform.Shell.CredentialVault.Save(credential, secret);
+                    }
+                }),
+            provider.GetRequiredService<ILogger<JvApiVault>>()));
+        services.AddSingleton(provider => new Jarvis.Core.Vault.FormFiller(
+            new Jarvis.Core.Vault.FormServices(
+                provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>(),
+                provider.GetRequiredService<Jarvis.Contracts.Browser.IBrowserLink>(),
+                provider.GetRequiredService<INotchPresenter>(),
+                provider.GetRequiredService<ICursorOverlay>(),
+                provider.GetRequiredService<IAgentRuntime>(), // public research about the form's organisation only
+                () => provider.GetRequiredService<ScreenPrivacy>().PrivateMode,
+                provider.GetRequiredService<IMicrophone>(),
+                provider.GetRequiredService<ISpeechToText>(),
+                Path.Combine(AppPaths.DataDirectory, "research"),
+                () => provider.GetRequiredService<IOptionsMonitor<DictationOptions>>().CurrentValue.Words,
+                provider.GetRequiredService<IVocabularyStore>(),
+                Jarvis.Platform.Text.EnglishWords.IsKnown,
+                provider.GetRequiredService<ITextInsertion>()),
+            provider.GetRequiredService<TimeProvider>(),
+            provider.GetRequiredService<ILogger<Jarvis.Core.Vault.FormFiller>>()));
+        services.AddSingleton(provider => new LocalTurns(
+            provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>(),
+            new Jarvis.Core.Vault.VaultBrain(provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>()),
+            provider.GetRequiredKeyedService<IAssistantBrain>(ProviderKeys.Ollama),
+            provider.GetRequiredService<Jarvis.Core.Vault.FormFiller>()));
     }
 
     /// <summary>Windows-specific devices and surfaces.</summary>
@@ -163,7 +220,8 @@ internal static class AppHost
             provider.GetRequiredService<ConversationLog>(),
             provider.GetRequiredService<Jarvis.Contracts.Control.IComputerControl>(),
             provider.GetRequiredService<Jarvis.Contracts.Browser.IBrowserLink>(),
-            provider.GetRequiredService<IOptionsMonitor<BrowserOptions>>()));
+            provider.GetRequiredService<IOptionsMonitor<BrowserOptions>>(),
+            provider.GetRequiredService<LocalTurns>()));
         services.AddSingleton<ConversationLog>();
         services.AddSingleton(provider => new ScreenPrivacy(
             provider.GetRequiredService<IOptionsMonitor<PrivacyOptions>>(),
@@ -190,7 +248,16 @@ internal static class AppHost
                 WorkingDirectory = brain.WorkingDirectory,
                 FreshConversationAfter = TimeSpan.Zero, // every dictation stands alone
             };
-            return new ClaudeCliBrain(Options.Create(cleanup), provider.GetRequiredService<ILogger<ClaudeCliBrain>>());
+
+            // Private mode cleans up on this PC, with its own memory-less local model.
+            var local = new OllamaBrain(
+                new HttpClient { Timeout = TimeSpan.FromMinutes(5) },
+                provider.GetRequiredService<IOptionsMonitor<OllamaOptions>>(),
+                provider.GetRequiredService<TimeProvider>(),
+                remember: false);
+            var privacy = provider.GetRequiredService<ScreenPrivacy>();
+            return new Jarvis.Core.Vault.PrivateModeBrain(
+                new ClaudeCliBrain(Options.Create(cleanup), provider.GetRequiredService<ILogger<ClaudeCliBrain>>()), local, () => privacy.PrivateMode);
         });
         services.AddSingleton(provider => new DictationServices(
             provider.GetRequiredService<IMicrophone>(),

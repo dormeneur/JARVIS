@@ -123,4 +123,51 @@ public sealed class ReplyParserTests
 
         Assert.Equal([new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.Click, 567, 340, "Text box", 1, null), new ReplyItem.Line("Clicking it.")], items);
     }
+
+    [Fact]
+    public void FormTag_HandsTheFormBack_AndIsNeverSpoken()
+    {
+        var parser = new ReplyParser();
+
+        var items = parser.Feed("[FORM:fill]").Concat(parser.Complete()).ToList();
+
+        Assert.Equal([new ReplyItem.FillForm(FillIn: true)], items);
+    }
+
+    [Fact]
+    public void BrowserSteps_AreParsed_WithTheirTargetsAndText()
+    {
+        var parser = new ReplyParser();
+
+        var items = parser.Feed("Done. [DO:press:e12] [DO:fill:e3:Asha Rao] [DO:copy:selection] [DO:paste:e7] [DO:scroll:down] [DO:tab:switch:T44] [DO:tab:close] [DO:tab:open:https://x.test]")
+            .Concat(parser.Complete()).OfType<ReplyItem.Act>().ToList();
+
+        Assert.Equal(
+            [
+                new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.Press, 0, 0, "e12", 1, null),
+                new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.Fill, 0, 0, "e3", 1, "Asha Rao"),
+                new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.Copy, 0, 0, "selection", 1, null),
+                new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.Paste, 0, 0, "e7", 1, null),
+                new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.PageScroll, 0, 0, string.Empty, 1, "down"),
+                new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.TabSwitch, 0, 0, "T44", 1, null),
+                new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.TabClose, 0, 0, string.Empty, 1, null),
+                new ReplyItem.Act(Jarvis.Contracts.Control.ComputerActionKind.Open, 0, 0, string.Empty, 1, "https://x.test"),
+            ],
+            items);
+    }
+
+    [Theory]
+    [InlineData("[DO:press:e12]", "Press \"Submit\" on the page")]
+    [InlineData("[DO:fill:e3:hello]", "Type \"hello\" into \"Email field\"")]
+    [InlineData("[DO:tab:switch:T44]", "Switch to the tab \"Docs\"")]
+    [InlineData("[DO:tab:close]", "Close this tab")]
+    [InlineData("[DO:scroll:bottom]", "Scroll to the bottom of the page")]
+    public void BrowserSteps_AreDescribedInWordsBeforeApproval(string tag, string words)
+    {
+        var parser = new ReplyParser();
+        var step = parser.Feed(tag).Concat(parser.Complete()).OfType<ReplyItem.Act>().Single();
+        var names = new Dictionary<string, string> { ["e12"] = "Submit", ["e3"] = "Email field", ["T44"] = "Docs" };
+
+        Assert.Equal(words, DriveDescription.Of(step, id => names.GetValueOrDefault(id)));
+    }
 }
