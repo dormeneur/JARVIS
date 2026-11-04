@@ -370,7 +370,7 @@ public sealed partial class App : Application
             "Afternoon, Sam.",
             "Hold Ctrl + Alt and tell me what to take off your plate.",
             [new("", "Ask Jarvis", null, () => { }), new("", "Fill a form", null, () => { }), new("", "Private: off", null, () => { }), new("", "Settings", null, () => { })],
-            [new("", "Lisbon trip plan", "Ready to view", () => { }), new("", "Reviewing GitHub activity", "Working…", () => { }), new("", "Clearing inbox messages", "Didn't finish", () => { }, new NotchAction("Retry", () => { }))],
+            [new("", "Lisbon trip plan", "Ready to view", () => { }), new("", "Reviewing GitHub activity", "Working…", () => { }), new("", "Clearing inbox messages", "Didn't finish", () => { }, new NotchAction("Retry", () => { })), new("", "Choose roundup messaging", "Ready to view", () => { }), new("", "Research buddy", "Ready to view", () => { })],
             () => { })),
         ("event", new NotchState.EventDraft(
             new Jarvis.Contracts.Calendar.CalendarEvent("Lunch with Sam", new DateTimeOffset(2030, 1, 15, 13, 0, 0, TimeSpan.Zero), new DateTimeOffset(2030, 1, 15, 14, 0, 0, TimeSpan.Zero), false, "Cafe Example", string.Empty),
@@ -394,7 +394,7 @@ public sealed partial class App : Application
 #endif
 
     /// <summary>The notch's home: things to start, then the latest jobs and form.</summary>
-    private void ShowHome()
+    internal void ShowHome()
     {
         var notch = _host.Services.GetRequiredService<INotchPresenter>();
         var companion = _host.Services.GetRequiredService<CompanionSession>();
@@ -429,7 +429,7 @@ public sealed partial class App : Application
                 recent.Add(new("\uE70F", lastForm, "Fill again", companion.FillForm));
             }
 
-            foreach (var job in agents.Jobs.Take(recent.Count > 0 ? 2 : 3)) // three cards fit across
+            foreach (var job in agents.Jobs.Take(9)) // the carousel scrolls through them
             {
                 var retry = job.Brief is { } brief ? new NotchAction("Retry", () => agents.Start(brief)) : null;
                 recent.Add(job.Status switch

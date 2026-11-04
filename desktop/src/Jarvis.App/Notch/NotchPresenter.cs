@@ -58,6 +58,11 @@ internal sealed class NotchPresenter : INotchPresenter
     private NotchHomeView? _homeView;
     private NotchEventView? _eventView;
     private NotchSettingsView? _settingsView;
+
+    /// <summary>Top left on the home and the chat: switch between them.</summary>
+    private StackPanel? _modes;
+    private Button? _homeMode;
+    private Button? _chatMode;
     private NotchState _current = NotchState.Idle;
     private Button? _close;
     private DispatcherQueueTimer? _clickAway;
@@ -95,6 +100,7 @@ internal sealed class NotchPresenter : INotchPresenter
         _eventView = new NotchEventView(_window, _window.ContentArea);
         _settingsView = new NotchSettingsView(_window.ContentArea, ((App)Application.Current).Services);
         BuildClose(_window.ContentArea);
+        BuildModes(_window.ContentArea);
         _caption = new TextBlock
         {
             FontSize = 12,
@@ -338,6 +344,7 @@ internal sealed class NotchPresenter : INotchPresenter
         }
 
         _current = state;
+        ShowModes(state);
         UpdateVisibility();
         if (_close is not null)
         {
@@ -398,6 +405,80 @@ internal sealed class NotchPresenter : INotchPresenter
         ToolTipService.SetToolTip(_close, "Close (Esc)");
         _close.Click += (_, _) => CloseNow();
         area.Children.Add(_close);
+    }
+
+    /// <summary>Two round buttons in a glass pill, top left: the home, and the chat.</summary>
+    private void BuildModes(Grid area)
+    {
+        Button Mode(string glyph, string name, Action go)
+        {
+            var button = new Button
+            {
+                Width = 30,
+                Height = 26,
+                Padding = new Thickness(0),
+                CornerRadius = new CornerRadius(13),
+                BorderThickness = new Thickness(0),
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                Content = new FontIcon { Glyph = glyph, FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"), FontSize = 13, Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"] },
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, name);
+            ToolTipService.SetToolTip(button, name);
+            button.Click += (_, _) => go();
+            return button;
+        }
+
+        _homeMode = Mode("\uE80F", "Home", () =>
+        {
+            if (_current is NotchState.Composing && _window is not null)
+            {
+                // Straight over to the home: closing the chat the usual way would end the turn and
+                // could land after the home opens and hide it.
+                _composing = null;
+                _window.EndTyping();
+                ((App)Application.Current).ShowHome();
+            }
+        });
+        _chatMode = Mode("\uE8BD", "Chat", () =>
+        {
+            if (_current is NotchState.Home home)
+            {
+                home.Dismiss();
+                var companion = ((App)Application.Current).Services.GetRequiredService<Jarvis.Core.Companion.CompanionSession>();
+                _ = Task.Run(companion.Compose);
+            }
+        });
+        _modes = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 2,
+            Padding = new Thickness(3),
+            CornerRadius = new CornerRadius(16),
+            Background = NotchFormView.Glass,
+            BorderBrush = NotchFormView.GlassEdge,
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(12, 10, 0, 0),
+            Visibility = Visibility.Collapsed,
+            Children = { _homeMode, _chatMode },
+        };
+        area.Children.Add(_modes);
+    }
+
+    /// <summary>Shows the switch on the home and the chat, with the one you're on lit.</summary>
+    private void ShowModes(NotchState state)
+    {
+        if (_modes is null || _homeMode is null || _chatMode is null)
+        {
+            return;
+        }
+
+        _modes.Visibility = state is NotchState.Home or NotchState.Composing ? Visibility.Visible : Visibility.Collapsed;
+        var lit = new SolidColorBrush(Windows.UI.Color.FromArgb(0x55, 0x33, 0x80, 0xFF));
+        var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        _homeMode.Background = state is NotchState.Home ? lit : clear;
+        _chatMode.Background = state is NotchState.Composing ? lit : clear;
     }
 
     private void CloseNow()
@@ -563,7 +644,7 @@ internal sealed class NotchPresenter : INotchPresenter
         {
             Content = _history,
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
-            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, 16, NotchLayout.ContentHorizontalPadding, 38 + 14 + 10),
+            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, 46, NotchLayout.ContentHorizontalPadding, 38 + 14 + 10), // below the Home/Chat switch
             Visibility = Visibility.Collapsed,
         };
         area.Children.Add(_historyView);

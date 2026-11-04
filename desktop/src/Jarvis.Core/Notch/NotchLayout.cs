@@ -36,13 +36,13 @@ public static class NotchLayout
     public const double HomeRowHeight = 34;
 
     /// <summary>The row of recent-work cards on the home.</summary>
-    public const double HomeCardsHeight = 76 + 12;
+    public const double HomeCardsHeight = 88 + 12;
 
     /// <summary>Action buttons are 24 DIPs tall (DESIGN-FACTS.md §2.1), plus a gap above.</summary>
     public const double ActionBarHeight = 24 + 8;
 
-    /// <summary>The chat's bar (talk pill, text box, send) 38 high, with 12 above and 14 below.</summary>
-    private const double ComposerHeight = 12 + 38 + 14;
+    /// <summary>The Home/Chat switch row 46, then the chat's bar (talk pill, text box, send) 38 high and 14 below.</summary>
+    private const double ComposerHeight = 46 + 38 + 14;
 
     /// <summary>The chat with history grows to this.</summary>
     public const double ChatMaxHeight = 440;
@@ -87,7 +87,7 @@ public static class NotchLayout
         // Each exchange: a time label, the question's bubble (right), the answer's bubble (left).
         static double Lines(string text, double perLine) => Math.Max(1, Math.Ceiling(text.Length / perLine));
         var chat = history.Sum(turn => 22 + (Lines(turn.Question, 52) * 17) + 18 + (Lines(turn.Answer, 64) * LineHeight) + 18 + 16);
-        return Math.Min(ChatMaxHeight, 16 + chat + ComposerHeight);
+        return Math.Min(ChatMaxHeight, chat + ComposerHeight);
     }
 
     /// <summary>Grows with wrapped lines (≈74 characters each), at least three lines, capped at the max height.</summary>

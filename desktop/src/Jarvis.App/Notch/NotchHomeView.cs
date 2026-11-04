@@ -24,7 +24,17 @@ internal sealed class NotchHomeView
 
     private readonly TextBlock _greeting;
     private readonly TextBlock _hint;
-    private readonly StackPanel _cards = new() { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center };
+    /// <summary>The job carousel: every card stacked in one cell, placed by its distance from the focused one.</summary>
+    private readonly Grid _cards = new() { Height = CardHeight + 4, HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly List<Button> _shownCards = [];
+    private int _focus;
+
+    private const double CardWidth = 216;
+    private const double CardHeight = 84;
+
+    /// <summary>How far apart neighbouring cards sit: the focused one whole, the others peeking out from behind.</summary>
+    private const double CardStep = 172;
+    private const float SideScale = 0.8f;
     private readonly StackPanel _pills = new() { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly DispatcherQueueTimer _leave;
     private NotchState.Home? _home;
@@ -44,6 +54,14 @@ internal sealed class NotchHomeView
             Children = { _greeting, _hint, _cards, _pills },
         };
         _cards.Margin = new Thickness(0, 10, 0, 2);
+        _cards.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent); // the wheel works over the gaps too
+        // Scroll to bring another card to the middle.
+        _cards.PointerWheelChanged += (_, e) =>
+        {
+            var delta = e.GetCurrentPoint(_cards).Properties.MouseWheelDelta;
+            Focus(_focus + (delta > 0 ? -1 : 1));
+            e.Handled = true;
+        };
         _pills.Margin = new Thickness(0, 10, 0, 0);
         area.Children.Add(View);
 
@@ -79,14 +97,28 @@ internal sealed class NotchHomeView
 
         _greeting.Text = home.Greeting;
         _hint.Text = home.Hint;
+        // Oldest on the left, newest in the middle; a refresh keeps the card the user scrolled to.
+        var items = home.Recent.Reverse().ToList();
+        var keep = refresh && _focus < _shownCards.Count ? _focus : int.MaxValue;
         _cards.Children.Clear();
-        var cardWidth = (Width - (8 * (Math.Max(1, home.Recent.Count) - 1))) / Math.Max(1, Math.Min(3, home.Recent.Count));
-        foreach (var item in home.Recent.Take(3))
+        _shownCards.Clear();
+        for (var i = 0; i < items.Count; i++)
         {
-            _cards.Children.Add(Card(item, Math.Min(cardWidth, 180)));
+            var at = i;
+            var card = Card(items[i], CardWidth);
+            card.Height = CardHeight;
+            card.HorizontalAlignment = HorizontalAlignment.Center;
+            card.CenterPoint = new System.Numerics.Vector3((float)CardWidth / 2, (float)CardHeight / 2, 0);
+            card.TranslationTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(260) };
+            card.ScaleTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(260) };
+            card.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(260) };
+            card.Tag = at;
+            _shownCards.Add(card);
+            _cards.Children.Add(card);
         }
 
-        _cards.Visibility = home.Recent.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _cards.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        Focus(Math.Min(keep, items.Count - 1), animate: false);
         _pills.Children.Clear();
         foreach (var item in home.Actions)
         {
@@ -98,6 +130,48 @@ internal sealed class NotchHomeView
         {
             Leave(NeverEntered);
         }
+    }
+
+    /// <summary>Brings a card to the middle: it grows to full size and comes forward; the rest shrink and fade by distance.</summary>
+    private void Focus(int index, bool animate = true)
+    {
+        if (_shownCards.Count == 0)
+        {
+            return;
+        }
+
+        _focus = Math.Clamp(index, 0, _shownCards.Count - 1);
+        for (var i = 0; i < _shownCards.Count; i++)
+        {
+            var card = _shownCards[i];
+            var away = i - _focus;
+            var distance = Math.Abs(away);
+            if (animate)
+            {
+                Place(card, away, distance);
+                continue;
+            }
+
+            // Straight into place (first showing): no slide in from the middle.
+            var (slide, grow, fade) = (card.TranslationTransition, card.ScaleTransition, card.OpacityTransition);
+            card.TranslationTransition = null;
+            card.ScaleTransition = null;
+            card.OpacityTransition = null;
+            Place(card, away, distance);
+            card.TranslationTransition = slide;
+            card.ScaleTransition = grow;
+            card.OpacityTransition = fade;
+        }
+    }
+
+    private static void Place(Button card, int away, int distance)
+    {
+        var scale = distance == 0 ? 1f : SideScale;
+        card.Translation = new System.Numerics.Vector3((float)(away * CardStep), 0, 0);
+        card.Scale = new System.Numerics.Vector3(scale, scale, 1);
+        card.Opacity = distance switch { 0 => 1, 1 => 0.6, 2 => 0.25, _ => 0 };
+        card.IsHitTestVisible = distance <= 1;
+        Canvas.SetZIndex(card, 10 - distance);
     }
 
     public void Hide()
@@ -178,7 +252,18 @@ internal sealed class NotchHomeView
         };
         Hover(card);
         AutomationProperties.SetName(card, item.Title);
-        card.Click += (_, _) => Run(item);
+        // A card at the side comes to the middle first; the middle one opens.
+        card.Click += (_, _) =>
+        {
+            if (card.Tag is int at && at != _focus)
+            {
+                Focus(at);
+            }
+            else
+            {
+                Run(item);
+            }
+        };
         return card;
     }
 
