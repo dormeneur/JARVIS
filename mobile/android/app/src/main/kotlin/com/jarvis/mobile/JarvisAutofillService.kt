@@ -51,8 +51,13 @@ class JarvisAutofillService : AutofillService() {
     private fun collect(node: ViewNode, memory: FormMemory, fields: MutableMap<AutofillId, List<String>>) {
         val id = node.autofillId
         if (id != null && node.autofillType == View.AUTOFILL_TYPE_TEXT && !isSecret(node)) {
-            labelsOf(node).firstNotNullOfOrNull { label -> memory.suggestions(label).takeIf { it.isNotEmpty() } }
-                ?.let { fields[id] = it }
+            val labels = labelsOf(node)
+            val found = labels.firstNotNullOfOrNull { label -> memory.suggestions(label).takeIf { it.isNotEmpty() } }
+            found?.let { fields[id] = it }
+            // Debug builds: what each field is called and whether memory knew it (never the values).
+            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                Log.d(TAG, "field labels=$labels html=${node.htmlInfo?.attributes?.map { it.first }} suggestions=${found?.size ?: 0}")
+            }
         }
         for (i in 0 until node.childCount) collect(node.getChildAt(i), memory, fields)
     }

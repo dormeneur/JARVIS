@@ -66,7 +66,7 @@ class _JarvisAppState extends ConsumerState<JarvisApp> with WidgetsBindingObserv
         authState.status == AuthStatus.authenticated;
 
     return MaterialApp(
-      title: 'JARVIS',
+      title: 'Jarvis',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(

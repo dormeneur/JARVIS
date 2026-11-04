@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- "Settings" next to JARVIS in Android's autofill settings opens the app. -->
+<!-- "Settings" next to Jarvis in Android's autofill settings opens the app. The compatibility
+     packages let Android bridge browsers that don't hand web forms to autofill services themselves. -->
 <autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:settingsActivity="com.jarvis.mobile.MainActivity" />
+    android:settingsActivity="com.jarvis.mobile.MainActivity">
+    <compatibility-package android:name="com.brave.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.android.chrome" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="org.mozilla.firefox" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.microsoft.emmx" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.sec.android.app.sbrowser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.opera.browser" android:maxLongVersionCode="10000000000" />
+</autofill-service>

@@ -59,5 +59,6 @@ def render(top, bottom, name):
     print("wrote", name)
 
 
-render(TOP, BOTTOM, "jarvis.ico")
-render((0x9A, 0x9A, 0x9A), (0x76, 0x76, 0x76), "jarvis-paused.ico")  # tray while paused; mid-grey reads on light and dark
+if __name__ == "__main__":  # mobile/assets/make-icon.py reuses the shape
+    render(TOP, BOTTOM, "jarvis.ico")
+    render((0x9A, 0x9A, 0x9A), (0x76, 0x76, 0x76), "jarvis-paused.ico")  # tray while paused; mid-grey reads on light and dark

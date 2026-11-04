@@ -3,7 +3,7 @@
     <!-- Voice questions, recognised on the phone itself. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <application
-        android:label="mobile"
+        android:label="Jarvis"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -31,7 +31,7 @@
         <!-- Autofill in other apps from the synced form memory (Settings > Autofill > JARVIS). -->
         <service
             android:name=".JarvisAutofillService"
-            android:label="JARVIS"
+            android:label="Jarvis"
             android:exported="true"
             android:permission="android.permission.BIND_AUTOFILL_SERVICE">
             <intent-filter>
