@@ -30,6 +30,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
     private static readonly TimeSpan DriveDecisionTimeout = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DriveStepPause = TimeSpan.FromMilliseconds(500);
     private const int MaxDriveRounds = 10;
+
+    /// <summary>Failed steps in one task that get a fresh look and another try before it stops.</summary>
+    private const int MaxSetbacks = 2;
     private static readonly TimeSpan DriveSettle = TimeSpan.FromMilliseconds(900);
     private static readonly TimeSpan DriveShowTarget = TimeSpan.FromMilliseconds(700);
 
@@ -223,12 +226,19 @@ public sealed partial class CompanionSession : IAsyncDisposable
         });
         _services.Cursor.ShowControlBorder(true);
         var outcome = DriveOutcome.Done;
+        var setbacks = 0;
         try
         {
             for (var round = 0; ; round++)
             {
                 outcome = await RunStepsAsync(steps, screens, askEachStep, control.Token).ConfigureAwait(false);
-                if (outcome != DriveOutcome.Done || !more || round + 1 >= MaxDriveRounds)
+                string? setback = null;
+                if (outcome == DriveOutcome.Failed && setbacks++ < MaxSetbacks && round + 1 < MaxDriveRounds)
+                {
+                    // A step that didn't work isn't the end: look again and try another way.
+                    setback = CompanionPrompt.StepFailed(_failedStep ?? "the last step", _failedWhy);
+                }
+                else if (outcome != DriveOutcome.Done || !more || round + 1 >= MaxDriveRounds)
                 {
                     break;
                 }
@@ -238,7 +248,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 screens = await _services.ScreenCapture.CaptureAsync(control.Token).ConfigureAwait(false);
                 _services.Privacy.Record(screens.Count, "Jarvis looked again while doing a task for you");
                 _services.Notch.Show(new NotchState.Thinking(_services.Privacy.ShowWhenLooking ? "Looking at your screen" : null));
-                var next = CompanionPrompt.DriveOn + CompanionPrompt.ContinueTask(question, round + 1);
+                var next = CompanionPrompt.DriveOn + setback + CompanionPrompt.ContinueTask(question, round + 1);
                 if (_services.Browser.IsConnected && _services.Browser.IsBrowserInFront
                     && await _services.Browser.ReadPageAsync(control.Token).ConfigureAwait(false) is { } page)
                 {
@@ -318,12 +328,14 @@ public sealed partial class CompanionSession : IAsyncDisposable
 
             cancellationToken.ThrowIfCancellationRequested();
             _services.Cursor.ReturnToMouse();
+            _failedWhy = null;
             var done = browser ? await BrowserStepAsync(step, cancellationToken).ConfigureAwait(false)
                 : step.Kind == ComputerActionKind.Open && _services.Browser.IsConnected
                 ? await _services.Browser.OpenAsync(step.Text ?? string.Empty, cancellationToken).ConfigureAwait(false)
                 : _services.Control.Perform(new ComputerAction(step.Kind, x, y, step.Text));
             if (!done)
             {
+                _failedStep = DriveDescription.Of(step, NameOnPage);
                 return DriveOutcome.Failed;
             }
 
@@ -337,14 +349,18 @@ public sealed partial class CompanionSession : IAsyncDisposable
     private static bool IsBrowserStep(ComputerActionKind kind) => kind is ComputerActionKind.Press or ComputerActionKind.Fill or ComputerActionKind.Copy
         or ComputerActionKind.Paste or ComputerActionKind.PageScroll or ComputerActionKind.TabSwitch or ComputerActionKind.TabClose;
 
+    /// <summary>The step that just failed, in words, and why (when the browser said).</summary>
+    private string? _failedStep;
+    private string? _failedWhy;
+
     /// <summary>A page element or tab id in words, from the page the brain last saw.</summary>
     private string? NameOnPage(string id)
         => _page?.Elements?.FirstOrDefault(element => element.Id == id) is { } element ? $"{element.Label}{(element.Kind is "button" or "link" ? string.Empty : $" {element.Kind}")}"
             : _page?.Tabs?.FirstOrDefault(tab => tab.Id == id)?.Title;
 
     /// <summary>
-    /// One browser step through the extension. The cursor flies to what it acted on. A field that
-    /// ignores a scripted value is left focused, and the text goes in with real keystrokes.
+    /// One browser step through the extension, on that exact element (never typed or clicked at the
+    /// screen). The cursor flies to what it acted on. Why it failed is kept for the next look.
     /// </summary>
     private async Task<bool> BrowserStepAsync(ReplyItem.Act step, CancellationToken cancellationToken)
     {
@@ -361,6 +377,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
         if (!_services.Browser.IsConnected
             || await _services.Browser.ActAsync(new Jarvis.Contracts.Browser.BrowserAct(action, step.Label, step.Text), cancellationToken).ConfigureAwait(false) is not { } result)
         {
+            _failedWhy = "the browser didn't answer";
             return false;
         }
 
@@ -374,13 +391,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
             _copied = copied;
         }
 
-        if (!result.Done && result.Focused && (step.Kind == ComputerActionKind.Fill ? step.Text : _copied) is { Length: > 0 } text)
-        {
-            return _services.Control.Perform(new ComputerAction(ComputerActionKind.Type, 0, 0, text)); // real keystrokes into the focused field
-        }
-
         if (!result.Done)
         {
+            _failedWhy = result.Reason;
             LogBrowserStepFailed(action, result.Reason ?? "unknown");
         }
 

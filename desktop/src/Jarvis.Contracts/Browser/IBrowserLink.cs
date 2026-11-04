@@ -18,9 +18,8 @@ public sealed record BrowserTab(string Id, string Title, bool Active);
 /// <param name="Text">What to type, or for scroll: up, down, top or bottom.</param>
 public sealed record BrowserAct(string Action, string Target, string? Text);
 
-/// <param name="Focused">A field the page wouldn't take a scripted value in: focused and selected, ready for real keystrokes.</param>
 /// <param name="Text">What a copy step copied.</param>
-public sealed record BrowserActResult(bool Done, int? X, int? Y, bool Focused = false, string? Reason = null, string? Text = null);
+public sealed record BrowserActResult(bool Done, int? X, int? Y, string? Reason = null, string? Text = null);
 
 /// <summary>A web form the extension read off the active tab.</summary>
 /// <param name="Description">The form's own description (or the page's), which often names the organisation.</param>

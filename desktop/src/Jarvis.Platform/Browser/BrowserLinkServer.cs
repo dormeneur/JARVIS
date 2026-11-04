@@ -145,7 +145,6 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
             result["done"]?.GetValue<bool>() == true,
             Number("x"),
             Number("y"),
-            result["focused"]?.GetValue<bool>() == true,
             result["reason"]?.GetValue<string>(),
             result["text"]?.GetValue<string>());
     }

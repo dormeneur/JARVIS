@@ -261,6 +261,31 @@ public sealed class CompanionSessionTests
     }
 
     [Fact]
+    public async Task AStepThatFails_GetsAFreshLookAndAnotherWay_InsteadOfEndingTheTask()
+    {
+        var fakes = new Fakes("unused", "Opening it. [DO:press:e2] [MORE]");
+        fakes.PrivacyOptions.LetJarvisDrive = true;
+        fakes.Browser.IsConnected = true;
+        fakes.Browser.IsBrowserInFront = true;
+        fakes.Browser.Page = new Jarvis.Contracts.Browser.BrowserPage("https://mail.test", "Inbox", string.Empty, "Inbox",
+            [new("e1", "link", "Inbox", true), new("e2", "item", "noreply Verify your email", true)]);
+        fakes.Browser.Results.Enqueue(new(false, null, null, Reason: "it didn't respond to the press"));
+        fakes.Brain.Next.Enqueue("Opening it. [DO:press:e2] [MORE]");
+        fakes.Brain.Next.Enqueue("Trying the link instead. [DO:press:e1]");
+        await using var session = fakes.CreateSession();
+
+        session.Ask("open the verification email");
+        await WaitUntil(() => fakes.Notch.Shown.OfType<NotchState.Response>().Any(r => r.Actions is { Count: 2 }));
+        fakes.Notch.Shown.OfType<NotchState.Response>().Last(r => r.Actions is { Count: 2 }).Actions![0].Invoke(); // Take control / Do it
+        await WaitUntil(() => fakes.Browser.Acts.Count >= 1 && fakes.Notch.Shown.OfType<NotchState.Response>().Last(r => r.Actions is { Count: 2 }) is var ask && ask.Text.Contains("Inbox", StringComparison.Ordinal));
+        fakes.Notch.Shown.OfType<NotchState.Response>().Last(r => r.Actions is { Count: 2 }).Actions![0].Invoke();
+        await WaitUntil(() => fakes.Browser.Acts.Count == 2);
+
+        Assert.Contains("didn't work (it didn't respond to the press)", fakes.Brain.LastTurn!.UserText, StringComparison.Ordinal);
+        Assert.Equal("e1", fakes.Browser.Acts[1].Target);
+    }
+
+    [Fact]
     public async Task DriveOff_StepsAreIgnored_AndTheBrainIsNotInvited()
     {
         var fakes = new Fakes("unused", "Click Settings. [DO:click 100,50:Settings]");
@@ -790,10 +815,13 @@ public sealed class CompanionSessionTests
 
         public List<Jarvis.Contracts.Browser.BrowserAct> Acts { get; } = [];
 
+        /// <summary>How the next steps go; once empty, they work.</summary>
+        public Queue<Jarvis.Contracts.Browser.BrowserActResult> Results { get; } = new();
+
         public Task<Jarvis.Contracts.Browser.BrowserActResult?> ActAsync(Jarvis.Contracts.Browser.BrowserAct act, CancellationToken cancellationToken)
         {
             Acts.Add(act);
-            return Task.FromResult<Jarvis.Contracts.Browser.BrowserActResult?>(new(true, 10, 20));
+            return Task.FromResult<Jarvis.Contracts.Browser.BrowserActResult?>(Results.TryDequeue(out var result) ? result : new(true, 10, 20));
         }
 
         public Task<Jarvis.Contracts.Browser.BrowserPage?> ReadPageAsync(CancellationToken cancellationToken) => Task.FromResult(Page);

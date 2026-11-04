@@ -82,7 +82,10 @@ public static class CompanionPrompt
           [DO:copy:selection]), then [DO:paste:e7] (in any tab), [DO:scroll:down] (up, top, bottom),
           [DO:tab:switch:T12], [DO:tab:close] (this tab) or [DO:tab:close:T12], [DO:tab:open:https://…].
           After switching tabs or pressing something that changes the page, end with [MORE] to get the
-          new page's ids.
+          new page's ids. Rows ("item", like an email in an inbox) open when pressed. Text you can read in
+          the page's text (a verification code in an email, an order number) goes straight into a field
+          with [DO:fill:e3:the text]; copy only what you can't read. Fields in a frame (a site's pop-up
+          dialog) are listed like any other.
         - Coordinates are screenshot pixels, as for POINT; the label names the target ("Save button").
         - Only plan steps you can see on this screenshot. If the task needs more after them (a menu or
           page has to open first), end with [MORE]: once your steps are done you get a fresh
@@ -162,6 +165,10 @@ public static class CompanionPrompt
         => $"[Continuing the task \"{task}\" (round {round + 1}). Your last steps are done; this is the screen now. "
            + "Plan the next steps (end with [MORE] if there will be more after them). If the task is finished, "
            + "just say so in a few words with no steps. If something unexpected is on screen, stop and say what.]";
+
+    /// <summary>Told before the next look when a step didn't work, so the brain tries another way.</summary>
+    public static string StepFailed(string step, string? why)
+        => $"[The step \"{step}\" didn't work{(why is null ? string.Empty : $" ({why})")}. Look at the screen and page again and try another way; if it can't be done, stop and say why.]\n";
 
     /// <summary>Put before the request when the user lets Jarvis use the mouse and keyboard.</summary>
     public const string DriveOn = "[DRIVE ON]\n";

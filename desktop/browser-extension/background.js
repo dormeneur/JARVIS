@@ -63,27 +63,57 @@ async function activeTab() {
   return tab;
 }
 
+// Where each element id from the last page read lives: its frame and its id inside that frame.
+let pageElements = {};
+
 async function readPage() {
   const tab = await activeTab();
   const tabs = (await chrome.tabs.query({ windowId: tab.windowId })).map((t) => ({ id: "T" + t.id, title: t.title || "", active: !!t.active }));
   const page = { url: tab.url || "", title: tab.title || "", selection: "", text: "", elements: [], tabs };
   if (!/^https?:/.test(page.url)) return page; // browser pages (settings, new tab) can't be read
-  const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageOnPage, args: [MAX_TEXT] });
-  return { ...page, ...result };
+  // Every visible frame: a site's dialog (a verification code box, a sign-in) is often an iframe.
+  const frames = (await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: pageOnPage, args: [MAX_TEXT] }))
+    .filter((frame) => frame.result)
+    .sort((a, b) => (a.frameId === 0 ? -1 : b.frameId === 0 ? 1 : 0));
+  pageElements = {};
+  const all = [];
+  for (const frame of frames) {
+    for (const element of frame.result.elements) all.push({ ...element, frameId: frame.frameId || 0 });
+  }
+  // On-screen first (what the user is looking at, a dialog included), then the rest, up to 120.
+  const kept = [...all.filter((e) => e.onScreen), ...all.filter((e) => !e.onScreen)].slice(0, 120);
+  const elements = kept.map((element, i) => {
+    const id = "e" + (i + 1);
+    pageElements[id] = { frameId: element.frameId, local: element.id };
+    return { id, kind: element.kind, label: element.label, onScreen: element.onScreen };
+  });
+  const top = frames.find((frame) => (frame.frameId || 0) === 0)?.result;
+  const inner = frames.filter((frame) => (frame.frameId || 0) !== 0 && frame.result.text.trim())
+    .map((frame) => "\n\n[In a frame on the page]\n" + frame.result.text).join("");
+  return {
+    ...page,
+    selection: frames.map((frame) => frame.result.selection).find(Boolean) || "",
+    text: ((top ? top.text : "") + inner).slice(0, MAX_TEXT),
+    elements,
+  };
 }
 
 // The page's text, and its buttons, links and fields, each tagged with an id ("e12") Jarvis can
 // act on. Off-screen ones are marked so Jarvis knows to scroll.
 function pageOnPage(limit) {
-  const clean = (text) => String(text || "").replace(/\s+/g, " ").trim().slice(0, 60);
-  const selector = 'button, a[href], input:not([type="hidden"]), textarea, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="option"], [role="combobox"], [contenteditable="true"]';
+  if (window !== top && innerWidth * innerHeight < 20000) return null; // hidden or tiny frames (ads, trackers)
+  const clean = (text, length = 60) => String(text || "").replace(/\s+/g, " ").trim().slice(0, length);
+  // Rows are list entries you open by pressing them (an email in an inbox, a result in a table).
+  const selector = 'button, a[href], input:not([type="hidden"]), textarea, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="option"], [role="combobox"], [contenteditable="true"], [role="row"]';
   const elements = [];
   for (const node of document.querySelectorAll(selector)) {
     const box = node.getBoundingClientRect();
     if (box.width < 2 || box.height < 2 || getComputedStyle(node).visibility === "hidden") continue;
     if (node.type === "password") continue; // never offered, never read
     const tag = node.tagName.toLowerCase();
-    const kind = tag === "a" || node.getAttribute("role") === "link" ? "link"
+    const row = node.getAttribute("role") === "row";
+    if (row && node.querySelector('[role="columnheader"]')) continue; // a table's header, not an entry
+    const kind = row ? "item" : tag === "a" || node.getAttribute("role") === "link" ? "link"
       : tag === "input" || tag === "textarea" || node.isContentEditable || node.getAttribute("role") === "combobox" ? "field"
       : tag === "select" ? "dropdown" : "button";
     // A field's own label, or what names it nearby: aria-labelledby, a <label>, the question it's in.
@@ -93,13 +123,13 @@ function pageOnPage(limit) {
     const heading = question && (question.querySelector('[role="heading"], legend') || (question.tagName === "LABEL" ? question : null));
     const own = kind === "field" ? node.getAttribute("aria-label") || labelledBy || (forLabel && forLabel.innerText) || (heading && heading.innerText) || node.placeholder || node.name
       : node.getAttribute("aria-label") || node.innerText || node.value || node.title || labelledBy;
-    const label = clean(own);
+    const label = clean(own, row ? 100 : 60);
     if (!label && kind !== "field") continue;
     const id = "e" + (elements.length + 1);
     node.setAttribute("data-jarvis-e", id);
     const onScreen = box.bottom > 0 && box.top < innerHeight;
     elements.push({ id, kind, label: label || "(unlabelled field)", onScreen });
-    if (elements.length >= 80) break;
+    if (elements.length >= 200) break;
   }
   return {
     selection: String(window.getSelection() || "").slice(0, 2000),
@@ -141,7 +171,8 @@ async function act(action, target, text) {
 }
 
 async function pageAct(tab, action, target, text) {
-  const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: actOnPage, args: [action, target, text] });
+  const where = pageElements[target] || { frameId: 0, local: target };
+  const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [where.frameId] }, world: "MAIN", func: actOnPage, args: [action, where.local, text] });
   return result;
 }
 
@@ -180,37 +211,42 @@ async function actOnPage(action, target, text) {
     // a full hover-and-press, which some widgets need.
     const state = () => element.getAttribute("aria-checked") || element.getAttribute("aria-selected") || element.getAttribute("aria-expanded") || element.getAttribute("aria-pressed");
     const before = state();
+    const page = location.href;
+    const row = element.getAttribute("role") === "row";
     element.click();
-    await wait(200);
-    if (before !== null && state() === before) {
+    await wait(row ? 500 : 200);
+    if ((before !== null && state() === before) || (row && location.href === page)) {
       const box = element.getBoundingClientRect();
       const at = { bubbles: true, cancelable: true, view: window, button: 0, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
       for (const name of ["pointerover", "mouseover", "pointermove", "mousemove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
         element.dispatchEvent(new (name.startsWith("pointer") ? PointerEvent : MouseEvent)(name, { ...at, buttons: name.endsWith("down") ? 1 : 0 }));
       }
-      await wait(200);
-      if (state() === before) return { done: false, reason: "it didn't respond to the press", ...where(element) };
+      await wait(row ? 500 : 200);
+      if (before !== null && state() === before) return { done: false, reason: "it didn't respond to the press", ...where(element) };
     }
     return { done: true, ...where(element) };
   }
   if (action === "fill") {
+    // Set as the page's own code would, then (for pages that only listen to real editing) the
+    // browser's own insert-text over a selection, each read back. Always this exact element.
     const value = String(text || "");
-    element.focus();
-    if (element.isContentEditable) {
-      document.execCommand("selectAll");
-      document.execCommand("insertText", false, value);
-    } else {
-      const proto = element.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : element.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, "value").set.call(element, value);
-      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+    const shown = () => String((element.isContentEditable ? element.innerText : element.value) || "").trim() === value.trim();
+    for (const how of element.isContentEditable ? ["insert"] : ["set", "insert"]) {
+      element.focus();
+      if (how === "set") {
+        const proto = element.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : element.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, "value").set.call(element, value);
+        element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+      } else {
+        if (element.isContentEditable) document.execCommand("selectAll");
+        else if (element.select) element.select();
+        document.execCommand("insertText", false, value);
+      }
       element.dispatchEvent(new Event("change", { bubbles: true }));
+      await wait(300);
+      if (shown()) return { done: true, ...where(element) };
     }
-    await wait(300);
-    const shown = element.isContentEditable ? element.innerText : element.value;
-    if (String(shown || "").trim() === value.trim()) return { done: true, ...where(element) };
-    element.focus();
-    if (element.select) element.select();
-    return { done: false, focused: true, reason: "the page didn't take a scripted value", ...where(element) };
+    return { done: false, reason: "the page didn't take the text", ...where(element) };
   }
   return { done: false, reason: "unknown step " + action };
 }
