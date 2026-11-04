@@ -184,7 +184,8 @@ internal static class AppHost
                 },
                 provider.GetRequiredService<TimeProvider>()),
             () => provider.GetRequiredService<IOptionsMonitor<ProactiveOptions>>().CurrentValue.CalendarAddress,
-            provider.GetRequiredService<Jarvis.Core.Google.GoogleCalendar>()));
+            provider.GetRequiredService<Jarvis.Core.Google.GoogleCalendar>(),
+            new Jarvis.Core.Assistant.LocalActions(provider.GetRequiredService<Jarvis.Core.Assistant.IApps>())));
     }
 
     /// <summary>Windows-specific devices and surfaces.</summary>
@@ -298,6 +299,7 @@ internal static class AppHost
         services.AddSingleton(provider => new McpOAuth(new HttpClient { Timeout = TimeSpan.FromSeconds(20) }, provider.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IConnectorStore, SettingsConnectorStore>();
         services.AddSingleton<Jarvis.Core.Google.IGoogleAccounts, SettingsGoogleAccounts>();
+        services.AddSingleton<Jarvis.Core.Assistant.IApps, Jarvis.Platform.Shell.InstalledApps>();
         services.AddSingleton(provider => new Jarvis.Core.Google.GoogleCalendar(
             provider.GetRequiredService<Jarvis.Core.Google.IGoogleAccounts>(),
             provider.GetRequiredService<McpOAuth>(),

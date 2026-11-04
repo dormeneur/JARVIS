@@ -497,6 +497,47 @@ public sealed class CompanionSessionTests
     }
 
     [Fact]
+    public async Task OpeningAnApp_HappensOnThisPc_WithoutClaudeOrAScreenshot_AndOffersNextSteps()
+    {
+        var fakes = new Fakes("open spotify", "Claude would say this.");
+        var apps = new OneApp();
+        fakes.UseLocal(new FakeBrain("unused"), new FakeBrain("unused"), apps: apps);
+        await using var session = fakes.CreateSession();
+
+        session.BeginListening();
+        session.EndListening();
+        await WaitUntil(() => fakes.Notch.Shown.OfType<NotchState.Response>().Any(r => r.Actions is { Count: > 0 }));
+        var offer = fakes.Notch.Shown.OfType<NotchState.Response>().Last();
+        offer.Actions![0].Invoke();
+
+        Assert.Null(fakes.Brain.LastTurn); // Claude never asked
+        Assert.Equal(["Spotify"], apps.Launched);
+        Assert.Equal("Opened Spotify.", offer.Text);
+        Assert.Equal(["spotify:collection:tracks"], apps.Opened);
+    }
+
+    private sealed class OneApp : Jarvis.Core.Assistant.IApps
+    {
+        public List<string> Launched { get; } = [];
+
+        public List<string> Opened { get; } = [];
+
+        public IReadOnlyList<Jarvis.Core.Assistant.InstalledApp> All { get; } = [new("Spotify", "spotify")];
+
+        public bool Launch(Jarvis.Core.Assistant.InstalledApp app)
+        {
+            Launched.Add(app.Name);
+            return true;
+        }
+
+        public bool Open(string uri)
+        {
+            Opened.Add(uri);
+            return true;
+        }
+    }
+
+    [Fact]
     public async Task PrivateMode_AnswersLocally_AndAsksBeforeSendingTheScreenToClaude()
     {
         var fakes = new Fakes("what does this error mean", "It means the file is locked.");
@@ -540,10 +581,10 @@ public sealed class CompanionSessionTests
     {
         public LocalTurns? Local { get; private set; }
 
-        public void UseLocal(IAssistantBrain vaultBrain, IAssistantBrain localBrain, IAssistantBrain? calendar = null, string calendarAddress = "")
+        public void UseLocal(IAssistantBrain vaultBrain, IAssistantBrain localBrain, IAssistantBrain? calendar = null, string calendarAddress = "", Jarvis.Core.Assistant.IApps? apps = null)
         {
             var vault = new Jarvis.Tests.Vault.FakeVault();
-            Local = new LocalTurns(vault, vaultBrain, localBrain, new Jarvis.Core.Vault.FormFiller(new Jarvis.Core.Vault.FormServices(vault, Browser, Notch), TimeProvider.System, NullLogger<Jarvis.Core.Vault.FormFiller>.Instance), calendar ?? new FakeBrain("No calendar."), () => calendarAddress);
+            Local = new LocalTurns(vault, vaultBrain, localBrain, new Jarvis.Core.Vault.FormFiller(new Jarvis.Core.Vault.FormServices(vault, Browser, Notch), TimeProvider.System, NullLogger<Jarvis.Core.Vault.FormFiller>.Instance), calendar ?? new FakeBrain("No calendar."), () => calendarAddress, Actions: apps is null ? null : new Jarvis.Core.Assistant.LocalActions(apps));
         }
 
         public TimeSpan BrainDelay { get; init; }

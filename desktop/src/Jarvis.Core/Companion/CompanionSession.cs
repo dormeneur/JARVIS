@@ -631,6 +631,28 @@ public sealed partial class CompanionSession : IAsyncDisposable
     {
         var privacy = _services.Privacy;
         var browser = _services.Browser;
+
+        // Open an app, a setting, a site or a search: done right here, no screenshot, no Claude.
+        if (local.Actions?.TryHandle(request) is { } done)
+        {
+            LogRoute(TurnRoute.Local);
+            privacy.Record(0, "Done on this PC (opened something)");
+            var (said, _, _, _) = await AnswerAsync(new SaidBrain(done.Said), string.Empty, request, [], _time.GetTimestamp(), typed, cancellationToken).ConfigureAwait(false);
+            _services.History.Add(request, said);
+            if (done.Next.Count > 0)
+            {
+                // What people usually do next there, one tap each (deep links: still no Claude).
+                _services.Notch.Show(new NotchState.Response(said, [.. done.Next.Select(next => new NotchAction(next.Label, () => local.Actions.Follow(next)))]));
+            }
+            else
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), _time, cancellationToken).ConfigureAwait(false);
+                _services.Notch.Show(NotchState.Idle);
+            }
+
+            return true;
+        }
+
         var route = TurnRouter.Route(request, privacy.PrivateMode, browser.IsBrowserInFront);
 
         // Misheard ("feel this farm")? If it sounds form-ish and the page in front has a form, it's that.
@@ -1002,4 +1024,16 @@ public sealed record CompanionServices(
 /// <param name="Calendar">Answers calendar questions from the iCal feed (<see cref="Jarvis.Core.Proactive.CalendarBrain"/>).</param>
 /// <param name="CalendarAddress">The calendar's iCal address from Settings, for its web page and new events.</param>
 /// <param name="Google">Jarvis's own Google sign-in: adds events straight to Google Calendar when an account is connected.</param>
-public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar, Func<string>? CalendarAddress = null, Jarvis.Core.Google.GoogleCalendar? Google = null);
+/// <param name="Actions">Opening apps, settings, sites and searches on this PC, before any brain is asked.</param>
+public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar, Func<string>? CalendarAddress = null, Jarvis.Core.Google.GoogleCalendar? Google = null, Jarvis.Core.Assistant.LocalActions? Actions = null);
+
+/// <summary>A reply already known (a local action's "Opened Spotify."), spoken and shown like any answer.</summary>
+internal sealed class SaidBrain(string text) : IAssistantBrain
+{
+    public async IAsyncEnumerable<BrainEvent> RunTurnAsync(BrainTurn turn, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.CompletedTask.ConfigureAwait(false);
+        yield return new BrainEvent.TextDelta(text);
+        yield return new BrainEvent.Completed();
+    }
+}
