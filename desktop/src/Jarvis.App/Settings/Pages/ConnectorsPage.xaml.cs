@@ -1,4 +1,5 @@
 using Jarvis.App.Settings.ViewModels;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Jarvis.App.Settings.Pages;
@@ -26,6 +27,22 @@ public sealed partial class ConnectorsPage : UserControl
         if (sender is Button { Tag: string name })
         {
             ViewModel.SignInRowCommand.Execute(name);
+        }
+    }
+
+    private void OnConnect(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: CatalogRow row })
+        {
+            ViewModel.ConnectCommand.Execute(row);
+        }
+    }
+
+    private void OnTokenPage(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: CatalogRow row })
+        {
+            ViewModel.OpenTokenPageCommand.Execute(row);
         }
     }
 

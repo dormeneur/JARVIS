@@ -121,6 +121,9 @@ public sealed partial class App : Application
             case "notch":
                 _ = CycleNotchDemoAsync(_host.Services.GetRequiredService<INotchPresenter>());
                 break;
+            case { } demo when demo.StartsWith("settings:", StringComparison.Ordinal):
+                ShowSettings(demo["settings:".Length..]);
+                break;
             case { } demo when demo.StartsWith("ask:", StringComparison.Ordinal):
                 _ = AskWhenReadyAsync(demo["ask:".Length..]);
                 break;

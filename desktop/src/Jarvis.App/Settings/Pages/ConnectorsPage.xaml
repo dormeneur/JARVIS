@@ -10,11 +10,13 @@
       <TextBlock
           Margin="0,0,0,8"
           Foreground="{StaticResource TextSecondaryBrush}"
-          Text="Let background jobs use your services through their MCP servers (Linear, Notion, an internal tool…). Jobs only change things in a service when you ask them to. Keys and sign-ins are kept in Windows-protected storage, never in Jarvis's settings."
+          Text="Services Jarvis can work in for you: GitHub, Notion, Linear and more. Jarvis signs in as itself and keeps the access in Windows-protected storage, so it stays yours whichever AI Jarvis runs on. It only changes things in a service when you ask. Your vault never goes through these: it's answered on this PC."
           TextWrapping="Wrap" />
+
+      <TextBlock Style="{StaticResource GroupTitle}" Text="Connected" />
       <TextBlock
           Foreground="{StaticResource TextSecondaryBrush}"
-          Text="No connectors yet."
+          Text="Nothing connected yet. Pick a service below."
           Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}" />
       <ItemsControl ItemsSource="{x:Bind ViewModel.Connectors}">
         <ItemsControl.ItemTemplate>
@@ -26,12 +28,12 @@
               </Grid.ColumnDefinitions>
               <StackPanel Spacing="2">
                 <TextBlock FontWeight="SemiBold" Text="{x:Bind Name}" />
-                <TextBlock Text="{x:Bind Url}" TextTrimming="CharacterEllipsis" />
+                <TextBlock FontSize="12" Text="{x:Bind Url}" TextTrimming="CharacterEllipsis" />
                 <TextBlock FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Text="{x:Bind Auth}" />
                 <TextBlock FontSize="12" Text="{x:Bind Status, Mode=OneWay}" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
-                <Button Click="OnTest" Content="Test" Tag="{x:Bind Name}" />
+                <Button Click="OnTest" Content="Check" Tag="{x:Bind Name}" />
                 <Button Click="OnSignIn" Content="Sign in again" Tag="{x:Bind Name}" Visibility="{x:Bind CanSignIn}" />
                 <Button Click="OnRemove" Content="Remove" Tag="{x:Bind Name}" />
               </StackPanel>
@@ -39,12 +41,56 @@
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
-      <TextBlock Style="{StaticResource GroupTitle}" Text="Add a connector" />
-      <TextBox Header="Name" PlaceholderText="linear" Text="{x:Bind ViewModel.NewName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+      <TextBlock Style="{StaticResource GroupTitle}" Text="Add a service" />
+      <AutoSuggestBox PlaceholderText="Search services (GitHub, Notion, payments…)" QueryIcon="Find" Text="{x:Bind ViewModel.Search, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+      <ItemsControl ItemsSource="{x:Bind ViewModel.Available}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:CatalogRow">
+            <Grid Margin="0,3" Padding="14,10" Background="{StaticResource Surface1Brush}" ColumnSpacing="12" CornerRadius="8">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <Border Width="32" Height="32" VerticalAlignment="Top" Background="{StaticResource AccentFillColorDefaultBrush}" CornerRadius="8">
+                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" Text="{x:Bind Initial}" />
+              </Border>
+              <StackPanel Grid.Column="1" Spacing="4">
+                <TextBlock FontWeight="SemiBold" Text="{x:Bind Name}" />
+                <TextBlock FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Text="{x:Bind Detail}" TextWrapping="Wrap" />
+                <StackPanel Spacing="6" Visibility="{x:Bind ShowsToken, Mode=OneWay}">
+                  <TextBlock FontSize="12" Text="{x:Bind TokenHint}" TextWrapping="Wrap" />
+                  <HyperlinkButton Padding="0" Click="OnTokenPage" Content="{x:Bind TokenPageLabel}" Tag="{x:Bind}" />
+                  <PasswordBox Password="{x:Bind Token, Mode=TwoWay}" PlaceholderText="Paste the token here" />
+                </StackPanel>
+                <TextBox
+                    FontSize="12"
+                    PlaceholderText="Which account? (optional, e.g. work)"
+                    Text="{x:Bind Label, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    Visibility="{x:Bind ShowsLabel, Mode=OneWay}" />
+                <TextBlock FontSize="12" Text="{x:Bind Status, Mode=OneWay}" TextWrapping="Wrap" Visibility="{x:Bind HasStatus, Mode=OneWay}" />
+              </StackPanel>
+              <StackPanel Grid.Column="2" VerticalAlignment="Top" Orientation="Horizontal" Spacing="8">
+                <ProgressRing Width="18" Height="18" IsActive="{x:Bind Busy, Mode=OneWay}" Visibility="{x:Bind Busy, Mode=OneWay}" />
+                <Button Click="OnConnect" Content="{x:Bind ActionLabel, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" Tag="{x:Bind}" />
+              </StackPanel>
+            </Grid>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <TextBlock Style="{StaticResource GroupTitle}" Text="Custom connector" />
+      <TextBlock
+          FontSize="12"
+          Foreground="{StaticResource TextSecondaryBrush}"
+          Text="Any other MCP server: a company tool, a self-hosted server, or a service not listed above."
+          TextWrapping="Wrap" />
+      <TextBox Header="Name" PlaceholderText="my-tool" Text="{x:Bind ViewModel.NewName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
       <TextBox Header="Server URL" PlaceholderText="https://mcp.example.com/mcp" Text="{x:Bind ViewModel.NewUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
       <ComboBox MinWidth="200" Header="Authentication" ItemsSource="{x:Bind ViewModel.AuthChoices}" SelectedItem="{x:Bind ViewModel.SelectedAuth, Mode=TwoWay}" />
       <PasswordBox Header="API key" Password="{x:Bind ViewModel.NewKey, Mode=TwoWay}" Visibility="{x:Bind ViewModel.NeedsKey, Mode=OneWay}" />
-      <Button Margin="0,6,0,0" Command="{x:Bind ViewModel.AddCommand}" Content="Add connector" Style="{StaticResource AccentButtonStyle}" />
+      <Button Margin="0,6,0,0" Command="{x:Bind ViewModel.AddCommand}" Content="Add connector" />
       <TextBlock FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Text="{x:Bind ViewModel.FormMessage, Mode=OneWay}" TextWrapping="Wrap" />
     </StackPanel>
   </ScrollViewer>

@@ -29,6 +29,16 @@ public sealed partial class ConnectorsViewModel : ObservableObject
 
     public ObservableCollection<ConnectorRow> Connectors { get; } = [];
 
+    /// <summary>The catalog, filtered by <see cref="Search"/>: one Connect (or Add another account) each.</summary>
+    public ObservableCollection<CatalogRow> Available { get; } = [];
+
+    private readonly List<CatalogRow> _catalog = [.. ConnectorCatalog.All.Select(service => new CatalogRow(service))];
+
+    [ObservableProperty]
+    public partial string Search { get; set; } = string.Empty;
+
+    partial void OnSearchChanged(string value) => Filter();
+
     public bool IsEmpty => Connectors.Count == 0;
 
     public IReadOnlyList<string> AuthChoices { get; } = [NoAuth, ApiKeyAuth, SignInAuth];
@@ -96,6 +106,107 @@ public sealed partial class ConnectorsViewModel : ObservableObject
 
         NewName = NewUrl = NewKey = string.Empty;
         Refresh();
+    }
+
+    /// <summary>
+    /// Connect from the catalog. Browser sign-in: Jarvis registers itself with the service and the
+    /// user approves in the browser. Token: the first press shows where to make one; with a token
+    /// pasted, it's checked against the service (GitHub names the account) and kept. Every new
+    /// connection is then tested, so the row says whether jobs can really use it.
+    /// </summary>
+    [RelayCommand]
+    private async Task ConnectAsync(CatalogRow row)
+    {
+        var service = row.Service;
+        var taken = _store.All.Select(connector => connector.Name).ToList();
+        if (service.SignIn == CatalogSignIn.Browser)
+        {
+            var name = ConnectorCatalog.NameFor(service, row.Label, taken);
+            row.Status = $"Sign in to {service.Name} in the browser window that just opened. Signed in to more than one account? Pick the one you want there.";
+            row.Busy = true;
+            var failure = await SignInAsync(new Connector(name, service.Url, ConnectorAuth.SignIn)).ConfigureAwait(true);
+            row.Busy = false;
+            if (failure is not null)
+            {
+                row.Status = failure;
+                return;
+            }
+
+            row.Status = $"Connected as \"{name}\". {await TestAsync(service.Url, await _store.TokenAsync(name, CancellationToken.None).ConfigureAwait(true)).ConfigureAwait(true)}";
+            row.Label = string.Empty;
+            Refresh();
+            return;
+        }
+
+        if (!row.ShowsToken)
+        {
+            row.ShowsToken = true;
+            row.Status = string.Empty;
+            return;
+        }
+
+        var token = row.Token.Trim();
+        if (token.Length == 0)
+        {
+            row.Status = $"Paste the token you made on {service.Name} first.";
+            return;
+        }
+
+        row.Busy = true;
+        row.Status = "Checking the token…";
+        var account = service.Id == "github" ? await GitHubLoginAsync(token).ConfigureAwait(true) : (Ok: true, Login: (string?)null, Problem: (string?)null);
+        if (!account.Ok)
+        {
+            row.Busy = false;
+            row.Status = account.Problem!;
+            return;
+        }
+
+        // The same account again replaces its token; another account gets its own connection.
+        var connectorName = account.Login is { } login && _store.All.Any(connector => connector.Name.Equals($"{service.Id}-{login}", StringComparison.OrdinalIgnoreCase))
+            ? $"{service.Id}-{login}".ToLowerInvariant()
+            : ConnectorCatalog.NameFor(service, account.Login ?? row.Label, taken);
+        var check = await TestAsync(service.Url, token).ConfigureAwait(true);
+        _store.Save(new Connector(connectorName, service.Url, ConnectorAuth.ApiKey), token);
+        row.Busy = false;
+        row.Token = row.Label = string.Empty;
+        row.ShowsToken = false;
+        row.Status = $"Connected {(account.Login is { } who ? $"{who}'s account " : string.Empty)}as \"{connectorName}\". {check}";
+        Refresh();
+    }
+
+    [RelayCommand]
+    private static void OpenTokenPage(CatalogRow row)
+    {
+        if (row.Service.TokenPage is { } page)
+        {
+            _ = OpenBrowser(new Uri(page));
+        }
+    }
+
+    /// <summary>Whose GitHub token this is, or why it can't be used.</summary>
+    private static async Task<(bool Ok, string? Login, string? Problem)> GitHubLoginAsync(string token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/user");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.UserAgent.ParseAdd("Jarvis");
+        request.Headers.Accept.ParseAdd("application/vnd.github+json");
+        try
+        {
+            using var response = await Http.SendAsync(request).ConfigureAwait(false);
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                return (false, null, "GitHub turned that token down. Check you copied all of it, and that it hasn't expired.");
+            }
+
+            response.EnsureSuccessStatusCode();
+            using var json = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync().ConfigureAwait(false));
+            return (true, json.RootElement.GetProperty("login").GetString(), null);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or KeyNotFoundException)
+        {
+            return (false, null, $"Couldn't check the token with GitHub: {exception.Message}");
+        }
     }
 
     [RelayCommand]
@@ -194,14 +305,34 @@ public sealed partial class ConnectorsViewModel : ObservableObject
         {
             var auth = connector.Auth switch
             {
-                ConnectorAuth.ApiKey => "API key (in Windows Credential Manager)",
+                ConnectorAuth.ApiKey => "Token (in Windows Credential Manager)",
                 ConnectorAuth.SignIn => "Signed in with browser (tokens encrypted for your Windows account)",
                 _ => "No sign-in",
             };
-            Connectors.Add(new ConnectorRow(connector.Name, connector.Url, auth, connector.Auth == ConnectorAuth.SignIn));
+            var service = ConnectorCatalog.Of(connector);
+            Connectors.Add(new ConnectorRow(connector.Name, service is null ? connector.Url : $"{service.Name} · {service.Description}", auth, connector.Auth == ConnectorAuth.SignIn));
         }
 
+        foreach (var row in _catalog)
+        {
+            row.ActionLabel = _store.All.Any(connector => ConnectorCatalog.Of(connector) == row.Service) ? "Add another account" : "Connect";
+        }
+
+        Filter();
         OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    private void Filter()
+    {
+        var words = Search.Trim();
+        Available.Clear();
+        foreach (var row in _catalog.Where(row => words.Length == 0
+                     || row.Service.Name.Contains(words, StringComparison.OrdinalIgnoreCase)
+                     || row.Service.Category.Contains(words, StringComparison.OrdinalIgnoreCase)
+                     || row.Service.Description.Contains(words, StringComparison.OrdinalIgnoreCase)))
+        {
+            Available.Add(row);
+        }
     }
 }
 
@@ -217,4 +348,49 @@ public sealed partial class ConnectorRow(string name, string url, string auth, b
 
     [ObservableProperty]
     public partial string Status { get; set; } = string.Empty;
+}
+
+/// <summary>One service in the catalog, with its connect state while connecting.</summary>
+public sealed partial class CatalogRow(CatalogService service) : ObservableObject
+{
+    public CatalogService Service => service;
+
+    public string Name => service.Name;
+
+    public string Detail => $"{service.Category} · {service.Description}";
+
+    /// <summary>The service's first letter, for its badge.</summary>
+    public string Initial => service.Name[..1];
+
+    public bool UsesToken => service.SignIn == CatalogSignIn.Token;
+
+    public string TokenHint => service.TokenHint ?? string.Empty;
+
+    public string TokenPageLabel => $"Make a token on {service.Name}";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowsLabel))]
+    public partial string ActionLabel { get; set; } = "Connect";
+
+    /// <summary>Asks which account it is once the service already has one.</summary>
+    public bool ShowsLabel => ActionLabel != "Connect" && !UsesToken; // a token names its own account
+
+    /// <summary>For another account: a short name for it ("work"), so its connection is easy to tell apart.</summary>
+    [ObservableProperty]
+    public partial string Label { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool ShowsToken { get; set; }
+
+    [ObservableProperty]
+    public partial string Token { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatus))]
+    public partial string Status { get; set; } = string.Empty;
+
+    public bool HasStatus => Status.Length > 0;
+
+    [ObservableProperty]
+    public partial bool Busy { get; set; }
 }
