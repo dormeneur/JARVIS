@@ -22,6 +22,7 @@ public interface IAgentJobs
     void Cancel(Guid id);
 }
 
+/// <param name="Brief">What the job was asked to do, so it can be run again.</param>
 public sealed record AgentJobInfo(
     Guid Id,
     string Title,
@@ -29,7 +30,8 @@ public sealed record AgentJobInfo(
     AgentJobStatus Status,
     DateTimeOffset Started,
     string? Activity = null,
-    string? Result = null);
+    string? Result = null,
+    string? Brief = null);
 
 public enum AgentJobStatus
 {
@@ -100,7 +102,7 @@ public sealed partial class AgentJobManager : IAgentJobs, IDisposable
         Directory.CreateDirectory(Path.Combine(folder, "tmp"));
         File.WriteAllText(Path.Combine(folder, "brief.md"), brief);
 
-        var job = new AgentJobInfo(Guid.NewGuid(), title, folder, AgentJobStatus.Queued, started);
+        var job = new AgentJobInfo(Guid.NewGuid(), title, folder, AgentJobStatus.Queued, started, Brief: brief);
         var cancellation = new CancellationTokenSource();
         _running[job.Id] = cancellation;
         Update(job);

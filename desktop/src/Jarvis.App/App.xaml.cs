@@ -125,6 +125,9 @@ public sealed partial class App : Application
                 var queue = _host.Services.GetRequiredService<DispatcherQueue>();
                 _ = _enginesReady.ContinueWith(_ => queue.TryEnqueue(() => ShowNotchSettings(demo["notchsettings:".Length..])), TaskScheduler.Default);
                 break;
+            case "chatwindow":
+                ShowChatWindow();
+                break;
             case { } demo when demo.StartsWith("settings:", StringComparison.Ordinal):
                 ShowSettings(demo["settings:".Length..]);
                 break;
@@ -367,7 +370,7 @@ public sealed partial class App : Application
             "Afternoon, Sam.",
             "Hold Ctrl + Alt and tell me what to take off your plate.",
             [new("", "Ask Jarvis", null, () => { }), new("", "Fill a form", null, () => { }), new("", "Private: off", null, () => { }), new("", "Settings", null, () => { })],
-            [new("", "Lisbon trip plan", "Ready to view", () => { }), new("", "Reviewing GitHub activity", "Working…", () => { }), new("", "Volunteer sign-up", "Fill again", () => { })],
+            [new("", "Lisbon trip plan", "Ready to view", () => { }), new("", "Reviewing GitHub activity", "Working…", () => { }), new("", "Clearing inbox messages", "Didn't finish", () => { }, new NotchAction("Retry", () => { }))],
             () => { })),
         ("event", new NotchState.EventDraft(
             new Jarvis.Contracts.Calendar.CalendarEvent("Lunch with Sam", new DateTimeOffset(2030, 1, 15, 13, 0, 0, TimeSpan.Zero), new DateTimeOffset(2030, 1, 15, 14, 0, 0, TimeSpan.Zero), false, "Cafe Example", string.Empty),
@@ -417,24 +420,52 @@ public sealed partial class App : Application
         ];
 
         var agents = _host.Services.GetRequiredService<IAgentJobs>();
-        var recent = new List<HomeItem>();
-        var lastForm = _host.Services.GetRequiredService<Jarvis.Core.Vault.FormFiller>().LastTitle;
-        if (lastForm is { Length: > 0 })
+        List<HomeItem> Recent()
         {
-            recent.Add(new("\uE70F", lastForm, "Fill again", companion.FillForm));
-        }
-
-        foreach (var job in agents.Jobs.Take(recent.Count > 0 ? 2 : 3)) // three cards fit across
-        {
-            recent.Add(job.Status switch
+            var recent = new List<HomeItem>();
+            var lastForm = _host.Services.GetRequiredService<Jarvis.Core.Vault.FormFiller>().LastTitle;
+            if (lastForm is { Length: > 0 })
             {
-                AgentJobStatus.Running or AgentJobStatus.Queued => new HomeItem("\uE916", job.Title, job.Activity ?? "Working\u2026", () => notch.Show(NotchState.Idle)),
-                AgentJobStatus.Finished => new HomeItem("\uE73E", job.Title, "Ready to view", () => OpenFolder(Path.Combine(job.Folder, "output"))),
-                _ => new HomeItem("\uE7BA", job.Title, job.Status == AgentJobStatus.Failed ? "Didn't finish" : job.Status.ToString(), () => OpenFolder(job.Folder)),
-            });
+                recent.Add(new("\uE70F", lastForm, "Fill again", companion.FillForm));
+            }
+
+            foreach (var job in agents.Jobs.Take(recent.Count > 0 ? 2 : 3)) // three cards fit across
+            {
+                var retry = job.Brief is { } brief ? new NotchAction("Retry", () => agents.Start(brief)) : null;
+                recent.Add(job.Status switch
+                {
+                    AgentJobStatus.Running or AgentJobStatus.Queued => new HomeItem("\uE916", job.Title, job.Activity ?? "Working…", () => notch.Show(NotchState.Idle)),
+                    AgentJobStatus.Finished => new HomeItem("\uE73E", job.Title, "Ready to view", () => OpenFolder(Path.Combine(job.Folder, "output"))),
+                    AgentJobStatus.Cancelled => new HomeItem("\uE7BA", job.Title, "Stopped before it finished", () => OpenFolder(job.Folder), retry),
+                    _ => new HomeItem("\uE7BA", job.Title, "Didn't finish", () => OpenFolder(job.Folder), retry),
+                });
+            }
+
+            return recent;
         }
 
-        notch.Show(new NotchState.Home(greeting, hint, actions, recent, () => notch.Show(NotchState.Idle)));
+        // The cards follow the jobs while the home is open: a running one ticks on, a finished one turns ready.
+        NotchState.Home? shown = null;
+        void Changed(AgentJobInfo _)
+        {
+            if (shown is not null && ReferenceEquals(notch.Current, shown))
+            {
+                shown = shown with { Recent = Recent() };
+                notch.Show(shown);
+            }
+            else
+            {
+                agents.Changed -= Changed;
+            }
+        }
+
+        shown = new NotchState.Home(greeting, hint, actions, Recent(), () =>
+        {
+            agents.Changed -= Changed;
+            notch.Show(NotchState.Idle);
+        });
+        agents.Changed += Changed;
+        notch.Show(shown);
     }
 
     /// <summary>The five most recent background jobs: stop the running ones, open the finished ones.</summary>
@@ -540,6 +571,25 @@ public sealed partial class App : Application
     private static string TrayIconFile(bool paused) => Path.Combine(AppContext.BaseDirectory, paused ? "jarvis-paused.ico" : "jarvis.ico");
 
     private void ShowSettings() => ShowSettings(null);
+
+    private Notch.ChatWindow? _chatWindow;
+
+    /// <summary>The chat in its own window (the notch chat's pop-out); one at a time, brought to the front.</summary>
+    internal void ShowChatWindow()
+    {
+        var dispatcher = _host.Services.GetRequiredService<DispatcherQueue>();
+        dispatcher.TryEnqueue(() =>
+        {
+            if (_chatWindow is null)
+            {
+                _chatWindow = new Notch.ChatWindow(_host.Services.GetRequiredService<ConversationLog>(), _host.Services.GetRequiredService<CompanionSession>().Ask);
+                _chatWindow.Closed += (_, _) => _chatWindow = null;
+            }
+
+            _chatWindow.Activate();
+            WindowChrome.Activate(WinRT.Interop.WindowNative.GetWindowHandle(_chatWindow));
+        });
+    }
 
     /// <summary>The service provider, for views that build settings pages (the notch's Settings).</summary>
     internal IServiceProvider Services => _host.Services;

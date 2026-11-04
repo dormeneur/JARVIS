@@ -171,8 +171,14 @@ internal sealed class NotchPresenter : INotchPresenter
     public void Show(NotchState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        Volatile.Write(ref _requested, state);
         _dispatcher.TryEnqueue(() => Apply(state));
     }
+
+    /// <summary>What was last asked to show (from any thread).</summary>
+    public NotchState Current => Volatile.Read(ref _requested);
+
+    private NotchState _requested = NotchState.Idle;
 
     /// <summary>Hidden while paused, or at rest while something is fullscreen; shown otherwise.</summary>
     private void UpdateVisibility()
@@ -512,11 +518,34 @@ internal sealed class NotchPresenter : INotchPresenter
         _composerBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _composerBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _composerBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _composerBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _composerBar.Children.Add(talk);
         Grid.SetColumn(box, 1);
         _composerBar.Children.Add(box);
         Grid.SetColumn(send, 2);
         _composerBar.Children.Add(send);
+
+        // The chat in its own window, to keep it open beside your work.
+        var popOut = new Button
+        {
+            Width = 38,
+            Height = 38,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(19),
+            Background = NotchFormView.Glass,
+            BorderBrush = NotchFormView.GlassEdge,
+            BorderThickness = new Thickness(1),
+            Content = new FontIcon { Glyph = "", FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"), FontSize = 13, Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"] },
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(popOut, "Open the chat in a window");
+        ToolTipService.SetToolTip(popOut, "Open the chat in a window");
+        popOut.Click += (_, _) =>
+        {
+            CloseComposer(submit: false);
+            ((App)Application.Current).ShowChatWindow();
+        };
+        Grid.SetColumn(popOut, 3);
+        _composerBar.Children.Add(popOut);
         area.Children.Add(_composerBar);
 
         _talkWatch = DispatcherQueue.GetForCurrentThread().CreateTimer();
@@ -646,7 +675,7 @@ internal sealed class NotchPresenter : INotchPresenter
     }
 
     /// <summary>A chat bubble: the user's on the right in the reply blue, Jarvis's on the left in glass.</summary>
-    private static Border Bubble(string text, bool mine, FontFamily font) => new()
+    internal static Border Bubble(string text, bool mine, FontFamily font) => new()
     {
         HorizontalAlignment = mine ? HorizontalAlignment.Right : HorizontalAlignment.Left,
         MaxWidth = mine ? 380 : 440,

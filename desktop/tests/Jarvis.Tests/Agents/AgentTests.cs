@@ -60,6 +60,7 @@ public sealed class AgentTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(started.Folder, "output")));
         Assert.True(Directory.Exists(Path.Combine(started.Folder, "tmp")));
         Assert.Equal("Compare three laptops under 1000 dollars and write a table.", File.ReadAllText(Path.Combine(started.Folder, "brief.md")));
+        Assert.Equal("Compare three laptops under 1000 dollars and write a table.", started.Brief); // what Retry runs again
         Assert.Equal("Done, it's in output/laptops.md.", File.ReadAllText(Path.Combine(started.Folder, "result.md")));
         Assert.Equal(Path.GetFullPath(started.Folder), runtime.LastJob!.WorkingDirectory);
         Assert.Contains(updates, job => job.Activity == "Searching the web for laptops 2026");

@@ -89,7 +89,8 @@ public abstract record NotchState
 }
 
 /// <summary>A tile or row on the notch's home. <paramref name="Glyph"/> is a Segoe Fluent Icons character.</summary>
-public sealed record HomeItem(string Glyph, string Title, string? Detail, Action Invoke);
+/// <param name="Second">A second thing to do with it, as a small button on its card (Retry a job that didn't finish).</param>
+public sealed record HomeItem(string Glyph, string Title, string? Detail, Action Invoke, NotchAction? Second = null);
 
 /// <summary>What the form panel's buttons do.</summary>
 /// <param name="Save">After the user confirms: keep the answers they typed or changed; returns what to say.</param>

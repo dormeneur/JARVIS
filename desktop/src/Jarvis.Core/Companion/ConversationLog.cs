@@ -13,6 +13,9 @@ public sealed class ConversationLog
     private readonly Lock _gate = new();
     private readonly List<ChatTurn> _turns = [];
 
+    /// <summary>Raised after an exchange is added or the log is cleared. May be raised on any thread.</summary>
+    public event Action? Changed;
+
     public IReadOnlyList<ChatTurn> Recent
     {
         get
@@ -39,6 +42,8 @@ public sealed class ConversationLog
                 _turns.RemoveAt(0);
             }
         }
+
+        Changed?.Invoke();
     }
 
     public void Clear()
@@ -47,5 +52,7 @@ public sealed class ConversationLog
         {
             _turns.Clear();
         }
+
+        Changed?.Invoke();
     }
 }

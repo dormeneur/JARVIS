@@ -69,8 +69,14 @@ internal sealed class NotchHomeView
             return;
         }
 
+        // A refresh of the same home (a job moved on) keeps whether the pointer is in it.
+        var refresh = _home is not null;
         _home = home;
-        _entered = false;
+        if (!refresh)
+        {
+            _entered = false;
+        }
+
         _greeting.Text = home.Greeting;
         _hint.Text = home.Hint;
         _cards.Children.Clear();
@@ -88,7 +94,10 @@ internal sealed class NotchHomeView
         }
 
         View.Visibility = Visibility.Visible;
-        Leave(NeverEntered);
+        if (!refresh)
+        {
+            Leave(NeverEntered);
+        }
     }
 
     public void Hide()
@@ -119,6 +128,41 @@ internal sealed class NotchHomeView
             state.Children.Add(new TextBlock { Text = detail, FontFamily = Font, FontSize = 11, Foreground = Brush("TextSecondaryBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
         }
 
+        var body = new Grid();
+        var text = new StackPanel
+        {
+            Spacing = 6,
+            Children =
+            {
+                state,
+                new TextBlock { Text = item.Title, FontFamily = Font, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimaryBrush"), TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis },
+            },
+        };
+        body.Children.Add(text);
+        if (item.Second is { } second)
+        {
+            // A small pill in the card's top corner (Retry), separate from opening the card.
+            var extra = new Button
+            {
+                Content = second.Label,
+                Height = 22,
+                Padding = new Thickness(10, 0, 10, 0),
+                CornerRadius = new CornerRadius(11),
+                FontSize = 11,
+                FontFamily = Font,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -3, -4, 0), // beside the state line, clear of the title
+                Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            };
+            extra.Click += (_, _) =>
+            {
+                _leave.Stop();
+                _ = Task.Run(second.Invoke);
+            };
+            body.Children.Add(extra);
+        }
+
         var card = new Button
         {
             Width = width,
@@ -130,15 +174,7 @@ internal sealed class NotchHomeView
             Background = Glass,
             BorderBrush = GlassEdge,
             BorderThickness = new Thickness(1),
-            Content = new StackPanel
-            {
-                Spacing = 6,
-                Children =
-                {
-                    state,
-                    new TextBlock { Text = item.Title, FontFamily = Font, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimaryBrush"), TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis },
-                },
-            },
+            Content = body,
         };
         Hover(card);
         AutomationProperties.SetName(card, item.Title);
