@@ -103,6 +103,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
         _services.Cursor.SetListening(true);
 
         _services.Notch.Show(new NotchState.Listening());
+        _services.Sounds.Play(SoundEffect.ListenStart);
         LogListening();
     }
 
@@ -142,6 +143,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
         }
 
         _services.Cursor.SetListening(false);
+        _services.Sounds.Play(SoundEffect.ListenEnd);
         _ = RunTurnAsync(recording, token);
     }
 

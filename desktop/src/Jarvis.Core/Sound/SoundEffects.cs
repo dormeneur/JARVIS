@@ -8,10 +8,11 @@ using Microsoft.Extensions.Options;
 namespace Jarvis.Core.Sound;
 
 /// <summary>
-/// Our own earcons, synthesised: soft bell-like notes (a sine with two quiet overtones, a 5 ms attack
-/// and an exponential decay). Volumes follow the reference app's levels (DESIGN-FACTS.md §7):
-/// feedback 0.35–0.55, news that wants attention 0.7. Each effect has three variants (slightly
-/// different pitch and pen strokes), used in turn, so repeats don't sound mechanical.
+/// Our own earcons, synthesised to soothe rather than ping: round, low notes (a sine with one faint
+/// overtone), eased in over 20 ms (no strike) and left to ring out slowly, in calm intervals in the
+/// fourth and fifth octaves. Volumes sit low (DESIGN-FACTS.md §7): feedback 0.2–0.3, news that wants
+/// attention 0.5. Each effect has three variants (slightly different pitch and pen strokes), used in
+/// turn, so repeats don't sound mechanical.
 /// </summary>
 public sealed partial class SoundEffects : ISoundEffects
 {
@@ -56,24 +57,29 @@ public sealed partial class SoundEffects : ISoundEffects
         var notes = score.Select(note => (note.Frequency * pitch, note.Start, note.Length)).ToArray();
         var length = (int)(notes.Max(note => note.Start + note.Length) * SampleRate);
         var mix = new double[length];
+        const double attack = 0.02;
         foreach (var (frequency, start, duration) in notes)
         {
             var first = (int)(start * SampleRate);
-            var decay = duration / 3;
+            var decay = duration / 2.5;
             for (var i = first; i < Math.Min(length, first + (int)(duration * SampleRate)); i++)
             {
                 var t = (double)(i - first) / SampleRate;
-                var envelope = Math.Min(1, t / 0.005) * Math.Exp(-t / decay);
+                // A raised-cosine swell instead of a strike, then a long, gentle ring-out.
+                var swell = t < attack ? 0.5 - (0.5 * Math.Cos(Math.PI * t / attack)) : 1;
+                var envelope = swell * Math.Exp(-Math.Max(0, t - attack) / decay);
                 var phase = 2 * Math.PI * frequency * t;
-                mix[i] += envelope * (Math.Sin(phase) + (0.25 * Math.Sin(2 * phase)) + (0.08 * Math.Sin(3 * phase))) / 1.33;
+                mix[i] += envelope * (Math.Sin(phase) + (0.1 * Math.Sin(2 * phase))) / 1.1;
             }
         }
 
+        // Overlapping notes add up: scale so the loudest moment is exactly the effect's level.
+        var loudest = Math.Max(1e-9, mix.Max(Math.Abs));
         var pcm = new short[length];
         for (var i = 0; i < length; i++)
         {
             var fadeOut = Math.Min(1, (length - i) / (0.01 * SampleRate)); // no click at the end
-            pcm[i] = (short)Math.Clamp(mix[i] * volume * fadeOut * 0.6 * short.MaxValue, short.MinValue, short.MaxValue);
+            pcm[i] = (short)Math.Clamp(mix[i] / loudest * volume * fadeOut * 0.6 * short.MaxValue, short.MinValue, short.MaxValue);
         }
 
         return MemoryMarshal.AsBytes(pcm.AsSpan()).ToArray();
@@ -117,13 +123,15 @@ public sealed partial class SoundEffects : ISoundEffects
     /// <summary>Volume and notes (Hz, start s, length s) for each effect.</summary>
     private static (double Volume, (double Frequency, double Start, double Length)[] Notes) Score(SoundEffect effect) => effect switch
     {
-        SoundEffect.ComposerOpen => (0.35, [(659.25, 0, 0.12), (880.00, 0.06, 0.16)]), // E5 up to A5
-        SoundEffect.ComposerSend => (0.50, [(880.00, 0, 0.09), (1318.51, 0.045, 0.14)]), // A5 up to E6, quick
-        SoundEffect.ComposerClose => (0.50, [(880.00, 0, 0.10), (659.25, 0.06, 0.16)]), // A5 down to E5
-        SoundEffect.JobStarted => (0.55, [(523.25, 0, 0.14), (659.25, 0.07, 0.14), (783.99, 0.14, 0.22)]), // C-E-G
-        SoundEffect.JobDone => (0.70, [(783.99, 0, 0.20), (1174.66, 0.09, 0.45)]), // G5 then a ringing D6
-        SoundEffect.JobFailed => (0.70, [(659.25, 0, 0.18), (523.25, 0.12, 0.30)]), // E5 down to C5
-        SoundEffect.AnswerReady => (0.35, [(1046.50, 0, 0.10), (1318.51, 0.05, 0.18)]), // C6 to E6, light
+        SoundEffect.ComposerOpen => (0.25, [(392.00, 0, 0.30), (523.25, 0.08, 0.40)]), // G4 up to C5
+        SoundEffect.ComposerSend => (0.28, [(440.00, 0, 0.26), (659.25, 0.07, 0.40)]), // A4 up to E5
+        SoundEffect.ComposerClose => (0.25, [(523.25, 0, 0.30), (392.00, 0.08, 0.40)]), // C5 down to G4
+        SoundEffect.JobStarted => (0.30, [(261.63, 0, 0.30), (329.63, 0.09, 0.30), (392.00, 0.18, 0.50)]), // C4-E4-G4, unhurried
+        SoundEffect.JobDone => (0.50, [(392.00, 0, 0.40), (587.33, 0.12, 0.80)]), // G4 then a long D5
+        SoundEffect.JobFailed => (0.45, [(329.63, 0, 0.36), (261.63, 0.14, 0.60)]), // E4 down to C4
+        SoundEffect.AnswerReady => (0.22, [(523.25, 0, 0.24), (659.25, 0.06, 0.34)]), // C5 to E5, light
+        SoundEffect.ListenStart => (0.20, [(587.33, 0, 0.18), (783.99, 0.05, 0.24)]), // D5 up to G5, a breath
+        SoundEffect.ListenEnd => (0.20, [(783.99, 0, 0.18), (587.33, 0.05, 0.26)]), // G5 down to D5
         _ => throw new ArgumentOutOfRangeException(nameof(effect), effect, "Unknown sound effect."),
     };
 

@@ -68,7 +68,8 @@ public abstract record NotchState
     /// The notch's home, opened by resting the mouse on the sleeping notch: things to start, and
     /// what Jarvis did lately. It closes when the mouse leaves it, or with Escape.
     /// </summary>
-    public sealed record Home(string Greeting, IReadOnlyList<HomeItem> Actions, IReadOnlyList<HomeItem> Recent, Action Dismiss) : NotchState;
+    /// <param name="Hint">One line under the greeting: how to talk to Jarvis ("Hold Ctrl + Alt and tell me…").</param>
+    public sealed record Home(string Greeting, string Hint, IReadOnlyList<HomeItem> Actions, IReadOnlyList<HomeItem> Recent, Action Dismiss) : NotchState;
 
     /// <summary>
     /// An event about to go on the user's calendar, laid out to check and edit: Add takes the

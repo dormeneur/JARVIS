@@ -10,8 +10,9 @@ using Microsoft.UI.Xaml.Media;
 namespace Jarvis.App.Notch;
 
 /// <summary>
-/// The notch's home: a greeting, a row of glass tiles (things to start) and recent work. The mouse
-/// leaving it for a moment closes it, as does never coming into it.
+/// The notch's home: a greeting and how to talk, recent work as glass cards across the middle,
+/// and a bar of pills to start things along the bottom. The mouse leaving it for a moment closes
+/// it, as does never coming into it.
 /// </summary>
 internal sealed class NotchHomeView
 {
@@ -22,9 +23,9 @@ internal sealed class NotchHomeView
     private static readonly TimeSpan NeverEntered = TimeSpan.FromSeconds(8);
 
     private readonly TextBlock _greeting;
-    private readonly StackPanel _tiles = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
-    private readonly StackPanel _recent = new() { Spacing = 4 };
-    private readonly TextBlock _recentTitle;
+    private readonly TextBlock _hint;
+    private readonly StackPanel _cards = new() { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center };
+    private readonly StackPanel _pills = new() { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly DispatcherQueueTimer _leave;
     private NotchState.Home? _home;
     private bool _entered;
@@ -32,16 +33,18 @@ internal sealed class NotchHomeView
     public NotchHomeView(Grid area)
     {
         var font = Font;
-        _greeting = new TextBlock { FontFamily = font, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimaryBrush") };
-        _recentTitle = new TextBlock { Text = "Lately", FontFamily = font, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextSecondaryBrush"), Margin = new Thickness(0, 4, 0, 0) };
+        _greeting = new TextBlock { FontFamily = font, FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimaryBrush"), HorizontalAlignment = HorizontalAlignment.Center };
+        _hint = new TextBlock { FontFamily = font, FontSize = 12, Foreground = Brush("TextSecondaryBrush"), HorizontalAlignment = HorizontalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
         View = new StackPanel
         {
-            Spacing = 8,
-            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, 8, NotchLayout.ContentHorizontalPadding, 10),
+            Spacing = 4,
+            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, 14, NotchLayout.ContentHorizontalPadding, 14),
             Visibility = Visibility.Collapsed,
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), // so pointer events reach it everywhere
-            Children = { _greeting, _tiles, _recentTitle, _recent },
+            Children = { _greeting, _hint, _cards, _pills },
         };
+        _cards.Margin = new Thickness(0, 10, 0, 2);
+        _pills.Margin = new Thickness(0, 10, 0, 0);
         area.Children.Add(View);
 
         _leave = DispatcherQueue.GetForCurrentThread().CreateTimer();
@@ -69,20 +72,21 @@ internal sealed class NotchHomeView
         _home = home;
         _entered = false;
         _greeting.Text = home.Greeting;
-        _tiles.Children.Clear();
-        var width = (Width - (8 * (home.Actions.Count - 1))) / Math.Max(1, home.Actions.Count);
+        _hint.Text = home.Hint;
+        _cards.Children.Clear();
+        var cardWidth = (Width - (8 * (Math.Max(1, home.Recent.Count) - 1))) / Math.Max(1, Math.Min(3, home.Recent.Count));
+        foreach (var item in home.Recent.Take(3))
+        {
+            _cards.Children.Add(Card(item, Math.Min(cardWidth, 180)));
+        }
+
+        _cards.Visibility = home.Recent.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _pills.Children.Clear();
         foreach (var item in home.Actions)
         {
-            _tiles.Children.Add(Tile(item, width));
+            _pills.Children.Add(Pill(item));
         }
 
-        _recent.Children.Clear();
-        foreach (var item in home.Recent)
-        {
-            _recent.Children.Add(Row(item));
-        }
-
-        _recentTitle.Visibility = home.Recent.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         View.Visibility = Visibility.Visible;
         Leave(NeverEntered);
     }
@@ -105,73 +109,74 @@ internal sealed class NotchHomeView
         _leave.Start();
     }
 
-    private Button Tile(HomeItem item, double width)
+    /// <summary>A recent piece of work: its icon and state on top, its name below (two lines).</summary>
+    private Button Card(HomeItem item, double width)
     {
-        var tile = new Button
+        var state = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        state.Children.Add(new FontIcon { Glyph = item.Glyph, FontFamily = new FontFamily(IconFont), FontSize = 12, Foreground = Brush("TextSecondaryBrush") });
+        if (item.Detail is { } detail)
+        {
+            state.Children.Add(new TextBlock { Text = detail, FontFamily = Font, FontSize = 11, Foreground = Brush("TextSecondaryBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
+        }
+
+        var card = new Button
         {
             Width = width,
-            Height = 64,
-            Padding = new Thickness(6),
-            CornerRadius = new CornerRadius(12),
+            Height = 76,
+            Padding = new Thickness(12, 10, 12, 10),
+            CornerRadius = new CornerRadius(14),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
             Background = Glass,
             BorderBrush = GlassEdge,
             BorderThickness = new Thickness(1),
             Content = new StackPanel
             {
                 Spacing = 6,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
                 Children =
                 {
-                    new FontIcon { Glyph = item.Glyph, FontFamily = new FontFamily(IconFont), FontSize = 16, Foreground = Brush("TextPrimaryBrush") },
-                    new TextBlock { Text = item.Title, FontFamily = Font, FontSize = 11, Foreground = Brush("TextSecondaryBrush"), HorizontalAlignment = HorizontalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis },
+                    state,
+                    new TextBlock { Text = item.Title, FontFamily = Font, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimaryBrush"), TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis },
                 },
             },
         };
-        Hover(tile);
-        AutomationProperties.SetName(tile, item.Title);
-        if (item.Detail is { } detail)
-        {
-            ToolTipService.SetToolTip(tile, detail);
-        }
-
-        tile.Click += (_, _) => Run(item);
-        return tile;
+        Hover(card);
+        AutomationProperties.SetName(card, item.Title);
+        card.Click += (_, _) => Run(item);
+        return card;
     }
 
-    private Button Row(HomeItem item)
+    /// <summary>A rounded glass pill with an icon and a short label, for things to start.</summary>
+    private Button Pill(HomeItem item)
     {
-        var row = new Grid { ColumnSpacing = 10 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.Children.Add(new FontIcon { Glyph = item.Glyph, FontFamily = new FontFamily(IconFont), FontSize = 12, Foreground = Brush("TextSecondaryBrush"), VerticalAlignment = VerticalAlignment.Center });
-        var title = new TextBlock { Text = item.Title, FontFamily = Font, FontSize = 12, Foreground = Brush("TextPrimaryBrush"), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
-        Grid.SetColumn(title, 1);
-        row.Children.Add(title);
-        if (item.Detail is { } detail)
+        var pill = new Button
         {
-            var meta = new TextBlock { Text = detail, FontFamily = Font, FontSize = 11, Foreground = Brush("TextTertiaryBrush"), VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(meta, 2);
-            row.Children.Add(meta);
-        }
-
-        var button = new Button
-        {
-            Width = Width,
-            Height = 30,
-            Padding = new Thickness(10, 0, 10, 0),
-            CornerRadius = new CornerRadius(8),
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Height = 34,
+            Padding = new Thickness(14, 0, 14, 0),
+            CornerRadius = new CornerRadius(17),
             Background = Glass,
             BorderBrush = GlassEdge,
             BorderThickness = new Thickness(1),
-            Content = row,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new FontIcon { Glyph = item.Glyph, FontFamily = new FontFamily(IconFont), FontSize = 13, Foreground = Brush("TextPrimaryBrush") },
+                    new TextBlock { Text = item.Title, FontFamily = Font, FontSize = 12, Foreground = Brush("TextPrimaryBrush"), VerticalAlignment = VerticalAlignment.Center },
+                },
+            },
         };
-        Hover(button);
-        AutomationProperties.SetName(button, item.Title);
-        button.Click += (_, _) => Run(item);
-        return button;
+        Hover(pill);
+        AutomationProperties.SetName(pill, item.Title);
+        if (item.Detail is { } detail)
+        {
+            ToolTipService.SetToolTip(pill, detail);
+        }
+
+        pill.Click += (_, _) => Run(item);
+        return pill;
     }
 
     private void Run(HomeItem item)

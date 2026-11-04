@@ -36,6 +36,12 @@ internal sealed class NotchPresenter : INotchPresenter
     private TextBox? _composer;
     private StackPanel? _actions;
     private TextBlock? _caption;
+
+    /// <summary>The pill's words and three dots that breathe in turn ("Listening •••").</summary>
+    private StackPanel? _activity;
+    private readonly List<Microsoft.UI.Xaml.Shapes.Ellipse> _dots = [];
+    private DispatcherQueueTimer? _dotTimer;
+    private int _dotStep;
     private StackPanel? _history;
     private ScrollViewer? _historyView;
     private IReadOnlyList<ChatTurn>? _shownHistory;
@@ -89,7 +95,37 @@ internal sealed class NotchPresenter : INotchPresenter
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed,
         };
-        _window.ContentArea.Children.Add(_caption);
+        _caption.HorizontalAlignment = HorizontalAlignment.Left;
+        _caption.Visibility = Visibility.Visible; // shown and hidden with the pill now
+        _activity = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+            Children = { _caption },
+        };
+        var dots = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        for (var i = 0; i < 3; i++)
+        {
+            var dot = new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 4, Height = 4, Fill = (Brush)Application.Current.Resources["TextSecondaryBrush"], Opacity = 0.3 };
+            _dots.Add(dot);
+            dots.Children.Add(dot);
+        }
+
+        _activity.Children.Add(dots);
+        _window.ContentArea.Children.Add(_activity);
+        _dotTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        _dotTimer.Interval = TimeSpan.FromMilliseconds(360);
+        _dotTimer.Tick += (_, _) =>
+        {
+            _dotStep = (_dotStep + 1) % 3;
+            for (var i = 0; i < _dots.Count; i++)
+            {
+                _dots[i].Opacity = i == _dotStep ? 1 : 0.3;
+            }
+        };
         _window.Activated += (_, e) =>
         {
             if (e.WindowActivationState == WindowActivationState.Deactivated)
@@ -188,7 +224,14 @@ internal sealed class NotchPresenter : INotchPresenter
         }
 
         var area = _window.ContentArea;
-        var caption = (state as NotchState.Thinking)?.Caption;
+        // The live states say what's happening in words, as a soft pill: "Listening •••", "Thinking •••".
+        var caption = state switch
+        {
+            NotchState.Listening => "Listening",
+            NotchState.Dictating => "Dictating",
+            NotchState.Thinking thinking => thinking.Caption ?? "Thinking",
+            _ => null,
+        };
         if (state is NotchState.Form form)
         {
             _formView?.Show(form);
@@ -221,8 +264,16 @@ internal sealed class NotchPresenter : INotchPresenter
             _responseView.Visibility = state is NotchState.Response ? Visibility.Visible : Visibility.Collapsed;
             _composer.Visibility = state is NotchState.Composing ? Visibility.Visible : Visibility.Collapsed;
             ShowHistory((state as NotchState.Composing)?.History ?? []);
-            _caption!.Visibility = caption is null ? Visibility.Collapsed : Visibility.Visible;
-            _caption.Text = caption ?? string.Empty;
+            _activity!.Visibility = caption is null ? Visibility.Collapsed : Visibility.Visible;
+            _caption!.Text = caption ?? string.Empty;
+            if (caption is null)
+            {
+                _dotTimer?.Stop();
+            }
+            else if (_dotTimer is { IsRunning: false })
+            {
+                _dotTimer.Start();
+            }
             if (state is NotchState.Response response)
             {
                 _responseText.Text = response.Text;

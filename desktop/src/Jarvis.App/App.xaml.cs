@@ -351,6 +351,12 @@ public sealed partial class App : Application
             new FormActions(edits => Task.FromResult($"Saved {edits.Count} (demo: nothing written)."), () => { }, StopFilling: () => { }, Used: (_, _) => { }, Hear: (_, _) => Task.FromResult(string.Empty), Remember: _ => "Added (demo)."),
             FillProgress: 0.4,
             Fillable: 2)),
+        ("home", new NotchState.Home(
+            "Afternoon, Sam.",
+            "Hold Ctrl + Alt and tell me what to take off your plate.",
+            [new("", "Ask Jarvis", null, () => { }), new("", "Fill a form", null, () => { }), new("", "Private: off", null, () => { }), new("", "Settings", null, () => { })],
+            [new("", "Lisbon trip plan", "Ready to view", () => { }), new("", "Reviewing GitHub activity", "Working…", () => { }), new("", "Volunteer sign-up", "Fill again", () => { })],
+            () => { })),
         ("event", new NotchState.EventDraft(
             new Jarvis.Contracts.Calendar.CalendarEvent("Lunch with Sam", new DateTimeOffset(2030, 1, 15, 13, 0, 0, TimeSpan.Zero), new DateTimeOffset(2030, 1, 15, 14, 0, 0, TimeSpan.Zero), false, "Cafe Example", string.Empty),
             "Google Calendar (sam@example.test)",
@@ -380,10 +386,13 @@ public sealed partial class App : Application
         var privacy = _host.Services.GetRequiredService<ScreenPrivacy>();
         var dispatcher = _host.Services.GetRequiredService<DispatcherQueue>();
         var hour = DateTime.Now.Hour;
-        var greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+        var name = Environment.UserName is { Length: > 1 } user && char.IsLetter(user[0]) ? char.ToUpperInvariant(user[0]) + user[1..] : null;
+        var greeting = $"{(hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening")}{(name is null ? string.Empty : $", {name}")}.";
+        var talk = _host.Services.GetRequiredService<IOptionsMonitor<Jarvis.Core.Input.ShortcutOptions>>().CurrentValue.Talk;
+        var hint = $"Hold {talk} and tell me what to take off your plate.";
         HomeItem[] actions =
         [
-            new("\uE8BD", "Ask", "Type a question (or double-tap Ctrl)", companion.Compose),
+            new("\uE8BD", "Ask Jarvis", "Type a question (or double-tap Ctrl)", companion.Compose),
             new("\uE70F", "Fill a form", "Fill the form in your browser from your vault", companion.FillForm),
             new(privacy.PrivateMode ? "\uE72E" : "\uE785", privacy.PrivateMode ? "Private: on" : "Private: off", "Keep everything on this PC", () =>
             {
@@ -397,22 +406,23 @@ public sealed partial class App : Application
 
         var agents = _host.Services.GetRequiredService<IAgentJobs>();
         var recent = new List<HomeItem>();
-        if (_host.Services.GetRequiredService<Jarvis.Core.Vault.FormFiller>().LastTitle is { Length: > 0 } form)
+        var lastForm = _host.Services.GetRequiredService<Jarvis.Core.Vault.FormFiller>().LastTitle;
+        if (lastForm is { Length: > 0 })
         {
-            recent.Add(new("\uE70F", form, "fill again", companion.FillForm));
+            recent.Add(new("\uE70F", lastForm, "Fill again", companion.FillForm));
         }
 
-        foreach (var job in agents.Jobs.Take(3))
+        foreach (var job in agents.Jobs.Take(recent.Count > 0 ? 2 : 3)) // three cards fit across
         {
             recent.Add(job.Status switch
             {
-                AgentJobStatus.Running or AgentJobStatus.Queued => new HomeItem("\uE916", job.Title, job.Activity ?? "working", () => notch.Show(NotchState.Idle)),
-                AgentJobStatus.Finished => new HomeItem("\uE73E", job.Title, "open", () => OpenFolder(Path.Combine(job.Folder, "output"))),
-                _ => new HomeItem("\uE7BA", job.Title, job.Status.ToString().ToLowerInvariant(), () => OpenFolder(job.Folder)),
+                AgentJobStatus.Running or AgentJobStatus.Queued => new HomeItem("\uE916", job.Title, job.Activity ?? "Working\u2026", () => notch.Show(NotchState.Idle)),
+                AgentJobStatus.Finished => new HomeItem("\uE73E", job.Title, "Ready to view", () => OpenFolder(Path.Combine(job.Folder, "output"))),
+                _ => new HomeItem("\uE7BA", job.Title, job.Status == AgentJobStatus.Failed ? "Didn't finish" : job.Status.ToString(), () => OpenFolder(job.Folder)),
             });
         }
 
-        notch.Show(new NotchState.Home(greeting, actions, recent, () => notch.Show(NotchState.Idle)));
+        notch.Show(new NotchState.Home(greeting, hint, actions, recent, () => notch.Show(NotchState.Idle)));
     }
 
     /// <summary>The five most recent background jobs: stop the running ones, open the finished ones.</summary>

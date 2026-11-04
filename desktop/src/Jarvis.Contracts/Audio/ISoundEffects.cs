@@ -20,4 +20,10 @@ public enum SoundEffect
 
     /// <summary>A soft pen scratch while Jarvis draws on the screen.</summary>
     Drawing,
+
+    /// <summary>The microphone opened (push-to-talk held).</summary>
+    ListenStart,
+
+    /// <summary>The microphone closed: what was said is on its way.</summary>
+    ListenEnd,
 }
