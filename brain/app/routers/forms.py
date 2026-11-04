@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.services.ollama_client import OllamaClient
 from app.services.retriever import Retriever
 from app.services.tools import ToolError, safe_path
@@ -201,7 +202,7 @@ async def answer_stream(req: FormAnswersRequest, app_state):
         given = dict(files)
         replies: dict[str, dict] = {}
         try:
-            reply = await ollama.chat_json(build_messages(req.title, batch, files), ANSWER_SCHEMA)
+            reply = await ollama.chat_json(build_messages(req.title, batch, files), ANSWER_SCHEMA, model=settings.form_model or None)
             replies = {str(item.get("id")): item for item in reply.get("answers", []) if isinstance(item, dict)}
         except Exception as exc:  # noqa: BLE001 - one bad batch marks its questions unknown
             logger.error("Form batch failed: %s", exc)

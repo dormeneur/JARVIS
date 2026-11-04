@@ -58,6 +58,32 @@ class FormMemoryTest {
     }
 
     @Test
+    fun profileNotesAnswerWhatNoFormAskedYet_BelowWhatFormsUsed() {
+        val notes = """
+            # About
+            - **Full name:** Asha Rao
+            - Email: asha@example.test
+            - LinkedIn: [my profile](https://linkedin.example/in/asha)
+            - Phone: 5550100009
+
+            ## Notice period?
+            Four weeks.
+
+            ## Why this role?
+            Because it fits.
+            And more.
+        """.trimIndent()
+
+        val known = memory.withFacts(FormMemory.facts(notes))
+
+        assertEquals(listOf("asha@example.test"), known.suggestions("Email address", now))
+        assertEquals(listOf("https://linkedin.example/in/asha"), known.suggestions("LinkedIn profile", now))
+        assertEquals(listOf("Four weeks"), known.suggestions("notice period", now))
+        assertEquals(emptyList<String>(), known.suggestions("why this role", now)) // two lines: not a one-liner
+        assertEquals(listOf("5550100002", "5550100001", "5550100009"), known.suggestions("phone", now)) // forms first
+    }
+
+    @Test
     fun brokenFileMeansNoSuggestions() {
         assertEquals(emptyList<String>(), FormMemory.parse("{not json").suggestions("name", now))
         assertEquals(emptyList<String>(), FormMemory.parse(null).suggestions("name", now))

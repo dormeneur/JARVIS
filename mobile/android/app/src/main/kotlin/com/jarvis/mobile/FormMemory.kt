@@ -12,6 +12,7 @@ import kotlin.math.max
  * Read-only port of the PC's form memory (desktop/src/Jarvis.Core/Vault/FormMemory.cs): the same
  * field keys, synonyms, likeness and ranking, so a form on the phone gets what forms on the PC
  * taught. The file is the phone's synced copy of Profile/form-memory.json; nothing leaves the phone.
+ * Facts from the synced Profile notes ([withFacts]) answer what no form has asked yet, with no AI.
  */
 @RequiresApi(Build.VERSION_CODES.O)
 class FormMemory private constructor(private val fields: Map<String, List<Entry>>) {
@@ -41,6 +42,21 @@ class FormMemory private constructor(private val fields: Map<String, List<Entry>
 
     private fun find(key: String): List<Entry>? = findKey(fields.keys, key)?.let { fields[it] }
 
+    /**
+     * This memory plus facts from the Profile notes ("- Email: …", or a "## Question" with a one-line
+     * answer), ranked below anything a form has used, so what the user actually gave forms wins.
+     */
+    fun withFacts(facts: List<Pair<String, String>>): FormMemory {
+        val merged = fields.mapValues { it.value.toMutableList() }.toMutableMap()
+        for ((label, value) in facts) {
+            val key = keyOf(label)
+            if (key.isEmpty() || value.isEmpty()) continue
+            val entries = merged.getOrPut(findKey(merged.keys, key) ?: key) { mutableListOf() }
+            if (entries.none { same(it.value, value) }) entries += Entry(value, 0, 0L)
+        }
+        return FormMemory(merged)
+    }
+
     companion object {
         private const val SAME_FIELD = 0.75
         private val NOT_WORD = Regex("[^\\p{L}\\p{N}]+")
@@ -69,6 +85,45 @@ class FormMemory private constructor(private val fields: Map<String, List<Entry>
             val meaningful = words.filterNot { it in FILLER }.joinToString(" ")
             return SYNONYMS[meaningful] ?: meaningful.ifEmpty { plain }
         }
+
+        /**
+         * Label-value facts in a Profile note, the way interview mode writes them: bullets like
+         * "- **Email:** a@b.c" (a Markdown link gives its address), and a "## Question" heading whose
+         * answer is one short line (standard-answers.md).
+         */
+        fun facts(markdown: String): List<Pair<String, String>> {
+            val found = mutableListOf<Pair<String, String>>()
+            var question: String? = null
+            val answer = mutableListOf<String>()
+            fun endQuestion() {
+                val text = answer.singleOrNull()?.let(::cleanFact)
+                if (question != null && text != null && text.isNotEmpty() && text.length <= 120) found += question!! to text
+                question = null
+                answer.clear()
+            }
+            for (raw in markdown.replace("\r\n", "\n").split('\n')) {
+                val line = raw.trim()
+                when {
+                    line.startsWith("## ") -> {
+                        endQuestion()
+                        question = line.removePrefix("## ").trim().trimEnd('*').trim()
+                    }
+                    line.startsWith("#") -> endQuestion()
+                    else -> {
+                        FACT.matchEntire(line)?.let { match -> found += cleanFact(match.groupValues[1]) to cleanFact(match.groupValues[2]) }
+                        if (question != null && line.isNotEmpty() && !line.startsWith("-") && !line.startsWith("*")) answer += line
+                    }
+                }
+            }
+            endQuestion()
+            return found.filter { (label, value) -> label.isNotEmpty() && value.isNotEmpty() }
+        }
+
+        private val FACT = Regex("^[-*+]\\s+(?:\\*\\*)?([^:*]{1,40}?)(?:\\*\\*)?\\s*:\\s*(.+)$")
+        private val LINK = Regex("\\[([^\\]]*)]\\(([^)]+)\\)")
+
+        private fun cleanFact(text: String) =
+            LINK.find(text)?.groupValues?.get(2)?.trim() ?: text.replace("**", "").replace("`", "").trim().trimEnd('.').trim()
 
         /** A missing or hand-broken file means no suggestions, never a crash. */
         fun parse(json: String?): FormMemory {

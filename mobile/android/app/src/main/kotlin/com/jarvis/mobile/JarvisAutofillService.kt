@@ -40,7 +40,7 @@ class JarvisAutofillService : AutofillService() {
             val structure = request.fillContexts.last().structure
             if (structure.activityComponent.packageName == packageName) null
             else {
-                val memory = FormMemory.parse(memoryFile(this).takeIf { it.isFile }?.readText())
+                val memory = memory(this)
                 responseFor(fieldsOf(structure, memory), titleOf(structure))
             }
         } catch (e: Exception) {
@@ -82,7 +82,7 @@ class JarvisAutofillService : AutofillService() {
                 val found = labels.firstNotNullOfOrNull { label -> memory.suggestions(label).takeIf { it.isNotEmpty() } }.orEmpty()
                 if (labels.isNotEmpty()) fields[id] = Field(id, labels.first(), found, node.autofillValue?.takeIf { it.isText }?.textValue?.toString())
                 // Debug builds: what each field is called and whether memory knew it (never the values).
-                if (debug) Log.i(TAG, "field labels=$labels html=${node.htmlInfo?.attributes?.map { it.first }} suggestions=${found.size}")
+                if (debug) Log.i(TAG, "field labels=$labels html=${node.htmlInfo?.attributes?.filter { it.first != "value" }?.map { "${it.first}=${it.second}" }} suggestions=${found.size}")
             }
             for (i in 0 until node.childCount) visit(node.getChildAt(i))
         }
@@ -144,8 +144,20 @@ class JarvisAutofillService : AutofillService() {
             setTextViewText(android.R.id.text1, text)
         }
 
-        /** The sync mirror Flutter keeps (path_provider's documents dir is app_flutter/). */
-        fun memoryFile(context: Context) = File(context.getDir("flutter", Context.MODE_PRIVATE), "jarvis_mirror/Profile/form-memory.json")
+        /** The synced Profile folder in the mirror Flutter keeps (path_provider's documents dir is app_flutter/). */
+        private fun profileDir(context: Context) = File(context.getDir("flutter", Context.MODE_PRIVATE), "jarvis_mirror/Profile")
+
+        /**
+         * Everything the phone can answer by itself, from its synced copy of the vault: the form
+         * memory, plus facts in the Profile notes. Read per request (a few small files) so a sync
+         * shows up at once.
+         */
+        fun memory(context: Context): FormMemory {
+            val profile = profileDir(context)
+            val notes = profile.listFiles { file -> file.isFile && file.extension == "md" }.orEmpty().sortedBy { it.name }
+            return FormMemory.parse(File(profile, "form-memory.json").takeIf { it.isFile }?.readText())
+                .withFacts(notes.flatMap { FormMemory.facts(it.readText()) })
+        }
 
         /** Android's own hints and HTML autocomplete tokens, in the memory's words. */
         private val HINTS = mapOf(
@@ -182,15 +194,39 @@ class JarvisAutofillService : AutofillService() {
                 hints.any { it.contains("password") || it.contains("creditcard") || it.contains("otp") || it.startsWith("cc-") || it.startsWith("credit_card") || it in setOf("one-time-code", "pin", "cvc") }
         }
 
-        /** What the field is called, most reliable first: hints, then the web page's words, then the app's. */
+        /**
+         * What the field is called, most reliable first: hints, then the web page's words, then what
+         * kind of text it takes (an email or phone box), then the app's own names. Placeholders that
+         * say nothing ("Your answer" on Google Forms) don't count.
+         */
         private fun labelsOf(node: ViewNode): List<String> {
             val html = node.htmlInfo?.attributes.orEmpty().associate { it.first.lowercase() to it.second.orEmpty() }
-            val hints = node.autofillHints.orEmpty().toList() + listOfNotNull(html["autocomplete"], html["ua-autofill-hints"]).flatMap { it.split(' ', ',') }
+            val hints = node.autofillHints.orEmpty().toList() +
+                listOfNotNull(html["autocomplete"], html["ua-autofill-hints"], html["computed-autofill-hints"]).flatMap { it.split(' ', ',') }
             return (hints.mapNotNull { HINTS[it] } +
                 listOfNotNull(html["label"], html["aria-label"], html["placeholder"], html["name"], html["id"]) +
+                listOfNotNull(KINDS[html["type"]?.lowercase()], kindOf(node.inputType)) +
                 listOfNotNull(node.hint, node.idEntry, node.contentDescription?.toString()))
-                .map { it.replace(CAMEL, "$1 $2") }
-                .filter { it.isNotBlank() }
+                .map { it.replace(CAMEL, "$1 $2").trim() }
+                .filter { it.isNotBlank() && it.lowercase() !in SAYS_NOTHING }
+                .distinct()
+        }
+
+        private val SAYS_NOTHING = setOf(
+            "your answer", "enter your answer", "type your answer", "your response", "answer", "short answer text",
+            "long answer text", "type here", "enter text", "text", "input", "field",
+        )
+
+        /** The web page's input type, in the memory's words. */
+        private val KINDS = mapOf("email" to "email", "tel" to "phone")
+
+        /** An app's text box kind, in the memory's words. */
+        private fun kindOf(inputType: Int): String? = when (inputType and (InputType.TYPE_MASK_CLASS or InputType.TYPE_MASK_VARIATION)) {
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS -> "email"
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PERSON_NAME -> "name"
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS -> "address"
+            else -> if (inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_PHONE) "phone" else null
         }
 
         private val CAMEL = Regex("([a-z])([A-Z])")

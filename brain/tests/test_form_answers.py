@@ -65,7 +65,7 @@ def test_stream_answers_from_profile_and_never_sends_secrets(vault, monkeypatch)
     async def fake_retrieve(self, query, top_k=5, filter_paths=None):
         return [Source(path="Secrets/keys.md", chunk=0, score=0.9, content="TOPSECRET")]
 
-    async def fake_chat_json(self, messages, schema):
+    async def fake_chat_json(self, messages, schema, model=None):
         sent.append(json.dumps(messages))
         return {"answers": [
             {"id": "name", "answer": "Asha Rao", "source": "Profile/about.md", "evidence": "Name: Asha Rao"},

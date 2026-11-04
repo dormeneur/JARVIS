@@ -206,14 +206,14 @@ class OllamaClient:
             logger.error("Failed to stream chat from Ollama: %s", exc)
             yield {"error": str(exc)}
 
-    async def chat_json(self, messages: list, schema: Dict[str, Any]) -> Dict[str, Any]:
+    async def chat_json(self, messages: list, schema: Dict[str, Any], model: str | None = None) -> Dict[str, Any]:
         """One deterministic /api/chat reply constrained to a JSON schema, thinking off.
 
         Models without a thinking mode reject `think`, so that call is retried without it.
         No num_ctx: a value different from the other callers' makes Ollama reload the model.
         """
         payload: Dict[str, Any] = {
-            "model": LLM_MODEL,
+            "model": model or LLM_MODEL,
             "messages": messages,
             "stream": False,
             "format": schema,

@@ -54,7 +54,7 @@ open class AutofillSheetActivity : FlutterActivity() {
                         "known" to if (fromSelection) listOf("") else intent.getStringArrayListExtra(EXTRA_KNOWN).orEmpty(), // "" where memory has nothing
                         "values" to values,
                         // The selection's question: everything memory has for it, and whether it can be replaced.
-                        "choices" to if (fromSelection) FormMemory.parse(JarvisAutofillService.memoryFile(this).takeIf { it.isFile }?.readText()).suggestions(selected) else emptyList(),
+                        "choices" to if (fromSelection) JarvisAutofillService.memory(this).suggestions(selected) else emptyList(),
                         "readOnly" to intent.getBooleanExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false),
                     )
                 )
