@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Settings" next to JARVIS in Android's autofill settings opens the app. -->
+<autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:settingsActivity="com.jarvis.mobile.MainActivity" />

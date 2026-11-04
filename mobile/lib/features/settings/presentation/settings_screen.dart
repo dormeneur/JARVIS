@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -65,6 +66,7 @@ class SettingsScreen extends ConsumerWidget {
             value: ref.watch(appLockProvider),
             onChanged: (value) => _toggleAppLock(context, ref, value),
           ),
+          const _AutofillTile(),
           if (authState.isSecretsAuthorized) const _BackupTile(),
           const Divider(),
           _SectionHeader('Explorer'),
@@ -211,6 +213,65 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// JARVIS as Android's autofill service: other apps' and websites' forms get name, email, phone
+/// and the like from the synced form memory. Hidden where Android has no autofill (before 8).
+class _AutofillTile extends StatefulWidget {
+  const _AutofillTile();
+
+  @override
+  State<_AutofillTile> createState() => _AutofillTileState();
+}
+
+class _AutofillTileState extends State<_AutofillTile> with WidgetsBindingObserver {
+  static const _channel = MethodChannel('jarvis/autofill');
+
+  /// "on", "off" or "unsupported".
+  String _status = 'unsupported';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Back from Android's settings: show what was chosen there.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refresh();
+  }
+
+  Future<void> _refresh() async {
+    String status;
+    try {
+      status = await _channel.invokeMethod<String>('status') ?? 'unsupported';
+    } on MissingPluginException {
+      status = 'unsupported';
+    }
+    if (mounted) setState(() => _status = status);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_status == 'unsupported') return const SizedBox.shrink();
+    return ListTile(
+      leading: const Icon(Icons.password_outlined),
+      title: const Text('Autofill Forms'),
+      subtitle: Text(_status == 'on'
+          ? 'On. Pick a JARVIS suggestion in any form. In Chrome, also turn on Settings > Autofill services > Autofill using another service.'
+          : 'Fill name, email, phone and more in other apps from answers you gave on past forms. Stays on the phone; passwords are never filled.'),
+      trailing: _status == 'on' ? const Icon(Icons.check_circle_outline) : const Icon(Icons.chevron_right),
+      onTap: () => _channel.invokeMethod<void>('choose'),
     );
   }
 }
