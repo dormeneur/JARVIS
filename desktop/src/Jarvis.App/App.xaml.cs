@@ -61,7 +61,14 @@ public sealed partial class App : Application
         var notch = _host.Services.GetRequiredService<INotchPresenter>();
         var pause = _host.Services.GetRequiredService<PauseSwitch>();
         overlay.DwellAllowed = () => notch.Current is NotchState.IdleState or NotchState.Working && !pause.IsPaused;
-        overlay.NotchDwelled += () => _host.Services.GetRequiredService<DispatcherQueue>().TryEnqueue(ShowHome);
+        // Hovering the notch brings back what was put aside (Settings on its page, the chat), else the home.
+        overlay.NotchDwelled += () => _host.Services.GetRequiredService<DispatcherQueue>().TryEnqueue(() =>
+        {
+            if (!notch.Restore())
+            {
+                ShowHome();
+            }
+        });
 
         // Hovering the tray icon always tells you when Jarvis last looked at your screen.
         _host.Services.GetRequiredService<ScreenPrivacy>().Looked += look => _host.Services.GetRequiredService<DispatcherQueue>().TryEnqueue(() =>

@@ -10,6 +10,12 @@ public interface INotchPresenter
 
     /// <summary>What was last asked to show (so unprompted news can wait until the notch is at rest).</summary>
     NotchState Current => NotchState.Idle;
+
+    /// <summary>
+    /// Brings back the panel the user last put aside (Esc or a click outside), exactly as it was;
+    /// false when there's none, and the caller opens the home instead. Call on the UI thread.
+    /// </summary>
+    bool Restore() => false;
 }
 
 /// <summary>Closed set of things the notch can show.</summary>
@@ -35,6 +41,12 @@ public abstract record NotchState
 
     /// <summary>The answer is being spoken.</summary>
     public sealed record Speaking : NotchState;
+
+    /// <summary>
+    /// A panel put aside while it keeps working (a form being filled): a small pill saying how it's
+    /// going, "ready" when done; a click brings the panel back.
+    /// </summary>
+    public sealed record Parked(string Caption, bool Busy) : NotchState;
 
     /// <summary>Background work is running; the sliver shows a moving light.</summary>
     public sealed record Working : NotchState;

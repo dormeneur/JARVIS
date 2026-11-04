@@ -98,7 +98,8 @@ internal sealed class NotchPresenter : INotchPresenter
             () => ((App)Application.Current).ShowSettings("Vault"));
         _homeView = new NotchHomeView(_window.ContentArea);
         _eventView = new NotchEventView(_window, _window.ContentArea);
-        _settingsView = new NotchSettingsView(_window.ContentArea, ((App)Application.Current).Services);
+        _settingsView = new NotchSettingsView(_window.ContentArea, ((App)Application.Current).Services, Collapse);
+        BuildPillButton(_window.ContentArea);
         BuildClose(_window.ContentArea);
         BuildModes(_window.ContentArea);
         _caption = new TextBlock
@@ -145,7 +146,11 @@ internal sealed class NotchPresenter : INotchPresenter
         {
             if (e.WindowActivationState == WindowActivationState.Deactivated)
             {
-                CloseComposer(submit: false); // clicked away
+                if (_composing is not null)
+                {
+                    Collapse(); // clicked away: the chat waits, as it is, for the next hover
+                }
+
                 _formView?.Deactivated(); // back to the page: the form panel stays
             }
         };
@@ -214,6 +219,16 @@ internal sealed class NotchPresenter : INotchPresenter
 
     private void Apply(NotchState state)
     {
+        // A form put aside keeps working behind its pill (NotchParking has the rules).
+        var (show, keep) = NotchParking.Next(state, _parked, _current);
+        _parked = keep;
+        if (show is null)
+        {
+            return;
+        }
+
+        state = show;
+
         if (_window is null || _surface is null || _responseText is null || _responseView is null || _composer is null)
         {
             return;
@@ -251,6 +266,7 @@ internal sealed class NotchPresenter : INotchPresenter
             NotchState.Listening => "Listening",
             NotchState.Dictating => "Dictating",
             NotchState.Thinking thinking => thinking.Caption ?? "Thinking",
+            NotchState.Parked parked => parked.Caption,
             _ => null,
         };
         if (state is NotchState.Form form)
@@ -303,9 +319,13 @@ internal sealed class NotchPresenter : INotchPresenter
             ShowHistory((state as NotchState.Composing)?.History ?? []);
             _activity!.Visibility = caption is null ? Visibility.Collapsed : Visibility.Visible;
             _caption!.Text = caption ?? string.Empty;
-            if (caption is null)
+            if (caption is null || state is NotchState.Parked { Busy: false })
             {
                 _dotTimer?.Stop();
+                foreach (var dot in _dots)
+                {
+                    dot.Opacity = state is NotchState.Parked ? 0 : 0.3; // a ready pill has no dots
+                }
             }
             else if (_dotTimer is { IsRunning: false })
             {
@@ -320,7 +340,7 @@ internal sealed class NotchPresenter : INotchPresenter
             area.Height = frame.Height;
             if (_composing is not null)
             {
-                if (!wasComposing)
+                if (!wasComposing && !_restoring)
                 {
                     _composer.Text = string.Empty;
                 }
@@ -352,6 +372,11 @@ internal sealed class NotchPresenter : INotchPresenter
             _close.Visibility = state is NotchState.Response or NotchState.Home or NotchState.Composing or NotchState.EventDraft or NotchState.Settings ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        if (_pillButton is not null)
+        {
+            _pillButton.Visibility = state is NotchState.Parked ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         if (ClosesOnClickAway(state))
         {
             _wasDown = Jarvis.Platform.Shell.Mouse.LeftDown;
@@ -363,7 +388,91 @@ internal sealed class NotchPresenter : INotchPresenter
         }
     }
 
-    private static bool ClosesOnClickAway(NotchState state) => state is NotchState.Home or NotchState.Response { KeepOnClickAway: false };
+    private static bool ClosesOnClickAway(NotchState state) => state is NotchState.Home or NotchState.Settings or NotchState.Form or NotchState.Response { KeepOnClickAway: false };
+
+    /// <summary>The panel put aside by Esc or a click outside, to bring back as it was.</summary>
+    private NotchState? _parked;
+    private DateTimeOffset _parkedAt;
+
+    /// <summary>Put aside longer than this, the next hover opens the home instead.</summary>
+    private static readonly TimeSpan ParkedFor = TimeSpan.FromMinutes(30);
+
+    private bool _restoring;
+
+    /// <summary>
+    /// Esc or a click outside: Settings and the chat are put aside exactly as they are and the
+    /// notch rests; a form shrinks to a pill and keeps working. Anything else just closes.
+    /// </summary>
+    private void Collapse()
+    {
+        switch (_current)
+        {
+            case NotchState.Settings or NotchState.Composing:
+                _parked = _current;
+                _parkedAt = DateTimeOffset.UtcNow;
+                if (_composing is not null && _window is not null)
+                {
+                    _composing = null; // not the chat's Dismiss: nothing is cancelled
+                    _window.EndTyping();
+                }
+
+                Apply(NotchState.Idle);
+                break;
+            case NotchState.Form form:
+                _parked = form;
+                _parkedAt = DateTimeOffset.UtcNow;
+                Apply(NotchParking.PillFor(form));
+                break;
+            default:
+                Apply(NotchState.Idle);
+                break;
+        }
+    }
+
+    public bool Restore()
+    {
+        if (_parked is not { } parked)
+        {
+            return false;
+        }
+
+        _parked = null;
+        if (DateTimeOffset.UtcNow - _parkedAt > ParkedFor && parked is not NotchState.Form)
+        {
+            return false;
+        }
+
+        _restoring = true;
+        try
+        {
+            Apply(parked);
+        }
+        finally
+        {
+            _restoring = false;
+        }
+
+        return true;
+    }
+
+    private Button? _pillButton;
+
+    /// <summary>The whole pill is a button back to the panel it stands for.</summary>
+    private void BuildPillButton(Grid area)
+    {
+        _pillButton = new Button
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Visibility = Visibility.Collapsed,
+        };
+        _pillButton.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(Windows.UI.Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_pillButton, "Open the form again");
+        _pillButton.Click += (_, _) => Restore();
+        area.Children.Add(_pillButton);
+    }
 
     /// <summary>A fresh press outside the panel closes it (the answer may still be speaking; only Escape stops that).</summary>
     private void CheckClickAway()
@@ -380,7 +489,7 @@ internal sealed class NotchPresenter : INotchPresenter
         var (x, y) = Jarvis.Platform.Shell.Mouse.Position;
         if (!_window.IsOnPanel(x, y, frame.Width, frame.Height))
         {
-            Apply(NotchState.Idle);
+            Collapse();
         }
     }
 
@@ -441,9 +550,9 @@ internal sealed class NotchPresenter : INotchPresenter
         });
         _chatMode = Mode("\uE8BD", "Chat", () =>
         {
-            if (_current is NotchState.Home home)
+            if (_current is NotchState.Home)
             {
-                home.Dismiss();
+                // Straight from the home's shape to the chat's: no collapse in between.
                 var companion = ((App)Application.Current).Services.GetRequiredService<Jarvis.Core.Companion.CompanionSession>();
                 _ = Task.Run(companion.Compose);
             }
@@ -483,6 +592,12 @@ internal sealed class NotchPresenter : INotchPresenter
 
     private void CloseNow()
     {
+        if (_current is NotchState.Settings)
+        {
+            Collapse();
+            return;
+        }
+
         if (_composing is not null)
         {
             CloseComposer(submit: false);
@@ -532,7 +647,7 @@ internal sealed class NotchPresenter : INotchPresenter
             else if (e.Key == Windows.System.VirtualKey.Escape)
             {
                 e.Handled = true;
-                CloseComposer(submit: false);
+                Collapse(); // put aside with what's typed; the next hover brings it back
             }
         };
 

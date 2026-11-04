@@ -53,12 +53,38 @@ internal sealed class NotchWindow : Window
     /// <summary>XAML content shown inside the notch, centred under the top edge.</summary>
     public Grid ContentArea { get; }
 
-    /// <summary>Shows the window without taking focus from whatever the user is doing.</summary>
+    /// <summary>
+    /// Shows the window without taking focus from whatever the user is doing. It's made a borderless
+    /// see-through surface before it's shown (else Windows briefly draws its frame, a white outline),
+    /// and the first time it stays invisible until its content has drawn once.
+    /// </summary>
     public void ShowPassively()
     {
-        AppWindow.Show(false);
         WindowChrome.MakeFloatingSurface(Handle);
+        if (!_shownOnce)
+        {
+            _shownOnce = true;
+            WindowChrome.SetAlpha(Handle, 0);
+            var frames = 0;
+            void Reveal(object? sender, object e)
+            {
+                if (++frames < 3)
+                {
+                    return; // a couple of frames, so the composed notch is really on screen
+                }
+
+                Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= Reveal;
+                WindowChrome.SetAlpha(Handle, 255);
+            }
+
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += Reveal;
+        }
+
+        AppWindow.Show(false);
+        WindowChrome.MakeFloatingSurface(Handle); // again: showing can restore some styles
     }
+
+    private bool _shownOnce;
 
     /// <summary>Takes clicks and keyboard focus until <see cref="EndTyping"/>.</summary>
     public void BeginTyping()

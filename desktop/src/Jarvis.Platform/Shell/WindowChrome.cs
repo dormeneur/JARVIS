@@ -77,6 +77,10 @@ public static class WindowChrome
     /// Lets a floating surface take clicks and keyboard focus (to type into it), or makes it
     /// click-through and focus-proof again.
     /// </summary>
+    /// <summary>The whole window's opacity (0 hidden, 255 as drawn); it must be a layered window.</summary>
+    public static void SetAlpha(nint hwnd, byte alpha)
+        => PInvoke.SetLayeredWindowAttributes(new HWND(hwnd), new COLORREF(0), alpha, LAYERED_WINDOW_ATTRIBUTES_FLAGS.LWA_ALPHA);
+
     public static void SetInteractive(nint hwnd, bool interactive)
     {
         var window = new HWND(hwnd);

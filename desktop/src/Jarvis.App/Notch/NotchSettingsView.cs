@@ -29,9 +29,13 @@ internal sealed class NotchSettingsView
     private NotchState.Settings? _settings;
     private string? _section;
 
-    public NotchSettingsView(Grid area, IServiceProvider services)
+    private readonly Action _collapse;
+
+    /// <param name="collapse">Esc: put Settings aside as they are (the notch brings them back on the next hover).</param>
+    public NotchSettingsView(Grid area, IServiceProvider services, Action collapse)
     {
         _services = services;
+        _collapse = collapse;
         var font = Font;
         _menu.Children.Add(new TextBlock { Text = "Settings", FontFamily = font, FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimaryBrush"), Margin = new Thickness(10, 0, 0, 10) });
         _menu.Children.Add(GroupLabel("JARVIS"));
@@ -88,7 +92,7 @@ internal sealed class NotchSettingsView
         {
             if (e.Key == Windows.System.VirtualKey.Escape)
             {
-                _settings?.Close();
+                _collapse();
             }
         };
         area.Children.Add(View);
@@ -110,12 +114,8 @@ internal sealed class NotchSettingsView
         Open(settings.Section is { } wanted && _items.ContainsKey(wanted) ? wanted : _sections[0].Title);
     }
 
-    public void Hide()
-    {
-        View.Visibility = Visibility.Collapsed;
-        _page.Content = null; // pages hold view models; a fresh one next time
-        _settings = null;
-    }
+    /// <summary>Hidden as it is (page and scroll kept), so bringing the same Settings back finds it unchanged.</summary>
+    public void Hide() => View.Visibility = Visibility.Collapsed;
 
     private void Open(string title)
     {

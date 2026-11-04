@@ -15,6 +15,8 @@ public static class NotchAccent
         NotchState.Dictating => [0x21C55E, 0x1ACB4B, 0xB8FFCB],
         NotchState.Thinking => [0xFF80E6, 0xC06CFF, 0xFFC2F2],
         NotchState.Speaking => [0xFFA659, 0xFF7A45, 0xFFD2A8],
+        NotchState.Parked { Busy: true } => [0x3380FF, 0x40BFFF, 0xB3E6FF],
+        NotchState.Parked => [0x21C55E, 0x1ACB4B, 0xB8FFCB], // ready: the green of done
         NotchState.Response or NotchState.Form or NotchState.Home or NotchState.EventDraft or NotchState.Settings => [0x3380FF, 0x40BFFF, 0xB3E6FF],
         _ => null,
     };
@@ -24,7 +26,7 @@ public static class NotchAccent
     /// re-rasterised every frame, too costly to leave running under a response the user is reading.
     /// </summary>
     public static bool GlowMoves(NotchState state)
-        => state is NotchState.Listening or NotchState.Dictating or NotchState.Thinking or NotchState.Speaking;
+        => state is NotchState.Listening or NotchState.Dictating or NotchState.Thinking or NotchState.Speaking or NotchState.Parked { Busy: true };
 
     /// <summary>
     /// How tall the glow reaches, in DIPs; <see langword="null"/> for the spec's own (it scales with the

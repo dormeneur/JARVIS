@@ -52,7 +52,7 @@ public static class NotchLayout
         NotchState.IdleState => Sliver(Springs.NotchClose),
         NotchState.Working => Sliver(Springs.NotchClose),
         NotchState.Listening or NotchState.Dictating => new NotchFrame(ActivityWidth, ActivityHeight, 18, IsSliver: false, Spring: null),
-        NotchState.Thinking or NotchState.Speaking => new NotchFrame(ActivityWidth, ActivityHeight, 18, IsSliver: false, Springs.NotchOpen),
+        NotchState.Thinking or NotchState.Speaking or NotchState.Parked => new NotchFrame(ActivityWidth, ActivityHeight, 18, IsSliver: false, Springs.NotchOpen),
         NotchState.Composing composing => new NotchFrame(ExpandedWidth, ComposerFrameHeight(composing.History ?? []), 22, IsSliver: false, Springs.TextInputOpen),
         NotchState.Response response => new NotchFrame(
             ExpandedWidth,
