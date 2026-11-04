@@ -45,3 +45,6 @@ out.txt
 
 # PERSONAL
 SECOND-BRAIN/
+
+# Personal secrets notes (tokens, keys): never committed.
+DOCUMENTATION/SECRETS/

@@ -50,7 +50,8 @@ public sealed class GoogleCalendar(IGoogleAccounts accounts, McpOAuth oauth, Htt
     [
         ("1. Make a project (any name, e.g. Jarvis)", "https://console.cloud.google.com/projectcreate"),
         ("2. Turn on the Google Calendar API", "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"),
-        ("3. Set up the sign-in screen: choose External, then on Audience press Publish app (sign-ins then don't expire every 7 days)", "https://console.cloud.google.com/auth/branding"),
+        ("3. Set up the sign-in screen: choose External", "https://console.cloud.google.com/auth/branding"),
+        ("   Then on Audience, press Publish app. Until you do, Google says \"Access blocked\" to everyone but test users, and sign-ins expire every 7 days", "https://console.cloud.google.com/auth/audience"),
         ("4. Create a client: type Desktop app, then copy its Client ID and Client secret here", "https://console.cloud.google.com/auth/clients/create"),
     ];
 

@@ -20,12 +20,14 @@ public sealed partial class ConnectorsViewModel : ObservableObject
     private readonly IConnectorStore _store;
     private readonly McpOAuth _oauth;
     private readonly Jarvis.Core.Google.GoogleCalendar _google;
+    private readonly GitHubSignIn _github;
 
-    public ConnectorsViewModel(IConnectorStore store, McpOAuth oauth, Jarvis.Core.Google.GoogleCalendar google)
+    public ConnectorsViewModel(IConnectorStore store, McpOAuth oauth, Jarvis.Core.Google.GoogleCalendar google, GitHubSignIn github)
     {
         _store = store;
         _oauth = oauth;
         _google = google;
+        _github = github;
         GoogleSteps = [.. Jarvis.Core.Google.GoogleCalendar.SetupSteps.Select(step => new GoogleStep(step.Step, step.Url))];
         Refresh();
     }
@@ -80,7 +82,9 @@ public sealed partial class ConnectorsViewModel : ObservableObject
         }
         catch (Exception exception) when (exception is InvalidOperationException or HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
         {
-            GoogleStatus = $"Google sign-in didn't finish: {exception.Message}";
+            GoogleStatus = exception.Message.Contains("access_denied", StringComparison.Ordinal)
+                ? "Google blocked it: the sign-in app is still in Testing. In Google Cloud, open Audience and press Publish app (or add your email under Test users), then connect again."
+                : $"Google sign-in didn't finish: {exception.Message}";
         }
 
         Refresh();
@@ -208,6 +212,30 @@ public sealed partial class ConnectorsViewModel : ObservableObject
             return;
         }
 
+        // GitHub, one click: approve Jarvis on github.com with a short code (the gh CLI's way).
+        if (service.Id == "github" && GitHubSignIn.Available && !row.ShowsToken)
+        {
+            row.Busy = true;
+            try
+            {
+                var code = await _github.StartAsync(CancellationToken.None).ConfigureAwait(true);
+                CopyText(code.UserCode);
+                row.Status = $"On GitHub, paste the code {code.UserCode} (it's copied) and press Authorize. Signed in to more than one GitHub account? Switch to the one you want there first.";
+                _ = OpenBrowser(new Uri(code.VerificationUri));
+                await SaveTokenAsync(row, await _github.WaitAsync(code, CancellationToken.None).ConfigureAwait(true), taken).ConfigureAwait(true);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+            {
+                row.Status = $"GitHub didn't connect: {exception.Message}";
+            }
+            finally
+            {
+                row.Busy = false;
+            }
+
+            return;
+        }
+
         if (!row.ShowsToken)
         {
             row.ShowsToken = true;
@@ -223,11 +251,32 @@ public sealed partial class ConnectorsViewModel : ObservableObject
         }
 
         row.Busy = true;
-        row.Status = "Checking the token…";
+        try
+        {
+            await SaveTokenAsync(row, token, taken).ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            row.Status = $"Couldn't keep the token on this PC: {exception.Message}"; // said on the card, never a crash
+        }
+        finally
+        {
+            row.Busy = false;
+        }
+    }
+
+    /// <summary>
+    /// Keeps a token as a connection: checked with the service first (GitHub says whose it is, and
+    /// the connection is named after that account), then tested, then saved. The same account again
+    /// replaces its token; another account gets its own connection.
+    /// </summary>
+    private async Task SaveTokenAsync(CatalogRow row, string token, IReadOnlyCollection<string> taken)
+    {
+        var service = row.Service;
+        row.Status = "Checking with " + service.Name + "…";
         var account = service.Id == "github" ? await GitHubLoginAsync(token).ConfigureAwait(true) : (Ok: true, Login: (string?)null, Problem: (string?)null);
         if (!account.Ok)
         {
-            row.Busy = false;
             row.Status = account.Problem!;
             return;
         }
@@ -238,11 +287,17 @@ public sealed partial class ConnectorsViewModel : ObservableObject
             : ConnectorCatalog.NameFor(service, account.Login ?? row.Label, taken);
         var check = await TestAsync(service.Url, token).ConfigureAwait(true);
         _store.Save(new Connector(connectorName, service.Url, ConnectorAuth.ApiKey), token);
-        row.Busy = false;
         row.Token = row.Label = string.Empty;
         row.ShowsToken = false;
         row.Status = $"Connected {(account.Login is { } who ? $"{who}'s account " : string.Empty)}as \"{connectorName}\". {check}";
         Refresh();
+    }
+
+    private static void CopyText(string text)
+    {
+        var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        package.SetText(text);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
     }
 
     [RelayCommand]

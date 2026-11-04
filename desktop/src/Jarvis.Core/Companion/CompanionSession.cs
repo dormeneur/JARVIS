@@ -632,8 +632,15 @@ public sealed partial class CompanionSession : IAsyncDisposable
         var privacy = _services.Privacy;
         var browser = _services.Browser;
 
-        // Open an app, a setting, a site or a search: done right here, no screenshot, no Claude.
-        if (local.Actions?.TryHandle(request) is { } done)
+        // "When I say X, do Y": the brain turns Y into steps once; after that X runs here.
+        if (local.Actions is not null && local.Workflows is { } workflows && Jarvis.Core.Assistant.Workflows.Teaching(request) is { } teaching)
+        {
+            await TeachWorkflowAsync(workflows, teaching.Phrase, teaching.What, request, typed, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        // A workflow phrase, or opening an app, a setting, a site or a search: done right here, no screenshot, no Claude.
+        if (local.Actions is not null && await local.Actions.RunAsync(request, local.Workflows?.Taught ?? [], cancellationToken).ConfigureAwait(false) is { } done)
         {
             LogRoute(TurnRoute.Local);
             privacy.Record(0, "Done on this PC (opened something)");
@@ -806,6 +813,42 @@ public sealed partial class CompanionSession : IAsyncDisposable
         var said = $"{(problem is null ? string.Empty : $"Google Calendar didn't take it directly ({problem}). ")}Opened {web.Name} with {Jarvis.Core.Proactive.CalendarDraft.Describe(chosen)} filled in. Press Save there to add it.";
         _services.History.Add(request, said);
         _services.Notch.Show(new NotchState.Response(said, [new NotchAction("Open it again", () => OpenLink(link))]));
+    }
+
+    /// <summary>Learns a workflow: the brain (local in private mode) writes its steps once, and they're kept.</summary>
+    private async Task TeachWorkflowAsync(Jarvis.Core.Assistant.IWorkflowStore workflows, string phrase, string what, string request, bool typed, CancellationToken cancellationToken)
+    {
+        _services.Notch.Show(new NotchState.Thinking("Learning that"));
+        var brain = _services.Privacy.PrivateMode && _services.Local is { } local ? local.LocalBrain : _services.Brain;
+        var reply = new StringBuilder();
+        try
+        {
+            await foreach (var brainEvent in brain.RunTurnAsync(new BrainTurn(Jarvis.Core.Assistant.Workflows.TeachingInstructions, what, []), cancellationToken).ConfigureAwait(false))
+            {
+                if (brainEvent is BrainEvent.TextDelta delta)
+                {
+                    reply.Append(delta.Text);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogTurnFailed(exception);
+        }
+
+        string said;
+        if (Jarvis.Core.Assistant.Workflows.ParseSteps(reply.ToString()) is { } steps)
+        {
+            workflows.Save(new Jarvis.Core.Assistant.Workflow([phrase], steps, $"On it: {phrase}."));
+            said = $"Got it. When you say \"{phrase}\", I'll do that right here, without looking at your screen.";
+        }
+        else
+        {
+            said = "I couldn't turn that into steps I can do by myself. Try plainer steps, like \"open Spotify liked songs and press play\".";
+        }
+
+        var (shown, _, _, _) = await AnswerAsync(new SaidBrain(said), string.Empty, request, [], _time.GetTimestamp(), typed, cancellationToken).ConfigureAwait(false);
+        _services.History.Add(request, shown);
     }
 
     /// <summary>A web page, in the browser Jarvis works with if it's connected, else the default one.</summary>
@@ -1025,7 +1068,8 @@ public sealed record CompanionServices(
 /// <param name="CalendarAddress">The calendar's iCal address from Settings, for its web page and new events.</param>
 /// <param name="Google">Jarvis's own Google sign-in: adds events straight to Google Calendar when an account is connected.</param>
 /// <param name="Actions">Opening apps, settings, sites and searches on this PC, before any brain is asked.</param>
-public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar, Func<string>? CalendarAddress = null, Jarvis.Core.Google.GoogleCalendar? Google = null, Jarvis.Core.Assistant.LocalActions? Actions = null);
+/// <param name="Workflows">The user's taught workflows ("when I say X…").</param>
+public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar, Func<string>? CalendarAddress = null, Jarvis.Core.Google.GoogleCalendar? Google = null, Jarvis.Core.Assistant.LocalActions? Actions = null, Jarvis.Core.Assistant.IWorkflowStore? Workflows = null);
 
 /// <summary>A reply already known (a local action's "Opened Spotify."), spoken and shown like any answer.</summary>
 internal sealed class SaidBrain(string text) : IAssistantBrain

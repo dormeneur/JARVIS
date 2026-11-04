@@ -524,6 +524,12 @@ public sealed class CompanionSessionTests
 
         public IReadOnlyList<Jarvis.Core.Assistant.InstalledApp> All { get; } = [new("Spotify", "spotify")];
 
+        public bool PressKey(string key) => true;
+
+        public void EnsureVolume(int percent)
+        {
+        }
+
         public bool Launch(Jarvis.Core.Assistant.InstalledApp app)
         {
             Launched.Add(app.Name);

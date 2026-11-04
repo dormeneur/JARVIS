@@ -38,6 +38,9 @@ internal sealed class NotchPresenter : INotchPresenter
     private Grid? _composerBar;
     private TextBlock? _talkLabel;
 
+    /// <summary>The empty chat's middle line.</summary>
+    private TextBlock? _emptyChat;
+
     /// <summary>Held from the talk pill: watches the mouse button, since the pill itself goes away while listening.</summary>
     private DispatcherQueueTimer? _talkWatch;
     private Action<bool>? _talking;
@@ -182,14 +185,16 @@ internal sealed class NotchPresenter : INotchPresenter
     public void Show(NotchState state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        Volatile.Write(ref _requested, state);
         _dispatcher.TryEnqueue(() => Apply(state));
     }
 
-    /// <summary>What was last asked to show (from any thread).</summary>
-    public NotchState Current => Volatile.Read(ref _requested);
+    /// <summary>
+    /// What the notch is showing now (from any thread). The shown state, not the last asked for: a
+    /// click outside or Esc rests the notch without a Show, and a hover must then be able to open it.
+    /// </summary>
+    public NotchState Current => Volatile.Read(ref _shown);
 
-    private NotchState _requested = NotchState.Idle;
+    private NotchState _shown = NotchState.Idle;
 
     /// <summary>Hidden while paused, or at rest while something is fullscreen; shown otherwise.</summary>
     private void UpdateVisibility()
@@ -316,7 +321,9 @@ internal sealed class NotchPresenter : INotchPresenter
         {
             _responseView.Visibility = state is NotchState.Response ? Visibility.Visible : Visibility.Collapsed;
             _composerBar!.Visibility = state is NotchState.Composing ? Visibility.Visible : Visibility.Collapsed;
+
             ShowHistory((state as NotchState.Composing)?.History ?? []);
+            _emptyChat!.Visibility = state is NotchState.Composing { History: null or { Count: 0 } } ? Visibility.Visible : Visibility.Collapsed;
             _activity!.Visibility = caption is null ? Visibility.Collapsed : Visibility.Visible;
             _caption!.Text = caption ?? string.Empty;
             if (caption is null || state is NotchState.Parked { Busy: false })
@@ -364,6 +371,7 @@ internal sealed class NotchPresenter : INotchPresenter
         }
 
         _current = state;
+        Volatile.Write(ref _shown, state);
         ShowModes(state);
         UpdateVisibility();
         if (_close is not null)
@@ -753,6 +761,19 @@ internal sealed class NotchPresenter : INotchPresenter
                 EndTalk();
             }
         };
+
+        _emptyChat = new TextBlock
+        {
+            Text = "What can I take off your plate?",
+            FontFamily = font,
+            FontSize = 15,
+            Foreground = (Brush)Application.Current.Resources["TextSecondaryBrush"],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 46 + 18, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        area.Children.Add(_emptyChat);
 
         _history = new StackPanel { Spacing = 8 };
         _historyView = new ScrollViewer

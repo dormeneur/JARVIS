@@ -32,6 +32,49 @@ public sealed class InstalledApps : IApps
         }
     }
 
+    /// <summary>Virtual-key codes of the media keys a keyboard has.</summary>
+    private static readonly Dictionary<string, byte> MediaKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["playpause"] = 0xB3, ["play"] = 0xB3, ["pause"] = 0xB3, ["next"] = 0xB0, ["previous"] = 0xB1, ["stop"] = 0xB2,
+        ["volumeup"] = 0xAF, ["volumedown"] = 0xAE, ["mute"] = 0xAD,
+    };
+
+    public bool PressKey(string key)
+    {
+        if (!MediaKeys.TryGetValue(key.Replace(" ", string.Empty, StringComparison.Ordinal), out var code))
+        {
+            return false;
+        }
+
+        const uint KeyUp = 0x0002;
+        const uint Extended = 0x0001;
+        keybd_event(code, 0, Extended, 0);
+        keybd_event(code, 0, Extended | KeyUp, 0);
+        return true;
+    }
+
+    public void EnsureVolume(int percent)
+    {
+        try
+        {
+            using var devices = new NAudio.CoreAudioApi.MMDeviceEnumerator();
+            using var speakers = devices.GetDefaultAudioEndpoint(NAudio.CoreAudioApi.DataFlow.Render, NAudio.CoreAudioApi.Role.Multimedia);
+            var volume = speakers.AudioEndpointVolume;
+            volume.Mute = false;
+            if (volume.MasterVolumeLevelScalar < percent / 100f)
+            {
+                volume.MasterVolumeLevelScalar = percent / 100f;
+            }
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // No speakers: nothing to turn up.
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, nuint extraInfo);
+
     public bool Launch(InstalledApp app)
     {
         ArgumentNullException.ThrowIfNull(app);

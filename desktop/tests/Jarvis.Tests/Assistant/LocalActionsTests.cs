@@ -64,6 +64,48 @@ public sealed class LocalActionsTests
         Assert.Empty(new LocalActions(_apps).TryHandle("open calculator")!.Next);
     }
 
+    [Fact]
+    public async Task DropTheNeedle_TurnsTheVolumeUp_OpensLikedSongs_AndPresses_Play()
+    {
+        var done = await new LocalActions(_apps, new Instant()).RunAsync("drop the needle", [], CancellationToken.None);
+
+        Assert.Equal("Dropping the needle: your liked songs on Spotify.", done!.Said);
+        Assert.Equal(["volume 60", "open spotify:collection:tracks", "key playpause"], _apps.Steps);
+    }
+
+    [Fact]
+    public async Task ATaughtWorkflowRuns_AndAPassingMentionDoesnt()
+    {
+        var taught = new Workflow(["good morning"], [new("do", "open spotify"), new("open", "https://mail.google.com")], "Morning.");
+        var actions = new LocalActions(_apps, new Instant());
+
+        Assert.Equal("Morning.", (await actions.RunAsync("Good morning, Jarvis!", [taught], CancellationToken.None))!.Said);
+        Assert.Equal(["Spotify"], _apps.Launched.Select(app => app.Name));
+        Assert.Contains("open https://mail.google.com", _apps.Steps);
+
+        _apps.Steps.Clear();
+        Assert.Null(await actions.RunAsync("why do DJs say drop the needle when they start a song", [], CancellationToken.None));
+        Assert.Empty(_apps.Steps);
+    }
+
+    [Fact]
+    public void LearnsWhatAPhraseMeans_FromHowItsTaught()
+    {
+        Assert.Equal(("drop the needle", "open spotify, go to liked songs and hit play"), Workflows.Teaching("When I say drop the needle, open spotify, go to liked songs and hit play"));
+        Assert.Equal(("focus time", "close slack and play lofi"), Workflows.Teaching("whenever I say \"focus time\" it means close slack and play lofi"));
+        Assert.Null(Workflows.Teaching("open spotify"));
+
+        var steps = Workflows.ParseSteps("""Here: [{"do":"open","value":"spotify:collection:tracks"},{"do":"wait","value":"3000"},{"do":"key","value":"playpause"}]""");
+        Assert.Equal(3, steps!.Count);
+        Assert.Null(Workflows.ParseSteps("""[{"do":"run","value":"format c:"}]""")); // only the known kinds
+    }
+
+    private sealed class Instant : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+            => System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+    }
+
     private sealed class FakeApps(params InstalledApp[] apps) : IApps
     {
         public List<InstalledApp> Launched { get; } = [];
@@ -71,6 +113,16 @@ public sealed class LocalActionsTests
         public List<string> Opened { get; } = [];
 
         public IReadOnlyList<InstalledApp> All => apps;
+
+        public List<string> Steps { get; } = [];
+
+        public bool PressKey(string key)
+        {
+            Steps.Add("key " + key);
+            return true;
+        }
+
+        public void EnsureVolume(int percent) => Steps.Add("volume " + percent);
 
         public bool Launch(InstalledApp app)
         {
@@ -81,6 +133,7 @@ public sealed class LocalActionsTests
         public bool Open(string uri)
         {
             Opened.Add(uri);
+            Steps.Add("open " + uri);
             return true;
         }
     }

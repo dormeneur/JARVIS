@@ -64,5 +64,12 @@ public static unsafe class ProtectedFile
         }
     }
 
-    public static void Delete(string path) => File.Delete(path);
+    /// <summary>Gone afterwards, whether or not it (or its folder) was there.</summary>
+    public static void Delete(string path)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path); // File.Delete throws when the folder itself is missing (a first connection)
+        }
+    }
 }

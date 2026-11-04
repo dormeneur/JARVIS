@@ -5,9 +5,15 @@ namespace Jarvis.Core.Assistant;
 /// <summary>An app in the Start menu's list: its name and how Windows launches it (its AppsFolder id).</summary>
 public sealed record InstalledApp(string Name, string LaunchId);
 
-/// <summary>The PC's installed apps, and opening things without looking at the screen.</summary>
+/// <summary>The PC's installed apps, opening things, media keys and the volume, without looking at the screen.</summary>
 public interface IApps
 {
+    /// <summary>A media key: playpause, next, previous, volumeup, volumedown, mute; false for another name.</summary>
+    bool PressKey(string key);
+
+    /// <summary>Unmutes, and raises the volume to at least this percent (never lowers it).</summary>
+    void EnsureVolume(int percent);
+
     /// <summary>Every app Windows lists (Start menu desktop apps and Store apps alike).</summary>
     IReadOnlyList<InstalledApp> All { get; }
 
@@ -28,8 +34,51 @@ public sealed record ActionDone(string Said, IReadOnlyList<Suggestion> Next);
 /// Settings page, a website or a deep link, or search the web, YouTube or Spotify. Anything it
 /// doesn't recognise returns null and goes to the brain as before, so the saving costs nothing.
 /// </summary>
-public sealed partial class LocalActions(IApps apps)
+public sealed partial class LocalActions(IApps apps, TimeProvider? time = null)
 {
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
+    /// <summary>
+    /// A workflow phrase ("drop the needle") runs its steps; anything else is tried as a single
+    /// action (<see cref="TryHandle"/>). Null when it's neither: the brain takes it.
+    /// </summary>
+    public async Task<ActionDone?> RunAsync(string request, IReadOnlyList<Workflow> taught, CancellationToken cancellationToken)
+    {
+        if (Workflows.Find(request, taught) is not { } workflow)
+        {
+            return TryHandle(request);
+        }
+
+        foreach (var step in workflow.Steps)
+        {
+            await RunAsync(step, cancellationToken).ConfigureAwait(false);
+        }
+
+        return new ActionDone(workflow.Said, []);
+    }
+
+    private async Task RunAsync(WorkflowStep step, CancellationToken cancellationToken)
+    {
+        switch (step.Do)
+        {
+            case "open":
+                apps.Open(step.Value);
+                break;
+            case "do":
+                TryHandle(step.Value);
+                break;
+            case "key":
+                apps.PressKey(step.Value);
+                break;
+            case "volume" when int.TryParse(step.Value, out var percent):
+                apps.EnsureVolume(Math.Clamp(percent, 0, 100));
+                break;
+            case "wait" when int.TryParse(step.Value, out var milliseconds):
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Clamp(milliseconds, 0, 15_000)), _time, cancellationToken).ConfigureAwait(false);
+                break;
+        }
+    }
+
     /// <summary>Takes a suggested next step (a deep link).</summary>
     public bool Follow(Suggestion next)
     {

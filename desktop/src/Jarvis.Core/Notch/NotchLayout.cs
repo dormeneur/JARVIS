@@ -44,6 +44,9 @@ public static class NotchLayout
     /// <summary>The Home/Chat switch row 46, then the chat's bar (talk pill, text box, send) 38 high and 14 below.</summary>
     private const double ComposerHeight = 46 + 38 + 14;
 
+    /// <summary>The empty chat's middle: a line saying what to do, between the switch and the bar.</summary>
+    public const double EmptyChatSpace = 64;
+
     /// <summary>The chat with history grows to this.</summary>
     public const double ChatMaxHeight = 440;
 
@@ -81,7 +84,7 @@ public static class NotchLayout
     {
         if (history.Count == 0)
         {
-            return ComposerHeight;
+            return ComposerHeight + EmptyChatSpace; // room to breathe, with a line in the middle
         }
 
         // Each exchange: a time label, the question's bubble (right), the answer's bubble (left).
