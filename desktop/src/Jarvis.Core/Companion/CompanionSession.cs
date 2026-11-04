@@ -724,7 +724,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
             return;
         }
 
-        var destination = web.Account is { } account ? $"{web.Name} ({account})" : web.Name;
+        // Signed in to Google? Then Add puts it straight in; otherwise the calendar's own page, filled in.
+        var google = local.Google?.AccountFor(web);
+        var destination = google is not null ? $"Google Calendar ({google}), added directly" : web.Account is { } account ? $"{web.Name} ({account})" : web.Name;
         var decision = new TaskCompletionSource<Jarvis.Contracts.Calendar.CalendarEvent?>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancelled = cancellationToken.Register(() => decision.TrySetResult(null));
         _services.Notch.Show(new NotchState.EventDraft(draft, destination, chosen => decision.TrySetResult(chosen), () => decision.TrySetResult(null)));
@@ -738,6 +740,25 @@ public sealed partial class CompanionSession : IAsyncDisposable
             return;
         }
 
+        string? problem = null;
+        if (google is not null)
+        {
+            try
+            {
+                _services.Notch.Show(new NotchState.Thinking("Adding it to your calendar"));
+                var page = await local.Google!.AddAsync(google, chosen, _time.LocalTimeZone, cancellationToken).ConfigureAwait(false);
+                privacy.Record(0, $"Added an event to Google Calendar ({google})");
+                var added = $"Added {Jarvis.Core.Proactive.CalendarDraft.Describe(chosen)} to Google Calendar ({google}).";
+                _services.History.Add(request, added);
+                _services.Notch.Show(new NotchState.Response(added, [new NotchAction("Open it", () => OpenLink(page))]));
+                return;
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or HttpRequestException)
+            {
+                problem = exception.Message; // falls back to the new-event page below, so nothing is lost
+            }
+        }
+
         if (web.NewEvent(chosen) is not { } link)
         {
             _services.Notch.Show(new NotchState.Response($"{web.Name} can't take a new event from Jarvis yet. Add {Jarvis.Core.Proactive.CalendarDraft.Describe(chosen)} there.", [new NotchAction($"Open {web.Name}", () => OpenLink(web.Day(chosen.Start)))]));
@@ -746,7 +767,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
 
         OpenLink(link);
         privacy.Record(0, "Opened a new event in your calendar, filled in");
-        var said = $"Opened {destination} with {Jarvis.Core.Proactive.CalendarDraft.Describe(chosen)} filled in. Press Save there to add it.";
+        var said = $"{(problem is null ? string.Empty : $"Google Calendar didn't take it directly ({problem}). ")}Opened {web.Name} with {Jarvis.Core.Proactive.CalendarDraft.Describe(chosen)} filled in. Press Save there to add it.";
         _services.History.Add(request, said);
         _services.Notch.Show(new NotchState.Response(said, [new NotchAction("Open it again", () => OpenLink(link))]));
     }
@@ -966,4 +987,5 @@ public sealed record CompanionServices(
 /// <summary>What answers on this PC: the vault (its brain and form filling) and the local model for private mode.</summary>
 /// <param name="Calendar">Answers calendar questions from the iCal feed (<see cref="Jarvis.Core.Proactive.CalendarBrain"/>).</param>
 /// <param name="CalendarAddress">The calendar's iCal address from Settings, for its web page and new events.</param>
-public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar, Func<string>? CalendarAddress = null);
+/// <param name="Google">Jarvis's own Google sign-in: adds events straight to Google Calendar when an account is connected.</param>
+public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar, Func<string>? CalendarAddress = null, Jarvis.Core.Google.GoogleCalendar? Google = null);

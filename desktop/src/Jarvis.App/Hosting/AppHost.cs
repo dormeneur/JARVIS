@@ -183,7 +183,8 @@ internal static class AppHost
                         : await provider.GetRequiredService<CalendarFeed>().MeetingsAsync(address, from, to, time.LocalTimeZone, cancellationToken).ConfigureAwait(false);
                 },
                 provider.GetRequiredService<TimeProvider>()),
-            () => provider.GetRequiredService<IOptionsMonitor<ProactiveOptions>>().CurrentValue.CalendarAddress));
+            () => provider.GetRequiredService<IOptionsMonitor<ProactiveOptions>>().CurrentValue.CalendarAddress,
+            provider.GetRequiredService<Jarvis.Core.Google.GoogleCalendar>()));
     }
 
     /// <summary>Windows-specific devices and surfaces.</summary>
@@ -296,6 +297,11 @@ internal static class AppHost
         services.AddSingleton<AgentAnnouncer>();
         services.AddSingleton(provider => new McpOAuth(new HttpClient { Timeout = TimeSpan.FromSeconds(20) }, provider.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IConnectorStore, SettingsConnectorStore>();
+        services.AddSingleton<Jarvis.Core.Google.IGoogleAccounts, SettingsGoogleAccounts>();
+        services.AddSingleton(provider => new Jarvis.Core.Google.GoogleCalendar(
+            provider.GetRequiredService<Jarvis.Core.Google.IGoogleAccounts>(),
+            provider.GetRequiredService<McpOAuth>(),
+            new HttpClient { Timeout = TimeSpan.FromSeconds(20) }));
         services.AddSingleton<IRoutineStore, SettingsRoutineStore>();
         services.AddSingleton<RoutineScheduler>();
         services.AddHostedService<RoutineTimer>();

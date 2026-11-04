@@ -19,13 +19,83 @@ public sealed partial class ConnectorsViewModel : ObservableObject
 
     private readonly IConnectorStore _store;
     private readonly McpOAuth _oauth;
+    private readonly Jarvis.Core.Google.GoogleCalendar _google;
 
-    public ConnectorsViewModel(IConnectorStore store, McpOAuth oauth)
+    public ConnectorsViewModel(IConnectorStore store, McpOAuth oauth, Jarvis.Core.Google.GoogleCalendar google)
     {
         _store = store;
         _oauth = oauth;
+        _google = google;
+        GoogleSteps = [.. Jarvis.Core.Google.GoogleCalendar.SetupSteps.Select(step => new GoogleStep(step.Step, step.Url))];
         Refresh();
     }
+
+    /// <summary>Making Jarvis's Google sign-in app, a step per link.</summary>
+    public IReadOnlyList<GoogleStep> GoogleSteps { get; }
+
+    public ObservableCollection<string> GoogleAccounts { get; } = [];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GoogleNeedsApp))]
+    public partial bool GoogleReady { get; set; }
+
+    public bool GoogleNeedsApp => !GoogleReady;
+
+    [ObservableProperty]
+    public partial string GoogleClientId { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string GoogleClientSecret { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string GoogleStatus { get; set; } = string.Empty;
+
+    [RelayCommand]
+    private void SaveGoogleApp()
+    {
+        var id = GoogleClientId.Trim();
+        if (!id.EndsWith(".apps.googleusercontent.com", StringComparison.Ordinal) || GoogleClientSecret.Trim().Length == 0)
+        {
+            GoogleStatus = "Paste both: the Client ID (it ends in .apps.googleusercontent.com) and the Client secret.";
+            return;
+        }
+
+        _google.Accounts.SetApp(id, GoogleClientSecret);
+        GoogleClientSecret = string.Empty;
+        GoogleStatus = "Saved. Now connect your Google account.";
+        Refresh();
+    }
+
+    [RelayCommand]
+    private void ChangeGoogleApp() => GoogleReady = false;
+
+    [RelayCommand]
+    private async Task ConnectGoogleAsync()
+    {
+        GoogleStatus = "Sign in to Google in the browser window that just opened, and pick the account. Google may say the app isn't verified: it's your own app, so choose Advanced, then go to it.";
+        try
+        {
+            var email = await _google.ConnectAsync(OpenBrowser, CancellationToken.None).ConfigureAwait(true);
+            GoogleStatus = $"Connected {email}. \"Add … to my calendar\" now puts events straight into its Google Calendar.";
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
+        {
+            GoogleStatus = $"Google sign-in didn't finish: {exception.Message}";
+        }
+
+        Refresh();
+    }
+
+    [RelayCommand]
+    private void RemoveGoogle(string email)
+    {
+        _google.Accounts.Remove(email);
+        GoogleStatus = $"Removed {email}. To take Jarvis's access away on Google's side too, remove it at myaccount.google.com/connections.";
+        Refresh();
+    }
+
+    [RelayCommand]
+    private static void OpenGoogleStep(string url) => _ = OpenBrowser(new Uri(url));
 
     public ObservableCollection<ConnectorRow> Connectors { get; } = [];
 
@@ -313,6 +383,14 @@ public sealed partial class ConnectorsViewModel : ObservableObject
             Connectors.Add(new ConnectorRow(connector.Name, service is null ? connector.Url : $"{service.Name} · {service.Description}", auth, connector.Auth == ConnectorAuth.SignIn));
         }
 
+        GoogleReady = _google.Accounts.ClientId is not null;
+        GoogleClientId = _google.Accounts.ClientId ?? GoogleClientId;
+        GoogleAccounts.Clear();
+        foreach (var email in _google.Accounts.Accounts)
+        {
+            GoogleAccounts.Add(email);
+        }
+
         foreach (var row in _catalog)
         {
             row.ActionLabel = _store.All.Any(connector => ConnectorCatalog.Of(connector) == row.Service) ? "Add another account" : "Connect";
@@ -394,3 +472,6 @@ public sealed partial class CatalogRow(CatalogService service) : ObservableObjec
     [ObservableProperty]
     public partial bool Busy { get; set; }
 }
+
+/// <summary>One step of making Jarvis's Google sign-in app, with its page in Google Cloud.</summary>
+public sealed record GoogleStep(string Text, string Url);

@@ -44,6 +44,27 @@ public sealed class McpOAuth
 
         using var callback = LoopbackCallback.Start();
         var (clientId, clientSecret) = await RegisterAsync(authorization, callback.RedirectUri, cancellationToken).ConfigureAwait(false);
+        return await CodeFlowAsync(authorization, clientId, clientSecret, scope, serverUrl, callback, openBrowser, extra: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sign-in to a provider that doesn't let apps register themselves (Google), with the app the
+    /// user made for Jarvis there: the same authorization-code flow with PKCE and a loopback
+    /// redirect. <paramref name="extra"/> adds provider parameters (Google's offline access).
+    /// </summary>
+    public async Task<OAuthTokens> SignInWithAppAsync(
+        string authorizationEndpoint, string tokenEndpoint, string clientId, string? clientSecret, string scope,
+        IReadOnlyDictionary<string, string> extra, Func<Uri, ValueTask> openBrowser, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(openBrowser);
+        using var callback = LoopbackCallback.Start();
+        return await CodeFlowAsync(new AuthorizationServer(authorizationEndpoint, tokenEndpoint, null), clientId, clientSecret, scope, resource: null, callback, openBrowser, extra, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<OAuthTokens> CodeFlowAsync(
+        AuthorizationServer authorization, string clientId, string? clientSecret, string? scope, string? resource, LoopbackCallback callback,
+        Func<Uri, ValueTask> openBrowser, IReadOnlyDictionary<string, string>? extra, CancellationToken cancellationToken)
+    {
 
         var verifier = Base64Url(RandomNumberGenerator.GetBytes(32)); // ponytail: crypto randomness, not injectable by design
         var state = Base64Url(RandomNumberGenerator.GetBytes(16));
@@ -55,9 +76,14 @@ public sealed class McpOAuth
             ["code_challenge"] = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier))),
             ["code_challenge_method"] = "S256",
             ["state"] = state,
-            ["resource"] = serverUrl,
+            ["resource"] = resource,
             ["scope"] = scope,
         };
+        foreach (var (key, value) in extra ?? new Dictionary<string, string>())
+        {
+            query[key] = value;
+        }
+
         await openBrowser(new Uri(authorization.AuthorizationEndpoint + (authorization.AuthorizationEndpoint.Contains('?', StringComparison.Ordinal) ? "&" : "?") + Form(query))).ConfigureAwait(false);
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -83,9 +109,9 @@ public sealed class McpOAuth
                 ["code_verifier"] = verifier,
                 ["client_id"] = clientId,
                 ["client_secret"] = clientSecret,
-                ["resource"] = serverUrl,
+                ["resource"] = resource,
             },
-            previous: new OAuthTokens(string.Empty, null, null, authorization.TokenEndpoint, clientId, clientSecret, serverUrl),
+            previous: new OAuthTokens(string.Empty, null, null, authorization.TokenEndpoint, clientId, clientSecret, resource ?? string.Empty),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -109,7 +135,7 @@ public sealed class McpOAuth
                 ["refresh_token"] = tokens.RefreshToken,
                 ["client_id"] = tokens.ClientId,
                 ["client_secret"] = tokens.ClientSecret,
-                ["resource"] = tokens.Resource,
+                ["resource"] = tokens.Resource is { Length: > 0 } resource ? resource : null, // none for Google
             },
             tokens,
             cancellationToken);

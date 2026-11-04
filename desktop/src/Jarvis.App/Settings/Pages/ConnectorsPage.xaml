@@ -42,6 +42,49 @@
         </ItemsControl.ItemTemplate>
       </ItemsControl>
 
+      <TextBlock Style="{StaticResource GroupTitle}" Text="Google" />
+      <StackPanel Padding="16,12" Background="{StaticResource Surface1Brush}" CornerRadius="8" Spacing="8">
+        <TextBlock FontWeight="SemiBold" Text="Google Calendar" />
+        <TextBlock
+            FontSize="12"
+            Foreground="{StaticResource TextSecondaryBrush}"
+            Text="Lets Jarvis put events straight into your Google Calendar (after you check them). Google doesn't let apps sign up on their own, so Jarvis signs in with a small app you make in Google Cloud once (free, about five minutes). It's yours: no one else's plan or login is involved."
+            TextWrapping="Wrap" />
+        <StackPanel Spacing="6" Visibility="{x:Bind ViewModel.GoogleNeedsApp, Mode=OneWay}">
+          <ItemsControl ItemsSource="{x:Bind ViewModel.GoogleSteps}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:GoogleStep">
+                <HyperlinkButton Padding="0,2" Click="OnGoogleStep" Tag="{x:Bind Url}">
+                  <TextBlock FontSize="12" Text="{x:Bind Text}" TextWrapping="Wrap" />
+                </HyperlinkButton>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBox Header="Client ID" PlaceholderText="….apps.googleusercontent.com" Text="{x:Bind ViewModel.GoogleClientId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          <PasswordBox Header="Client secret" Password="{x:Bind ViewModel.GoogleClientSecret, Mode=TwoWay}" />
+          <Button Command="{x:Bind ViewModel.SaveGoogleAppCommand}" Content="Save" Style="{StaticResource AccentButtonStyle}" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind ViewModel.GoogleReady, Mode=OneWay}">
+          <Button Command="{x:Bind ViewModel.ConnectGoogleCommand}" Content="Connect a Google account" Style="{StaticResource AccentButtonStyle}" />
+          <Button Command="{x:Bind ViewModel.ChangeGoogleAppCommand}" Content="Change the sign-in app" />
+        </StackPanel>
+        <ItemsControl ItemsSource="{x:Bind ViewModel.GoogleAccounts}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="x:String">
+              <Grid Margin="0,2" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock VerticalAlignment="Center" Text="{x:Bind}" />
+                <Button Grid.Column="1" Click="OnRemoveGoogle" Content="Remove" Tag="{x:Bind}" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <TextBlock FontSize="12" Text="{x:Bind ViewModel.GoogleStatus, Mode=OneWay}" TextWrapping="Wrap" />
+      </StackPanel>
+
       <TextBlock Style="{StaticResource GroupTitle}" Text="Add a service" />
       <AutoSuggestBox PlaceholderText="Search services (GitHub, Notion, payments…)" QueryIcon="Find" Text="{x:Bind ViewModel.Search, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
       <ItemsControl ItemsSource="{x:Bind ViewModel.Available}">

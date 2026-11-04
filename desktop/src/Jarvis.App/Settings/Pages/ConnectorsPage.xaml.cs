@@ -38,6 +38,22 @@ public sealed partial class ConnectorsPage : UserControl
         }
     }
 
+    private void OnGoogleStep(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string url })
+        {
+            ViewModel.OpenGoogleStepCommand.Execute(url);
+        }
+    }
+
+    private void OnRemoveGoogle(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string email })
+        {
+            ViewModel.RemoveGoogleCommand.Execute(email);
+        }
+    }
+
     private void OnTokenPage(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: CatalogRow row })
