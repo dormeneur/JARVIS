@@ -355,6 +355,14 @@ public sealed partial class App : Application
             new FormActions(edits => Task.FromResult($"Saved {edits.Count} (demo: nothing written)."), () => { }, StopFilling: () => { }, Used: (_, _) => { }, Hear: (_, _) => Task.FromResult(string.Empty), Remember: _ => "Added (demo)."),
             FillProgress: 0.4,
             Fillable: 2)),
+        ("chat", new NotchState.Composing(
+            _ => { },
+            () => { },
+            [
+                new ChatTurn("where is the share button?", "Top right, next to your profile picture.", DateTimeOffset.Now.AddMinutes(-14)),
+                new ChatTurn("and how do I invite someone to edit?", "Press Share, type their email, set them to Editor, then Send. They get a link by email.", DateTimeOffset.Now.AddMinutes(-2)),
+            ],
+            _ => { })),
         ("home", new NotchState.Home(
             "Afternoon, Sam.",
             "Hold Ctrl + Alt and tell me what to take off your plate.",

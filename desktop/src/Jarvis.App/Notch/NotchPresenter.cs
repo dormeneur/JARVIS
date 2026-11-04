@@ -4,6 +4,7 @@ using Jarvis.Core;
 using Jarvis.Core.Cursor;
 using Jarvis.Core.Notch;
 using Jarvis.Platform.Shell;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -16,8 +17,6 @@ namespace Jarvis.App.Notch;
 internal sealed class NotchPresenter : INotchPresenter
 {
     private const double ContentTopPadding = 6;
-    private const double ComposerTopPadding = 34;
-    private const double ComposerBottomGap = 16;
     private const double FadeInScrollDistance = 20;
     private static readonly TimeSpan ContentTransition = TimeSpan.FromMilliseconds(340);
 
@@ -34,6 +33,14 @@ internal sealed class NotchPresenter : INotchPresenter
     private TextBlock? _responseText;
     private Grid? _responseView;
     private TextBox? _composer;
+
+    /// <summary>The chat's bottom bar: the hold-to-talk pill, the text box in its own pill, and send.</summary>
+    private Grid? _composerBar;
+    private TextBlock? _talkLabel;
+
+    /// <summary>Held from the talk pill: watches the mouse button, since the pill itself goes away while listening.</summary>
+    private DispatcherQueueTimer? _talkWatch;
+    private Action<bool>? _talking;
     private StackPanel? _actions;
     private TextBlock? _caption;
 
@@ -280,7 +287,7 @@ internal sealed class NotchPresenter : INotchPresenter
         if (state is NotchState.Response or NotchState.Composing or NotchState.Form or NotchState.Home or NotchState.EventDraft or NotchState.Settings || caption is not null)
         {
             _responseView.Visibility = state is NotchState.Response ? Visibility.Visible : Visibility.Collapsed;
-            _composer.Visibility = state is NotchState.Composing ? Visibility.Visible : Visibility.Collapsed;
+            _composerBar!.Visibility = state is NotchState.Composing ? Visibility.Visible : Visibility.Collapsed;
             ShowHistory((state as NotchState.Composing)?.History ?? []);
             _activity!.Visibility = caption is null ? Visibility.Collapsed : Visibility.Visible;
             _caption!.Text = caption ?? string.Empty;
@@ -407,20 +414,20 @@ internal sealed class NotchPresenter : INotchPresenter
 
     private void BuildComposer(Grid area)
     {
+        var font = (FontFamily)Application.Current.Resources["FontText"];
         _composer = new TextBox
         {
-            PlaceholderText = "Ask about anything on your screen…",
+            PlaceholderText = "Ask Jarvis…",
             FontSize = 13,
-            FontFamily = (FontFamily)Application.Current.Resources["FontText"],
+            FontFamily = font,
             Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"],
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(0, 8, 0, 8),
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, ComposerTopPadding - 8, NotchLayout.ContentHorizontalPadding, ComposerBottomGap),
-            Visibility = Visibility.Collapsed,
+            Padding = new Thickness(0, 6, 0, 6),
+            MinHeight = 0,
+            VerticalAlignment = VerticalAlignment.Center,
         };
 
-        // The notch is the box: no field background or focus underline of its own.
+        // The pill is the box: no field background or focus underline of its own.
         var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused", "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused" })
         {
@@ -441,17 +448,120 @@ internal sealed class NotchPresenter : INotchPresenter
                 CloseComposer(submit: false);
             }
         };
-        area.Children.Add(_composer);
 
-        _history = new StackPanel { Spacing = 10 };
+        // Hold to talk, like the keys: press, speak, let go.
+        _talkLabel = new TextBlock { FontFamily = font, FontSize = 12, Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"], VerticalAlignment = VerticalAlignment.Center };
+        var talk = new Button
+        {
+            Height = 38,
+            Padding = new Thickness(14, 0, 16, 0),
+            CornerRadius = new CornerRadius(19),
+            Background = NotchFormView.Glass,
+            BorderBrush = NotchFormView.GlassEdge,
+            BorderThickness = new Thickness(1),
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE720", FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"), FontSize = 14, Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"] },
+                    _talkLabel,
+                },
+            },
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(talk, "Hold to talk");
+        talk.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => StartTalk()), handledEventsToo: true);
+
+        var box = new Border
+        {
+            Height = 38,
+            Padding = new Thickness(16, 0, 6, 0),
+            CornerRadius = new CornerRadius(19),
+            Background = NotchFormView.Glass,
+            BorderBrush = NotchFormView.GlassEdge,
+            BorderThickness = new Thickness(1),
+            Child = _composer,
+        };
+        var send = new Button
+        {
+            Width = 38,
+            Height = 38,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(19),
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            Content = new FontIcon { Glyph = "\uE74A", FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"), FontSize = 14 },
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(send, "Send");
+        send.Click += (_, _) =>
+        {
+            if (_composer.Text.Trim().Length > 0)
+            {
+                CloseComposer(submit: true);
+            }
+        };
+
+        _composerBar = new Grid
+        {
+            ColumnSpacing = 8,
+            Height = 38,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, 0, NotchLayout.ContentHorizontalPadding, 14),
+            Visibility = Visibility.Collapsed,
+        };
+        _composerBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _composerBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _composerBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _composerBar.Children.Add(talk);
+        Grid.SetColumn(box, 1);
+        _composerBar.Children.Add(box);
+        Grid.SetColumn(send, 2);
+        _composerBar.Children.Add(send);
+        area.Children.Add(_composerBar);
+
+        _talkWatch = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        _talkWatch.Interval = TimeSpan.FromMilliseconds(40);
+        _talkWatch.Tick += (_, _) =>
+        {
+            if (!Jarvis.Platform.Shell.Mouse.LeftDown)
+            {
+                EndTalk();
+            }
+        };
+
+        _history = new StackPanel { Spacing = 8 };
         _historyView = new ScrollViewer
         {
             Content = _history,
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
-            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, 14, NotchLayout.ContentHorizontalPadding, 64),
+            Margin = new Thickness(NotchLayout.ContentHorizontalPadding, 16, NotchLayout.ContentHorizontalPadding, 38 + 14 + 10),
             Visibility = Visibility.Collapsed,
         };
         area.Children.Add(_historyView);
+    }
+
+    /// <summary>The talk pill went down: the chat closes and the microphone opens until the button comes up.</summary>
+    private void StartTalk()
+    {
+        if (_composing is not { Talk: { } talk } || _talking is not null || _window is null)
+        {
+            return;
+        }
+
+        _talking = talk;
+        _composing = null;
+        _window.EndTyping();
+        _talkWatch?.Start();
+        _ = Task.Run(() => talk(true));
+    }
+
+    private void EndTalk()
+    {
+        _talkWatch?.Stop();
+        if (Interlocked.Exchange(ref _talking, null) is { } talk)
+        {
+            _ = Task.Run(() => talk(false));
+        }
     }
 
     /// <summary>Rebuilds the button row: 24 DIP pills, the first one filled. A click runs it and closes the panel.</summary>
@@ -492,52 +602,70 @@ internal sealed class NotchPresenter : INotchPresenter
     }
 
     /// <summary>
-    /// The chat above the text box: each question (muted, right) and answer (left), newest at the
-    /// bottom and scrolled into view. With history the box sits at the bottom of a full-height panel.
+    /// The chat above the bar: each question in a bubble on the right, each answer in a glass
+    /// bubble on the left, a time between exchanges more than a few minutes apart, newest at the
+    /// bottom and scrolled into view.
     /// </summary>
     private void ShowHistory(IReadOnlyList<ChatTurn> turns)
     {
-        if (_history is null || _historyView is null || _composer is null || ReferenceEquals(turns, _shownHistory))
+        if (_history is null || _historyView is null || _talkLabel is null || ReferenceEquals(turns, _shownHistory))
         {
             return;
         }
 
         _shownHistory = turns;
+        var keys = ((App)Application.Current).Services.GetRequiredService<IOptionsMonitor<Jarvis.Core.Input.ShortcutOptions>>().CurrentValue.Talk;
+        _talkLabel.Text = $"Hold {keys} to talk";
         _history.Children.Clear();
         _historyView.Visibility = turns.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        _composer.VerticalAlignment = turns.Count > 0 ? VerticalAlignment.Bottom : VerticalAlignment.Top;
-        _composer.Margin = turns.Count > 0
-            ? new Thickness(NotchLayout.ContentHorizontalPadding, 0, NotchLayout.ContentHorizontalPadding, ComposerBottomGap - 8)
-            : new Thickness(NotchLayout.ContentHorizontalPadding, ComposerTopPadding - 8, NotchLayout.ContentHorizontalPadding, ComposerBottomGap);
 
         var font = (FontFamily)Application.Current.Resources["FontText"];
+        DateTimeOffset? previous = null;
         foreach (var turn in turns)
         {
-            _history.Children.Add(new TextBlock
+            if (turn.At is { } at && (previous is null || at - previous > TimeSpan.FromMinutes(5)))
             {
-                Text = turn.Question,
-                FontSize = 12,
-                FontFamily = font,
-                Foreground = (Brush)Application.Current.Resources["TextSecondaryBrush"],
-                HorizontalAlignment = HorizontalAlignment.Right,
-                TextAlignment = TextAlignment.Right,
-                TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 380,
-            });
-            _history.Children.Add(new TextBlock
-            {
-                Text = turn.Answer,
-                FontSize = 13,
-                LineHeight = 18,
-                FontFamily = font,
-                Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"],
-                TextWrapping = TextWrapping.Wrap,
-            });
+                _history.Children.Add(new TextBlock
+                {
+                    Text = (at.Date == DateTimeOffset.Now.Date ? "Today " : at.ToString("ddd d MMM ", System.Globalization.CultureInfo.CurrentCulture)) + at.ToString("t", System.Globalization.CultureInfo.CurrentCulture),
+                    FontSize = 11,
+                    FontFamily = font,
+                    Foreground = (Brush)Application.Current.Resources["TextTertiaryBrush"],
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 4, 0, 0),
+                });
+            }
+
+            previous = turn.At ?? previous;
+            _history.Children.Add(Bubble(turn.Question, mine: true, font));
+            _history.Children.Add(Bubble(turn.Answer, mine: false, font));
         }
 
         _historyView.UpdateLayout();
         _historyView.ChangeView(null, _historyView.ScrollableHeight, null, disableAnimation: true);
     }
+
+    /// <summary>A chat bubble: the user's on the right in the reply blue, Jarvis's on the left in glass.</summary>
+    private static Border Bubble(string text, bool mine, FontFamily font) => new()
+    {
+        HorizontalAlignment = mine ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+        MaxWidth = mine ? 380 : 440,
+        Padding = new Thickness(12, 8, 12, 9),
+        CornerRadius = mine ? new CornerRadius(14, 14, 4, 14) : new CornerRadius(14, 14, 14, 4),
+        Background = mine ? new SolidColorBrush(Windows.UI.Color.FromArgb(0x55, 0x33, 0x80, 0xFF)) : NotchFormView.Glass,
+        BorderBrush = NotchFormView.GlassEdge,
+        BorderThickness = new Thickness(mine ? 0 : 1),
+        Child = new TextBlock
+        {
+            Text = text,
+            FontSize = 13,
+            LineHeight = 18,
+            FontFamily = font,
+            Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
+        },
+    };
 
     /// <summary>Hands focus back first, so the question is about the app the user was in.</summary>
     private void CloseComposer(bool submit)

@@ -476,7 +476,19 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 _services.Sounds.Play(SoundEffect.ComposerClose);
                 Cancel();
             },
-            _services.History.Recent));
+            _services.History.Recent,
+            pressed =>
+            {
+                // The talk pill works like the push-to-talk keys: hold, speak, let go.
+                if (pressed)
+                {
+                    BeginListening();
+                }
+                else
+                {
+                    EndListening();
+                }
+            }));
     }
 
     /// <summary>A typed request: the same turn as a spoken one, without the microphone.</summary>

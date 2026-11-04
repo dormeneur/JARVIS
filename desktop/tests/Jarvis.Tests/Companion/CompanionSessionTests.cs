@@ -211,7 +211,7 @@ public sealed class CompanionSessionTests
         session.Compose();
 
         var composing = Assert.IsType<NotchState.Composing>(fakes.Notch.Shown[^1]);
-        Assert.Equal([new ChatTurn("where is share", "It's top right.")], composing.History);
+        Assert.Equal([("where is share", "It's top right.")], composing.History!.Select(turn => (turn.Question, turn.Answer)));
     }
 
     [Fact]

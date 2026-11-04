@@ -33,7 +33,7 @@ public sealed class ConversationLog
 
         lock (_gate)
         {
-            _turns.Add(new ChatTurn(question.Trim(), answer.Trim()));
+            _turns.Add(new ChatTurn(question.Trim(), answer.Trim(), DateTimeOffset.Now));
             if (_turns.Count > Kept)
             {
                 _turns.RemoveAt(0);

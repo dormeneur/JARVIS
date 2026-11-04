@@ -44,7 +44,8 @@ public abstract record NotchState
     /// <paramref name="Submit"/> with the text, and Escape or clicking away calls <paramref name="Dismiss"/>.
     /// </summary>
     /// <param name="History">Recent exchanges, shown above the text box, oldest first.</param>
-    public sealed record Composing(Action<string> Submit, Action Dismiss, IReadOnlyList<ChatTurn>? History = null) : NotchState;
+    /// <param name="Talk">Push-to-talk from the chat's talk pill: true when it's pressed, false when let go.</param>
+    public sealed record Composing(Action<string> Submit, Action Dismiss, IReadOnlyList<ChatTurn>? History = null, Action<bool>? Talk = null) : NotchState;
 
     /// <summary>
     /// A written answer. <paramref name="Text"/> may grow while it streams. <paramref name="Actions"/>
@@ -155,4 +156,5 @@ public sealed record FormEdit(string Question, string Answer);
 public sealed record NotchAction(string Label, Action Invoke);
 
 /// <summary>One exchange in the chat shown above the text box.</summary>
-public sealed record ChatTurn(string Question, string Answer);
+/// <param name="At">When it was asked (shown as a time between exchanges).</param>
+public sealed record ChatTurn(string Question, string Answer, DateTimeOffset? At = null);
