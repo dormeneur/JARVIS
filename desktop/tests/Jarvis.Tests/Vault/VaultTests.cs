@@ -32,7 +32,9 @@ public sealed class TurnRouterTests
     [InlineData("any meetings tomorrow?", TurnRoute.Calendar)]
     [InlineData("am I free on Friday", TurnRoute.Calendar)]
     [InlineData("what's on next week", TurnRoute.Calendar)]
-    [InlineData("schedule a meeting with Sam", TurnRoute.Cloud)] // making events isn't reading the feed
+    [InlineData("schedule a meeting with Sam", TurnRoute.CalendarAdd)]
+    [InlineData("add lunch with Sam tomorrow at 1pm to my calendar", TurnRoute.CalendarAdd)]
+    [InlineData("cancel my meeting with Sam", TurnRoute.Cloud)] // changing events isn't reading or adding
     public void RoutesBeforeAnythingLeavesThePc(string request, TurnRoute expected)
         => Assert.Equal(expected, TurnRouter.Route(request, privateMode: false));
 

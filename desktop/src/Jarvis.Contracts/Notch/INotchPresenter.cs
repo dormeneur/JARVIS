@@ -69,6 +69,13 @@ public abstract record NotchState
     /// what Jarvis did lately. It closes when the mouse leaves it, or with Escape.
     /// </summary>
     public sealed record Home(string Greeting, IReadOnlyList<HomeItem> Actions, IReadOnlyList<HomeItem> Recent, Action Dismiss) : NotchState;
+
+    /// <summary>
+    /// An event about to go on the user's calendar, laid out to check and edit: Add takes the
+    /// fields as they are then; Cancel (or ×) adds nothing.
+    /// </summary>
+    /// <param name="Destination">Where it goes, in words ("Google Calendar (you@example.com)").</param>
+    public sealed record EventDraft(Jarvis.Contracts.Calendar.CalendarEvent Event, string Destination, Action<Jarvis.Contracts.Calendar.CalendarEvent> Add, Action Cancel) : NotchState;
 }
 
 /// <summary>A tile or row on the notch's home. <paramref name="Glyph"/> is a Segoe Fluent Icons character.</summary>

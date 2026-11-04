@@ -48,7 +48,7 @@ public static class NotchLayout
             22,
             IsSliver: false,
             Springs.NotchOpen),
-        NotchState.Form => new NotchFrame(ExpandedWidth, MaxExpandedHeight, 22, IsSliver: false, Springs.NotchOpen),
+        NotchState.Form or NotchState.EventDraft => new NotchFrame(ExpandedWidth, MaxExpandedHeight, 22, IsSliver: false, Springs.NotchOpen),
         NotchState.Home home => new NotchFrame(ExpandedWidth, Math.Min(MaxExpandedHeight, HomeHeight + (home.Recent.Count * HomeRowHeight) + (home.Recent.Count > 0 ? 26 : 0)), 22, IsSliver: false, Springs.NotchOpen),
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown notch state."),
     };

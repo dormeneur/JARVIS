@@ -348,6 +348,11 @@ public sealed partial class App : Application
             new FormActions(edits => Task.FromResult($"Saved {edits.Count} (demo: nothing written)."), () => { }, StopFilling: () => { }, Used: (_, _) => { }, Hear: (_, _) => Task.FromResult(string.Empty), Remember: _ => "Added (demo)."),
             FillProgress: 0.4,
             Fillable: 2)),
+        ("event", new NotchState.EventDraft(
+            new Jarvis.Contracts.Calendar.CalendarEvent("Lunch with Sam", new DateTimeOffset(2030, 1, 15, 13, 0, 0, TimeSpan.Zero), new DateTimeOffset(2030, 1, 15, 14, 0, 0, TimeSpan.Zero), false, "Cafe Example", string.Empty),
+            "Google Calendar (sam@example.test)",
+            _ => { },
+            () => { })),
     ];
 
     /// <summary>Holds each notch state for 2.5 s, forever, so captures can be taken of each.</summary>

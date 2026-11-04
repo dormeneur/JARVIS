@@ -19,6 +19,9 @@ public enum TurnRoute
 
     /// <summary>The user's calendar, read from its iCal feed on this PC (no screen, no model).</summary>
     Calendar,
+
+    /// <summary>A new event for the user's calendar, shown to them to check before it goes in.</summary>
+    CalendarAdd,
 }
 
 /// <summary>
@@ -36,6 +39,7 @@ public static partial class TurnRouter
     {
         ArgumentNullException.ThrowIfNull(request);
         return FormRequest().IsMatch(request) || (browserInFront && FillThis().IsMatch(request)) ? TurnRoute.Form
+            : CalendarAdd().IsMatch(request) ? TurnRoute.CalendarAdd
             : CalendarRequest().IsMatch(request) && !CalendarChange().IsMatch(request) ? TurnRoute.Calendar
             : VaultRequest().IsMatch(request) ? TurnRoute.Vault
             : privateMode ? TurnRoute.Local
@@ -69,7 +73,11 @@ public static partial class TurnRouter
     [GeneratedRegex(@"\b(calendar|agenda|schedule|meetings?|appointments?)\b|\bam I (free|busy)\b|\bwhat'?s on\b[^.?!]{0,30}\b(today|tomorrow|tonight|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}(st|nd|rd|th)?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex CalendarRequest();
 
-    // Making or changing events isn't reading the feed (an iCal address is read-only).
+    // "Add lunch with Sam tomorrow at 1 to my calendar", "schedule a call with the bank on Friday".
+    [GeneratedRegex(@"\b(add|put|schedule|create|book|set up|block)\b[^.?!]{0,80}\b(to|on|in|into)\s+(my\s+)?calendar\b|\b(schedule|book|create|add|set up)\s+(a|an|the|my)?\s*(meeting|event|call|appointment)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex CalendarAdd();
+
+    // Changing or cancelling events isn't reading the feed (and an iCal address is read-only).
     [GeneratedRegex(@"\b(schedule|book|create|add|set up|move|reschedule|cancel|invite)\s+(a|an|the|my|this)?\s*(meeting|event|call|appointment|invite)", RegexOptions.IgnoreCase)]
     private static partial Regex CalendarChange();
 

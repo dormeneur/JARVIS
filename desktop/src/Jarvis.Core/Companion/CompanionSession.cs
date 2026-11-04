@@ -638,6 +638,10 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 await local.Forms.RunAsync(fillIn, cancellationToken, () => Ask(fillIn ? "Fill this form for me" : "Fill this form")).ConfigureAwait(false);
                 return true;
 
+            case TurnRoute.CalendarAdd:
+                await AddEventAsync(local, request, cancellationToken).ConfigureAwait(false);
+                return true;
+
             case TurnRoute.Vault when !local.Vault.IsConnected:
                 _services.Notch.Show(new NotchState.Response("That needs your vault, and Jarvis isn't connected to it yet. Connect it in Settings → Vault."));
                 return true;
@@ -670,9 +674,94 @@ public sealed partial class CompanionSession : IAsyncDisposable
         }
 
         _services.History.Add(request, answer);
+        if (route == TurnRoute.Calendar && Jarvis.Core.Proactive.CalendarWeb.From(local.CalendarAddress?.Invoke()) is { } web)
+        {
+            // In case the answer isn't enough: the calendar itself, on that day. Stays until closed.
+            var (day, _, _) = Jarvis.Core.Proactive.CalendarBrain.Days(request, TimeZoneInfo.ConvertTime(_time.GetUtcNow(), _time.LocalTimeZone));
+            var link = web.Day(day);
+            _services.Notch.Show(new NotchState.Response(answer, [new NotchAction($"Open {web.Name}", () => OpenLink(link))]));
+            return true;
+        }
+
         await Task.Delay(TimeSpan.FromSeconds(_options.CurrentValue.CaptionSeconds), _time, cancellationToken).ConfigureAwait(false);
         _services.Notch.Show(NotchState.Idle);
         return true;
+    }
+
+    /// <summary>
+    /// "Add lunch with Sam tomorrow at 1 to my calendar": the brain reads it into an event (the
+    /// local one in private mode; a plain reading of the date and time if its reply isn't usable),
+    /// the user checks and edits it in the notch, and only Add puts it in. Until Jarvis signs in to
+    /// the calendar itself, that opens the calendar's own new-event page filled in, to save there.
+    /// </summary>
+    private async Task AddEventAsync(LocalTurns local, string request, CancellationToken cancellationToken)
+    {
+        var privacy = _services.Privacy;
+        var now = TimeZoneInfo.ConvertTime(_time.GetUtcNow(), _time.LocalTimeZone);
+        _services.Notch.Show(new NotchState.Thinking("Reading the event"));
+        var brain = privacy.PrivateMode ? local.LocalBrain : _services.Brain;
+        var reply = new StringBuilder();
+        try
+        {
+            await foreach (var brainEvent in brain.RunTurnAsync(new BrainTurn(Jarvis.Core.Proactive.CalendarDraft.Instructions(now), request, []), cancellationToken).ConfigureAwait(false))
+            {
+                if (brainEvent is BrainEvent.TextDelta delta)
+                {
+                    reply.Append(delta.Text);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogTurnFailed(exception); // the plain reading below still gives the user something to check
+        }
+
+        var draft = Jarvis.Core.Proactive.CalendarDraft.Parse(reply.ToString(), now) ?? Jarvis.Core.Proactive.CalendarDraft.Guess(request, now);
+        var web = Jarvis.Core.Proactive.CalendarWeb.From(local.CalendarAddress?.Invoke());
+        if (web is null)
+        {
+            _services.Notch.Show(new NotchState.Response("To add events, first connect your calendar: paste its secret iCal address in Settings → Proactive."));
+            return;
+        }
+
+        var destination = web.Account is { } account ? $"{web.Name} ({account})" : web.Name;
+        var decision = new TaskCompletionSource<Jarvis.Contracts.Calendar.CalendarEvent?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancelled = cancellationToken.Register(() => decision.TrySetResult(null));
+        _services.Notch.Show(new NotchState.EventDraft(draft, destination, chosen => decision.TrySetResult(chosen), () => decision.TrySetResult(null)));
+        if (await decision.Task.ConfigureAwait(false) is not { } chosen)
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                _services.Notch.Show(new NotchState.Response("Okay, I didn't add it."));
+            }
+
+            return;
+        }
+
+        if (web.NewEvent(chosen) is not { } link)
+        {
+            _services.Notch.Show(new NotchState.Response($"{web.Name} can't take a new event from Jarvis yet. Add {Jarvis.Core.Proactive.CalendarDraft.Describe(chosen)} there.", [new NotchAction($"Open {web.Name}", () => OpenLink(web.Day(chosen.Start)))]));
+            return;
+        }
+
+        OpenLink(link);
+        privacy.Record(0, "Opened a new event in your calendar, filled in");
+        var said = $"Opened {destination} with {Jarvis.Core.Proactive.CalendarDraft.Describe(chosen)} filled in. Press Save there to add it.";
+        _services.History.Add(request, said);
+        _services.Notch.Show(new NotchState.Response(said, [new NotchAction("Open it again", () => OpenLink(link))]));
+    }
+
+    /// <summary>A web page, in the browser Jarvis works with if it's connected, else the default one.</summary>
+    private void OpenLink(string url)
+    {
+        if (_services.Browser.IsConnected)
+        {
+            _ = _services.Browser.OpenAsync(url, CancellationToken.None);
+        }
+        else
+        {
+            _services.Control.Perform(new ComputerAction(ComputerActionKind.Open, 0, 0, url));
+        }
     }
 
     /// <returns>The answer as captioned (what was said, without tags or drawings), any mouse/keyboard steps, and whether the brain needs the screen.</returns>
@@ -876,4 +965,5 @@ public sealed record CompanionServices(
 
 /// <summary>What answers on this PC: the vault (its brain and form filling) and the local model for private mode.</summary>
 /// <param name="Calendar">Answers calendar questions from the iCal feed (<see cref="Jarvis.Core.Proactive.CalendarBrain"/>).</param>
-public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar);
+/// <param name="CalendarAddress">The calendar's iCal address from Settings, for its web page and new events.</param>
+public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar, Func<string>? CalendarAddress = null);

@@ -435,6 +435,67 @@ public sealed class CompanionSessionTests
         Assert.Equal("Answered from your calendar on this PC", fakes.Privacy.Recent()[0].Reason);
     }
 
+    private const string GoogleIcal = "https://calendar.google.com/calendar/ical/asha%40example.test/private-abc/basic.ics";
+
+    [Fact]
+    public async Task CalendarAnswer_OffersToOpenThatDayInTheCalendar()
+    {
+        var fakes = new Fakes("what's on my calendar on 26th october", "unused");
+        fakes.UseLocal(new FakeBrain("unused"), new FakeBrain("unused"), new FakeBrain("Nothing on your calendar on Monday, 26 October."), GoogleIcal);
+        await using var session = fakes.CreateSession();
+
+        session.BeginListening();
+        session.EndListening();
+        await WaitUntil(() => fakes.Notch.Shown.OfType<NotchState.Response>().Any(r => r.Actions is { Count: 1 }));
+        var answer = fakes.Notch.Shown.OfType<NotchState.Response>().Last();
+        answer.Actions![0].Invoke();
+
+        Assert.Equal("Open Google Calendar", answer.Actions[0].Label);
+        Assert.Contains(fakes.Control.Done, action => action.Text is { } url && url.Contains("/day/", StringComparison.Ordinal) && url.EndsWith("/10/26?authuser=asha%40example.test", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AddingAnEvent_ShowsItToCheck_AndOnlyAddOpensTheCalendar()
+    {
+        var fakes = new Fakes("add lunch with Sam tomorrow at 1pm to my calendar", """{"title": "Lunch with Sam", "date": "2030-01-15", "start": "13:00", "end": null, "allDay": false, "location": "", "notes": ""}""");
+        fakes.UseLocal(new FakeBrain("unused"), new FakeBrain("unused"), null, GoogleIcal);
+        await using var session = fakes.CreateSession();
+
+        session.BeginListening();
+        session.EndListening();
+        await WaitUntil(() => fakes.Notch.Shown.OfType<NotchState.EventDraft>().Any());
+        var draft = fakes.Notch.Shown.OfType<NotchState.EventDraft>().Last();
+
+        Assert.Equal("Lunch with Sam", draft.Event.Title);
+        Assert.Equal(13, draft.Event.Start.Hour);
+        Assert.Equal(TimeSpan.FromHours(1), draft.Event.End - draft.Event.Start); // no end said: an hour
+        Assert.Equal("Google Calendar (asha@example.test)", draft.Destination);
+        Assert.Empty(fakes.Control.Done); // nothing before Add
+
+        draft.Add(draft.Event with { Title = "Lunch with Sam and Ana" }); // edited in the card
+        await WaitUntil(() => fakes.Control.Done.Count == 1);
+        Assert.Contains("text=Lunch%20with%20Sam%20and%20Ana", fakes.Control.Done[0].Text, StringComparison.Ordinal);
+        Assert.Contains("action=TEMPLATE", fakes.Control.Done[0].Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CancellingTheEvent_AddsNothing()
+    {
+        var fakes = new Fakes("schedule a call with the bank on friday", "not json at all");
+        fakes.UseLocal(new FakeBrain("unused"), new FakeBrain("unused"), null, GoogleIcal);
+        await using var session = fakes.CreateSession();
+
+        session.BeginListening();
+        session.EndListening();
+        await WaitUntil(() => fakes.Notch.Shown.OfType<NotchState.EventDraft>().Any());
+        var draft = fakes.Notch.Shown.OfType<NotchState.EventDraft>().Last();
+        Assert.Equal(DayOfWeek.Friday, draft.Event.Start.DayOfWeek); // read without the brain
+        draft.Cancel();
+        await WaitUntil(() => fakes.Notch.Shown.Contains(new NotchState.Response("Okay, I didn't add it.")));
+
+        Assert.Empty(fakes.Control.Done);
+    }
+
     [Fact]
     public async Task PrivateMode_AnswersLocally_AndAsksBeforeSendingTheScreenToClaude()
     {
@@ -479,10 +540,10 @@ public sealed class CompanionSessionTests
     {
         public LocalTurns? Local { get; private set; }
 
-        public void UseLocal(IAssistantBrain vaultBrain, IAssistantBrain localBrain, IAssistantBrain? calendar = null)
+        public void UseLocal(IAssistantBrain vaultBrain, IAssistantBrain localBrain, IAssistantBrain? calendar = null, string calendarAddress = "")
         {
             var vault = new Jarvis.Tests.Vault.FakeVault();
-            Local = new LocalTurns(vault, vaultBrain, localBrain, new Jarvis.Core.Vault.FormFiller(new Jarvis.Core.Vault.FormServices(vault, Browser, Notch), TimeProvider.System, NullLogger<Jarvis.Core.Vault.FormFiller>.Instance), calendar ?? new FakeBrain("No calendar."));
+            Local = new LocalTurns(vault, vaultBrain, localBrain, new Jarvis.Core.Vault.FormFiller(new Jarvis.Core.Vault.FormServices(vault, Browser, Notch), TimeProvider.System, NullLogger<Jarvis.Core.Vault.FormFiller>.Instance), calendar ?? new FakeBrain("No calendar."), () => calendarAddress);
         }
 
         public TimeSpan BrainDelay { get; init; }

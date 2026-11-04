@@ -27,6 +27,7 @@ def _friendly_chat_error(body: str) -> str:
 # Constants
 # Was hardcoded to "llama3", which silently ignored JARVIS_LLM_MODEL.
 LLM_MODEL = settings.llm_model
+FORM_CONTEXT = 8192
 TEMPERATURE = 0.3
 # Tool calls must be near-deterministic: a creative sample here means a
 # malformed call or an invented path, not a more interesting answer.
@@ -210,7 +211,7 @@ class OllamaClient:
         """One deterministic /api/chat reply constrained to a JSON schema, thinking off.
 
         Models without a thinking mode reject `think`, so that call is retried without it.
-        No num_ctx: a value different from the other callers' makes Ollama reload the model.
+        No num_ctx on the shared model: a value different from the other callers' makes Ollama reload it.
         """
         payload: Dict[str, Any] = {
             "model": model or LLM_MODEL,
@@ -220,6 +221,10 @@ class OllamaClient:
             "think": False,
             "options": {"temperature": 0, "num_predict": MAX_TOKENS},
         }
+        if model:
+            # Its own model is never shared with chat, so its own context size costs no reloads; 8K
+            # holds a form's questions plus the profile and keeps a small model on a small GPU.
+            payload["options"]["num_ctx"] = FORM_CONTEXT
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(f"{self.ollama_url}{OLLAMA_CHAT_API_PATH}", json=payload)
             if response.status_code == 400 and "think" in response.text.lower():

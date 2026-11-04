@@ -182,7 +182,8 @@ internal static class AppHost
                     return string.IsNullOrWhiteSpace(address) ? null
                         : await provider.GetRequiredService<CalendarFeed>().MeetingsAsync(address, from, to, time.LocalTimeZone, cancellationToken).ConfigureAwait(false);
                 },
-                provider.GetRequiredService<TimeProvider>())));
+                provider.GetRequiredService<TimeProvider>()),
+            () => provider.GetRequiredService<IOptionsMonitor<ProactiveOptions>>().CurrentValue.CalendarAddress));
     }
 
     /// <summary>Windows-specific devices and surfaces.</summary>
