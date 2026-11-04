@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- "Settings" next to Jarvis in Android's autofill settings opens the app. The compatibility
-     packages let Android bridge browsers that don't hand web forms to autofill services themselves. -->
+     packages let Android bridge browsers that don't hand web forms to autofill services themselves.
+     Never Chrome or Brave: they do it themselves ("Autofill using another service"), and the bridge
+     then opens a second session for the same tap that cancels the first, so no list ever shows. -->
 <autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:settingsActivity="com.jarvis.mobile.MainActivity">
-    <compatibility-package android:name="com.brave.browser" android:maxLongVersionCode="10000000000" />
-    <compatibility-package android:name="com.android.chrome" android:maxLongVersionCode="10000000000" />
     <compatibility-package android:name="org.mozilla.firefox" android:maxLongVersionCode="10000000000" />
     <compatibility-package android:name="com.microsoft.emmx" android:maxLongVersionCode="10000000000" />
     <compatibility-package android:name="com.sec.android.app.sbrowser" android:maxLongVersionCode="10000000000" />
