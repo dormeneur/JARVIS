@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The Jarvis sheet needs Android 8 (autofill); values-v26 turns it on. -->
+    <bool name="sheet_supported">false</bool>
+</resources>

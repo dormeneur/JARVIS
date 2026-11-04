@@ -37,6 +37,27 @@ class FormMemoryTest {
     }
 
     @Test
+    fun learnsWhatWasSentUnderTheRightField_KeepingTheRest() {
+        val original = """{"version":1,"fields":{"phone":{"questions":["Phone number"],"values":[{"value":"5550100001","uses":1,"last":"2025-01-01T00:00:00Z","forms":["Old form"],"source":"Profile/about.md"}]}}}"""
+        val later = java.time.OffsetDateTime.parse("2026-11-04T10:00:00Z")
+
+        val learned = FormMemory.remember(
+            original,
+            listOf("Mobile number" to "5550100002", "Contact number" to " 5550100001 ", "Given Name" to "Asha", "Notes" to "   "),
+            "example.test",
+            later,
+        )
+        val memory = FormMemory.parse(learned)
+
+        assertEquals(listOf("5550100001", "5550100002"), memory.suggestions("phone", now)) // used twice now: first
+        assertEquals(listOf("Asha"), memory.suggestions("given name", now))
+        assertEquals(emptyList<String>(), memory.suggestions("notes", now))
+        val phone = org.json.JSONObject(learned).getJSONObject("fields").getJSONObject("phone")
+        assertEquals("Profile/about.md", phone.getJSONArray("values").getJSONObject(0).getString("source")) // kept
+        assertEquals(3, phone.getJSONArray("questions").length())
+    }
+
+    @Test
     fun brokenFileMeansNoSuggestions() {
         assertEquals(emptyList<String>(), FormMemory.parse("{not json").suggestions("name", now))
         assertEquals(emptyList<String>(), FormMemory.parse(null).suggestions("name", now))

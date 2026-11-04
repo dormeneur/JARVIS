@@ -2,6 +2,7 @@ package com.jarvis.mobile
 
 import android.os.Build
 import androidx.annotation.RequiresApi
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.OffsetDateTime
 import kotlin.math.exp
@@ -38,13 +39,7 @@ class FormMemory private constructor(private val fields: Map<String, List<Entry>
             .map { it.value }
             .distinctBy { it.lowercase() }
 
-    /** The field with this key, or the one worded most like it. */
-    private fun find(key: String): List<Entry>? {
-        fields[key]?.let { return it }
-        val words = key.split(' ').toSet()
-        val best = fields.entries.maxByOrNull { similarity(words, it.key.split(' ').toSet()) } ?: return null
-        return if (similarity(words, best.key.split(' ').toSet()) >= SAME_FIELD) best.value else null
-    }
+    private fun find(key: String): List<Entry>? = findKey(fields.keys, key)?.let { fields[it] }
 
     companion object {
         private const val SAME_FIELD = 0.75
@@ -83,16 +78,74 @@ class FormMemory private constructor(private val fields: Map<String, List<Entry>
                 val fields = saved.keys().asSequence().associateWith { key ->
                     val values = saved.getJSONObject(key).optJSONArray("values")
                     (0 until (values?.length() ?: 0)).mapNotNull { i ->
-                        val entry = values!!.getJSONObject(i)
-                        val value = entry.optString("value").trim()
-                        if (value.isEmpty()) null
-                        else Entry(value, entry.optInt("uses"), runCatching { OffsetDateTime.parse(entry.optString("last")).toInstant().toEpochMilli() }.getOrDefault(0L))
+                        entryOf(values!!.getJSONObject(i)).takeIf { it.value.isNotEmpty() }
                     }
                 }
                 FormMemory(fields)
             } catch (e: Exception) {
                 FormMemory(emptyMap())
             }
+        }
+
+        /**
+         * The memory file with these answers learned, as the PC's FormMemory.Remember(used: true)
+         * does it: each goes under its field (however it was worded), a value already there is used
+         * once more, a new one is added, and past 20 values the least useful goes. Everything else in
+         * the file is kept as it was.
+         */
+        fun remember(json: String?, answers: List<Pair<String, String>>, formTitle: String, now: OffsetDateTime): String {
+            val root = runCatching { JSONObject(json ?: "") }.getOrDefault(JSONObject())
+            if (!root.has("version")) root.put("version", 1)
+            val fields = root.optJSONObject("fields") ?: JSONObject().also { root.put("fields", it) }
+            val nowMillis = now.toInstant().toEpochMilli()
+            for ((question, raw) in answers) {
+                val value = raw.trim()
+                if (value.isEmpty()) continue
+                val key = keyOf(question)
+                val field = fields.optJSONObject(findKey(fields.keys().asSequence().toList(), key) ?: key)
+                    ?: JSONObject().put("questions", JSONArray()).put("values", JSONArray()).also { fields.put(key, it) }
+                val questions = field.optJSONArray("questions") ?: JSONArray().also { field.put("questions", it) }
+                if ((0 until questions.length()).none { questions.optString(it).equals(question, ignoreCase = true) } && questions.length() < MAX_QUESTIONS) {
+                    questions.put(question)
+                }
+                val values = field.optJSONArray("values") ?: JSONArray().also { field.put("values", it) }
+                val entry = (0 until values.length()).map { values.getJSONObject(it) }.firstOrNull { same(it.optString("value"), value) }
+                    ?: JSONObject().put("value", value).put("uses", 0).put("source", FROM_YOU).put("forms", JSONArray()).also { values.put(it) }
+                entry.put("uses", entry.optInt("uses") + 1).put("last", now.toString()).put("value", value)
+                val forms = entry.optJSONArray("forms") ?: JSONArray().also { entry.put("forms", it) }
+                if (formTitle.isNotEmpty() && (0 until forms.length()).none { forms.optString(it).equals(formTitle, ignoreCase = true) }) {
+                    forms.put(formTitle)
+                    if (forms.length() > MAX_FORMS) forms.remove(0)
+                }
+                if (values.length() > MAX_VALUES) {
+                    values.remove((0 until values.length()).minBy { score(entryOf(values.getJSONObject(it)), nowMillis) })
+                }
+            }
+            return root.toString(2)
+        }
+
+        private const val MAX_VALUES = 20
+        private const val MAX_QUESTIONS = 10
+        private const val MAX_FORMS = 10
+        private const val FROM_YOU = "You" // as on the PC: the user gave it
+
+        private fun entryOf(json: JSONObject) = Entry(
+            json.optString("value").trim(),
+            json.optInt("uses"),
+            runCatching { OffsetDateTime.parse(json.optString("last")).toInstant().toEpochMilli() }.getOrDefault(0L),
+        )
+
+        private fun same(a: String, b: String) =
+            a.trim().split(SPACES).joinToString(" ").equals(b.trim().split(SPACES).joinToString(" "), ignoreCase = true)
+
+        private val SPACES = Regex("\\s+")
+
+        /** The field with this key, or the one worded most like it. */
+        private fun findKey(keys: Collection<String>, key: String): String? {
+            if (key in keys) return key
+            val words = key.split(' ').toSet()
+            val best = keys.maxByOrNull { similarity(words, it.split(' ').toSet()) } ?: return null
+            return if (similarity(words, best.split(' ').toSet()) >= SAME_FIELD) best else null
         }
 
         /** Frequency plus recency, as on the PC: each use counts 1, being used lately adds up to 2. */
