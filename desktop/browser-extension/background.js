@@ -49,8 +49,8 @@ async function handle(request) {
     case "page": return await readPage();
     case "act": return await act(request.action, request.target, request.text);
     case "form": return await readForm();
-    case "fill": return await inPage(fillOnPage, [request.question, request.value]);
-    case "check": return await inPage(checkOnPage, [request.question, request.value]);
+    case "fill": return await formOp("fill", request.question, request.value);
+    case "check": return await formOp("check", request.question, request.value);
     case "open": return await openUrl(request.url);
     case "ping": return "pong";
     default: throw new Error("Unknown request: " + request.type);
@@ -218,6 +218,11 @@ async function actOnPage(action, target, text) {
 // The frame the last form was read in (an embedded form lives in an iframe); fills go there too.
 let formFrame = 0;
 
+// How to find each question's field again, by question id, from the last read. Pages that redraw
+// after every change (PeopleSoft, many job portals) replace their fields, so a fill finds its field
+// by its HTML id, then name, then label, never by where it was on screen.
+let formFields = {};
+
 // Reads the form on the active tab: each question's text, kind and offered options (never what
 // the user typed). Google Forms by its ARIA roles; any other page by its labelled fields. Looks
 // in every frame and keeps the one with the most questions. When there is none, says why.
@@ -234,247 +239,202 @@ async function readForm() {
   if (!/^https?:/.test(base.url)) return { ...base, reason: "the tab in front isn't a web page" };
   let frames;
   try {
-    frames = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: formOnPage });
+    frames = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: formPage, args: ["read"] });
   } catch (error) {
     return { ...base, reason: "the browser wouldn't let Jarvis read this page (" + String(error && error.message || error) + ")" };
   }
   const best = frames.filter((frame) => frame.result).sort((a, b) => b.result.questions.length - a.result.questions.length)[0];
   if (!best || best.result.questions.length === 0) return { ...base, reason: "no questions on the page yet (is it still loading?)" };
   formFrame = best.frameId || 0;
-  return { ...base, title: best.result.title || tab.title || "", description: best.result.description, questions: best.result.questions };
-}
-
-function formOnPage() {
-  const clean = (text) => String(text || "").replace(/\s+/g, " ").replace(/\s*\*\s*$/, "").trim();
-  const values = (nodes, attribute) => [...nodes].map((n) => n.getAttribute(attribute) || n.getAttribute("aria-label") || "").filter(Boolean);
-  const questions = [];
-
-  // Google Forms: one listitem per question, a heading with the text and a "Required question" marker.
-  for (const item of document.querySelectorAll('[role="listitem"]')) {
-    const heading = item.querySelector('[role="heading"]');
-    if (!heading) continue;
-    const title = clean((heading.querySelector("span") || heading).textContent);
-    if (!title) continue;
-    item.setAttribute("data-jarvis-q", "q" + questions.length);
-    const required = !!heading.querySelector('[aria-label="Required question"]');
-    let kind = "other", options = [];
-    if (item.querySelector('[role="radio"]')) { kind = "choice"; options = values(item.querySelectorAll('[role="radio"]'), "data-value"); }
-    else if (item.querySelector('[role="checkbox"]')) { kind = "checkbox"; options = values(item.querySelectorAll('[role="checkbox"]'), "data-answer-value"); }
-    else if (item.querySelector('[role="listbox"]')) { kind = "dropdown"; options = values(item.querySelectorAll('[role="option"][data-value]:not([data-value=""])'), "data-value"); }
-    else if (item.querySelector('input[type="date"]')) kind = "date";
-    else if (item.querySelector('input[type="time"]')) kind = "time";
-    else if (item.querySelector("textarea")) kind = "paragraph";
-    else if (item.querySelector('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"]')) kind = "text";
-    questions.push({ id: "q" + questions.length, text: title, kind, options: [...new Set(options)], required });
-  }
-  const meta = document.querySelector('meta[property="og:description"], meta[name="description"]');
-  const description = clean(meta && meta.content).slice(0, 1000);
-  if (questions.length) {
-    const title = document.querySelector('[role="heading"][aria-level="1"]');
-    return { title: clean(title && title.textContent), description, questions };
-  }
-
-  // Any other form: visible, labelled fields. Radio buttons are grouped by name.
-  const labelOf = (field) => {
-    const byFor = field.id && document.querySelector(`label[for="${CSS.escape(field.id)}"]`);
-    const around = field.closest("label");
-    return clean((byFor && byFor.textContent) || field.getAttribute("aria-label") || (around && around.textContent) || field.placeholder || field.name);
-  };
-  const groups = new Set();
-  for (const field of document.querySelectorAll("input, textarea, select")) {
-    const type = (field.type || "").toLowerCase();
-    if (["hidden", "password", "submit", "button", "reset", "image", "file"].includes(type) || !field.offsetParent) continue;
-    if (type === "radio" || type === "checkbox") {
-      if (!field.name || groups.has(field.name)) continue;
-      groups.add(field.name);
-      const all = [...document.querySelectorAll(`input[name="${CSS.escape(field.name)}"]`)];
-      const legend = field.closest("fieldset") && field.closest("fieldset").querySelector("legend");
-      all.forEach((input) => input.setAttribute("data-jarvis-q", "q" + questions.length));
-      questions.push({ id: "q" + questions.length, text: clean(legend ? legend.textContent : field.name), kind: type === "radio" ? "choice" : "checkbox", options: all.map(labelOf).filter(Boolean), required: field.required });
-      continue;
-    }
-    const text = labelOf(field);
-    if (!text) continue;
-    field.setAttribute("data-jarvis-q", "q" + questions.length);
-    const kind = field.tagName === "SELECT" ? "dropdown" : field.tagName === "TEXTAREA" ? "paragraph" : type === "date" ? "date" : type === "time" ? "time" : "text";
-    const options = field.tagName === "SELECT" ? [...field.options].filter((o) => o.value !== "").map((o) => clean(o.textContent)).filter(Boolean) : [];
-    questions.push({ id: "q" + questions.length, text, kind, options, required: field.required });
-  }
-  return { title: document.title, description, questions: questions.slice(0, 80) };
+  formFields = Object.fromEntries(best.result.questions.map((q) => [q.id, q.find]));
+  const questions = best.result.questions.map(({ find, ...question }) => question);
+  return { ...base, title: best.result.title || tab.title || "", description: best.result.description, questions };
 }
 
 // Filling runs in the page's own world (not the extension's isolated one), so the page's scripts
 // see a value exactly as if their own code had set it. Never submits.
-async function inPage(func, args) {
+async function formOp(op, question, value) {
   const tab = await activeTab();
-  const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [formFrame] }, world: "MAIN", func, args });
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id, frameIds: [formFrame] }, world: "MAIN", func: formPage, args: [op, question, value, formFields[question] || null],
+  });
   return result;
 }
 
-// Whether the question now shows this value.
-function checkOnPage(question, value) {
-  const same = (a, b) => String(a || "").replace(/\s+/g, " ").trim().toLowerCase() === String(b || "").replace(/\s+/g, " ").trim().toLowerCase();
-  const nodes = [...document.querySelectorAll(`[data-jarvis-q="${CSS.escape(question)}"]`)];
-  if (!nodes.length) return false;
-  const root = nodes[0];
-  const wanted = String(value).split(";").map((part) => part.trim()).filter(Boolean);
-  const iso = (text) => {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-    const parsed = new Date(text);
-    const pad = (n) => String(n).padStart(2, "0");
-    return isNaN(parsed) ? null : `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
-  };
-  if (root.getAttribute("role") === "listitem") {
-    const listbox = root.querySelector('[role="listbox"]');
-    if (root.querySelector('[role="radio"]')) {
-      const radio = root.querySelector('[role="radio"][aria-checked="true"]');
-      return !!radio && same(radio.getAttribute("data-value") || radio.getAttribute("aria-label"), value);
-    }
-    if (root.querySelector('[role="checkbox"]')) {
-      const on = [...root.querySelectorAll('[role="checkbox"][aria-checked="true"]')].map((b) => b.getAttribute("data-answer-value") || b.getAttribute("aria-label"));
-      return on.length === wanted.length && wanted.every((w) => on.some((b) => same(b, w)));
-    }
-    if (listbox) return [...listbox.querySelectorAll('[role="option"][aria-selected="true"]')].some((o) => same(o.getAttribute("data-value"), value));
-    const date = root.querySelector('input[type="date"]');
-    if (date) return date.value === iso(value);
-    const text = root.querySelector('textarea, input:not([type="hidden"])');
-    return !!text && same(text.value, value);
-  }
-  if (root.tagName === "SELECT") return same(root.selectedOptions[0] && root.selectedOptions[0].textContent, value) || same(root.value, value);
-  if (root.type === "radio" || root.type === "checkbox") {
-    const labelOf = (input) => (input.id && document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent) || input.closest("label")?.textContent || input.value;
-    const on = nodes.filter((input) => input.checked).map(labelOf);
-    return on.length === wanted.length && wanted.every((w) => on.some((label) => same(label, w)));
-  }
-  if (root.type === "date") return root.value === iso(value);
-  return same(root.value, value);
-}
-
-// Puts one answer into the page (types it, or clicks the matching options), then reads it back:
-// it only counts as filled when the page really shows the value. When a text field won't take a
-// scripted value, it is left focused with its text selected so Jarvis can type it with real
-// keystrokes ("focused"). Returns where the field is on screen in physical pixels, for the cursor.
-async function fillOnPage(question, value) {
+// Everything done to a form inside the page, in one function because each injection runs on its own:
+//   "read":  the questions, each with how to find its field again
+//   "fill":  puts one answer in (typed the way the page's own editing would, or the matching
+//            options clicked), waits for the page to settle, and reads it back. Only counts as
+//            filled when the page really shows it. Returns where the field is, for the cursor.
+//   "check": whether the question shows the value now
+async function formPage(op, question, value, find) {
+  const clean = (text) => String(text || "").replace(/\s+/g, " ").replace(/\s*\*\s*$/, "").replace(/^\s*\*\s*/, "").trim();
+  const same = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
   const wait = (ms) => new Promise((done) => setTimeout(done, ms));
-  const same = (a, b) => String(a || "").replace(/\s+/g, " ").trim().toLowerCase() === String(b || "").replace(/\s+/g, " ").trim().toLowerCase();
-  const nodes = [...document.querySelectorAll(`[data-jarvis-q="${CSS.escape(question)}"]`)];
-  if (!nodes.length) return { filled: false, reason: "the field is gone (was the page reloaded?)" };
-  const root = nodes[0];
-  root.scrollIntoView({ block: "center", behavior: "smooth" });
-  await wait(300);
+  const visible = (element) => !!element && element.getClientRects().length > 0;
+  const labelOf = (field) => {
+    const byFor = field.id && document.querySelector(`label[for="${CSS.escape(field.id)}"]`);
+    const around = field.closest("label");
+    const by = field.getAttribute("aria-labelledby");
+    const labelled = by && by.split(/\s+/).map((id) => document.getElementById(id)?.textContent || "").join(" ");
+    return clean((byFor && byFor.textContent) || field.getAttribute("aria-label") || labelled || (around && around.textContent) || field.placeholder || field.title || field.name);
+  };
+  const googleTitle = (item) => {
+    const heading = item.querySelector('[role="heading"]');
+    return heading ? clean((heading.querySelector("span") || heading).textContent) : "";
+  };
+  const DATE_WORDS = /\b(date|birth|born|dob|d\.o\.b)\b/i;
 
-  // A typed value, set the way a person's typing would be seen by the page's own scripts.
-  const type = (field, text) => {
-    const proto = field.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    field.focus();
-    Object.getOwnPropertyDescriptor(proto, "value").set.call(field, text);
-    field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
-    field.dispatchEvent(new Event("change", { bubbles: true }));
-    field.blur();
-  };
-  const iso = (text) => {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-    const parsed = new Date(text);
-    const pad = (n) => String(n).padStart(2, "0");
-    return isNaN(parsed) ? null : `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`; // local date, not UTC
-  };
-  // Some widgets ignore a bare click(): they want a hover, then a press, at the element.
-  const press = (element) => {
-    const box = element.getBoundingClientRect();
-    const at = { bubbles: true, cancelable: true, view: window, button: 0, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
-    for (const name of ["pointerover", "mouseover", "pointermove", "mousemove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-      element.dispatchEvent(new (name.startsWith("pointer") ? PointerEvent : MouseEvent)(name, { ...at, buttons: name.endsWith("down") ? 1 : 0 }));
-    }
-  };
-  const key = (element, name, code, keyCode) => {
-    for (const kind of ["keydown", "keypress", "keyup"]) element.dispatchEvent(new KeyboardEvent(kind, { key: name, code, keyCode, which: keyCode, bubbles: true, cancelable: true }));
-  };
-  const where = (element) => {
-    // ponytail: the browser's own toolbar height is outer minus inner height; zoom and side
-    // panels shift this a little, which only moves where the cursor points.
-    const box = element.getBoundingClientRect();
-    const scale = window.devicePixelRatio || 1;
-    const left = window.screenX + (window.outerWidth - window.innerWidth) / 2;
-    const top = window.screenY + (window.outerHeight - window.innerHeight);
-    return { x: Math.round((left + box.left + Math.min(box.width, 240) / 2) * scale), y: Math.round((top + box.top + Math.min(box.height, 60) / 2) * scale) };
-  };
-  const wanted = String(value).split(";").map((part) => part.trim()).filter(Boolean);
-  let textField = null;
-  let reason = null;
+  function read() {
+    const values = (list, attribute) => [...list].map((n) => n.getAttribute(attribute) || n.getAttribute("aria-label") || "").filter(Boolean);
+    const questions = [];
+    const add = (question, elements, find) => {
+      const id = "q" + questions.length;
+      elements.forEach((element) => element.setAttribute("data-jarvis-q", id));
+      questions.push({ id, ...question, find });
+    };
 
-  if (root.getAttribute("role") === "listitem") {
-    // Google Forms.
-    const radios = [...root.querySelectorAll('[role="radio"]')];
-    const boxes = [...root.querySelectorAll('[role="checkbox"]')];
-    const listbox = root.querySelector('[role="listbox"]');
-    if (radios.length) {
-      const match = radios.find((r) => same(r.getAttribute("data-value") || r.getAttribute("aria-label"), value));
-      if (!match) reason = "no option matches";
-      else if (match.getAttribute("aria-checked") !== "true") { match.click(); await wait(150); if (match.getAttribute("aria-checked") !== "true") press(match); }
-    } else if (boxes.length) {
-      for (const box of boxes) {
-        const on = wanted.some((w) => same(box.getAttribute("data-answer-value") || box.getAttribute("aria-label"), w));
-        if (on !== (box.getAttribute("aria-checked") === "true")) { box.click(); await wait(100); }
-      }
-    } else if (listbox) {
-      // Google's dropdown opens on Space (synthetic clicks don't open it reliably) and takes an
-      // option on a hover-and-press at it.
-      listbox.focus();
-      key(listbox, " ", "Space", 32);
-      let option = null;
-      for (let tries = 0; tries < 12 && !option; tries++) {
-        await wait(120);
-        option = [...root.querySelectorAll('[role="option"][data-value]')].find((o) => o.getBoundingClientRect().height > 0 && same(o.getAttribute("data-value"), value));
-      }
-      if (option) press(option);
-      else { key(listbox, "Escape", "Escape", 27); reason = "no option matches"; }
-    } else {
-      const date = root.querySelector('input[type="date"]');
-      textField = date || root.querySelector('textarea, input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="time"]');
-      if (date) { if (iso(value)) type(date, iso(value)); else reason = "not a date"; }
-      else if (textField) type(textField, value);
-      else reason = "no field to type in";
+    // Google Forms: one listitem per question, a heading with the text and a "Required question" marker.
+    for (const item of document.querySelectorAll('[role="listitem"]')) {
+      const title = googleTitle(item);
+      if (!title) continue;
+      const heading = item.querySelector('[role="heading"]');
+      let kind = "other", options = [];
+      if (item.querySelector('[role="radio"]')) { kind = "choice"; options = values(item.querySelectorAll('[role="radio"]'), "data-value"); }
+      else if (item.querySelector('[role="checkbox"]')) { kind = "checkbox"; options = values(item.querySelectorAll('[role="checkbox"]'), "data-answer-value"); }
+      else if (item.querySelector('[role="listbox"]')) { kind = "dropdown"; options = values(item.querySelectorAll('[role="option"][data-value]:not([data-value=""])'), "data-value"); }
+      else if (item.querySelector('input[type="date"]')) kind = "date";
+      else if (item.querySelector('input[type="time"]')) kind = "time";
+      else if (item.querySelector("textarea")) kind = "paragraph";
+      else if (item.querySelector('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"]')) kind = "text";
+      add({ text: title, kind, options: [...new Set(options)], required: !!heading.querySelector('[aria-label="Required question"]') }, [item], { google: title, kind });
     }
-  } else if (root.tagName === "SELECT") {
-    const option = [...root.options].find((o) => same(o.textContent, value) || same(o.value, value));
-    if (option) { root.value = option.value; root.dispatchEvent(new Event("change", { bubbles: true })); }
-    else reason = "no option matches";
-  } else if (root.type === "radio" || root.type === "checkbox") {
-    const labelOf = (input) => (input.id && document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent) || input.closest("label")?.textContent || input.value;
-    for (const input of nodes) {
-      const on = wanted.some((w) => same(labelOf(input), w));
-      if (on !== input.checked && (on || input.type === "checkbox")) input.click();
+    const meta = document.querySelector('meta[property="og:description"], meta[name="description"]');
+    const description = clean(meta && meta.content).slice(0, 1000);
+    if (questions.length) {
+      const title = document.querySelector('[role="heading"][aria-level="1"]');
+      return { title: clean(title && title.textContent), description, questions };
     }
-  } else if (root.type === "date") {
-    if (iso(value)) type(root, iso(value)); else reason = "not a date";
-  } else {
-    textField = root;
-    type(root, value);
+
+    // Any other form: visible, labelled fields. Radio buttons are grouped by name.
+    const groups = new Set();
+    for (const field of document.querySelectorAll("input, textarea, select")) {
+      const type = (field.type || "").toLowerCase();
+      if (["hidden", "password", "submit", "button", "reset", "image", "file"].includes(type) || !visible(field) || field.disabled) continue;
+      if (type === "radio" || type === "checkbox") {
+        if (!field.name || groups.has(field.name)) continue;
+        groups.add(field.name);
+        const all = [...document.querySelectorAll(`input[name="${CSS.escape(field.name)}"]`)];
+        const legend = field.closest("fieldset") && field.closest("fieldset").querySelector("legend");
+        add({ text: clean(legend ? legend.textContent : field.name), kind: type === "radio" ? "choice" : "checkbox", options: all.map(labelOf).filter(Boolean), required: field.required }, all, { group: field.name });
+        continue;
+      }
+      const text = labelOf(field);
+      if (!text) continue;
+      const kind = field.tagName === "SELECT" ? "dropdown" : field.tagName === "TEXTAREA" ? "paragraph" : type === "date" ? "date" : type === "time" ? "time" : "text";
+      const options = field.tagName === "SELECT" ? [...field.options].filter((o) => o.value !== "").map((o) => clean(o.textContent)).filter(Boolean) : [];
+      add({ text, kind, options, required: field.required || field.getAttribute("aria-required") === "true" }, [field], { id: field.id, name: field.name, label: text, kind });
+    }
+    return { title: document.title, description, questions: questions.slice(0, 80) };
   }
 
-  await wait(350); // let the page react (some re-render a field, and a value that didn't take vanishes)
-  const filled = reason === null && checkOnPage(question, value);
-  if (!filled && reason === null && textField && textField.type !== "date") {
-    textField.focus();
-    if (textField.select) textField.select();
-    return { filled: false, focused: true, reason: "the page didn't take a scripted value", ...where(textField) };
+  // --- finding the field again: the tagged element if it's still on the page; else the same field found again (and re-tagged).
+  function locate() {
+    const tagged = [...document.querySelectorAll(`[data-jarvis-q="${CSS.escape(question)}"]`)];
+    if (tagged.length) return tagged;
+    if (!find) return [];
+    let found = [];
+    if (find.google) found = [...document.querySelectorAll('[role="listitem"]')].filter((item) => googleTitle(item) === find.google).slice(0, 1);
+    else if (find.group) found = [...document.querySelectorAll(`input[name="${CSS.escape(find.group)}"]`)];
+    else {
+      const named = find.name ? [...document.getElementsByName(find.name)].filter(visible) : [];
+      const one = (find.id && document.getElementById(find.id))
+        || (named.length === 1 ? named[0] : null)
+        || [...document.querySelectorAll("input, textarea, select")].find((field) => visible(field) && labelOf(field) === find.label);
+      if (one) found = [one];
+    }
+    found.forEach((element) => element.setAttribute("data-jarvis-q", question));
+    return found;
   }
 
-  return { filled, reason: filled ? null : reason || "the page doesn't show it", ...where(root) };
+  // Waits until the page stops changing (a redraw after a change, a round trip to its server),
+  // up to a few seconds. Busy markers (PeopleSoft's "Processing", aria-busy) count as changing.
+  async function settle(quiet = 450, cap = 4000) {
+    const start = Date.now();
+    let last = Date.now();
+    const observer = new MutationObserver(() => { last = Date.now(); });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    try {
+      while (Date.now() - start < cap) {
+        await wait(100);
+        const busy = [...document.querySelectorAll('[aria-busy="true"], [id^="WAIT_win"], [id^="processing"]')].some(visible);
+        if (!busy && Date.now() - last >= quiet) return;
+      }
+    } finally {
+      observer.disconnect();
+    }
+  }
 
-  // The same check as the top-level one: this function runs in the page on its own.
-  function checkOnPage(question, value) {
-    const same = (a, b) => String(a || "").replace(/\s+/g, " ").trim().toLowerCase() === String(b || "").replace(/\s+/g, " ").trim().toLowerCase();
-    const nodes = [...document.querySelectorAll(`[data-jarvis-q="${CSS.escape(question)}"]`)];
-    if (!nodes.length) return false;
+  // --- dates: one remembered date, written the way each field wants it ---
+  function parseDate(text) {
+    const t = clean(text);
+    const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    const month = (word) => months.indexOf(String(word).slice(0, 3).toLowerCase()) + 1;
+    const ok = (y, m, d) => (y > 999 && m >= 1 && m <= 12 && d >= 1 && d <= 31 ? { y, m, d } : null);
+    let m = t.match(/^(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})$/);
+    if (m) return ok(+m[1], +m[2], +m[3]);
+    m = t.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2}|\d{4})$/);
+    if (m) {
+      let [a, b, y] = [+m[1], +m[2], +m[3]];
+      if (y < 100) y += y > new Date().getFullYear() % 100 ? 1900 : 2000;
+      // ponytail: day first unless that's impossible; a US-only month-first date with both parts
+      // under 13 (04/03/2004) reads as 4 March. Remembered dates written ISO (2004-03-04) never are.
+      return b > 12 ? ok(y, a, b) : ok(y, b, a);
+    }
+    m = t.match(/^(\d{1,2})(?:st|nd|rd|th)?[-\s]+([a-z]+)\.?,?[-\s]+(\d{4})$/i);
+    if (m && month(m[2])) return ok(+m[3], month(m[2]), +m[1]);
+    m = t.match(/^([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/i);
+    if (m && month(m[1])) return ok(+m[3], month(m[1]), +m[2]);
+    return null;
+  }
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const iso = (date) => `${date.y}-${String(date.m).padStart(2, "0")}-${String(date.d).padStart(2, "0")}`;
+  // A format like DD/MM/YYYY, mm-dd-yy or DD-MMM-YYYY, from what the page says about the field.
+  function formatHint(field) {
+    const described = (field.getAttribute("aria-describedby") || "").split(/\s+/).map((id) => document.getElementById(id)?.textContent || "").join(" ");
+    const near = field.parentElement ? field.parentElement.textContent.slice(0, 300) : "";
+    for (const text of [field.placeholder, field.title, field.getAttribute("data-date-format"), field.getAttribute("data-format"), described, labelOf(field), near]) {
+      const m = String(text || "").match(/\b(d{1,2}|m{1,4}|y{2,4})([-/. ])(d{1,2}|m{1,4}|y{2,4})\2(d{1,2}|m{1,4}|y{2,4})\b/i);
+      if (m) {
+        const parts = [m[1], m[3], m[4]];
+        const order = parts.map((p) => p[0].toLowerCase()).join("");
+        if (["dmy", "mdy", "ymd"].includes(order)) return { parts, sep: m[2] };
+      }
+    }
+    return null;
+  }
+  const writeDate = (date, format) => format.parts.map((p) => {
+    const kind = p[0].toLowerCase();
+    if (kind === "d") return p.length > 1 ? String(date.d).padStart(2, "0") : String(date.d);
+    if (kind === "m") return p.length >= 3 ? MONTHS[date.m - 1] : p.length > 1 ? String(date.m).padStart(2, "0") : String(date.m);
+    return p.length === 2 ? String(date.y).slice(-2) : String(date.y);
+  }).join(format.sep);
+  // The ways a date may legitimately read back (the page may reformat what it was given).
+  const dateShown = (shown, date) => {
+    const parsed = parseDate(shown);
+    if (parsed && iso(parsed) === iso(date)) return true;
+    const formats = ["DD/MM/YYYY", "MM/DD/YYYY", "YYYY/MM/DD", "DD/MMM/YYYY", "MM/DD/YY", "DD/MM/YY"].map((f) => ({ parts: f.split("/"), sep: "/" }));
+    const norm = (s) => clean(s).toLowerCase().replace(/[-. ]/g, "/");
+    return formats.some((f) => norm(writeDate(date, f)) === norm(shown));
+  };
+  const isDateQuestion = () => find && (find.kind === "date" || DATE_WORDS.test(find.label || find.google || ""));
+
+  // --- reading back ---
+  function shows(nodes) {
     const root = nodes[0];
     const wanted = String(value).split(";").map((part) => part.trim()).filter(Boolean);
-    const iso = (text) => {
-      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-      const parsed = new Date(text);
-      const pad = (n) => String(n).padStart(2, "0");
-      return isNaN(parsed) ? null : `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
-    };
+    const date = isDateQuestion() ? parseDate(value) : null;
+    const text = (field) => (date ? dateShown(field.value, date) || (field.type === "date" && field.value === iso(date)) : same(field.value, value));
     if (root.getAttribute("role") === "listitem") {
       const listbox = root.querySelector('[role="listbox"]');
       if (root.querySelector('[role="radio"]')) {
@@ -486,20 +446,151 @@ async function fillOnPage(question, value) {
         return on.length === wanted.length && wanted.every((w) => on.some((b) => same(b, w)));
       }
       if (listbox) return [...listbox.querySelectorAll('[role="option"][aria-selected="true"]')].some((o) => same(o.getAttribute("data-value"), value));
-      const date = root.querySelector('input[type="date"]');
-      if (date) return date.value === iso(value);
-      const text = root.querySelector('textarea, input:not([type="hidden"])');
-      return !!text && same(text.value, value);
+      const field = root.querySelector('input[type="date"], textarea, input:not([type="hidden"])');
+      return !!field && text(field);
     }
     if (root.tagName === "SELECT") return same(root.selectedOptions[0] && root.selectedOptions[0].textContent, value) || same(root.value, value);
     if (root.type === "radio" || root.type === "checkbox") {
-      const labelOf = (input) => (input.id && document.querySelector(`label[for="${CSS.escape(input.id)}"]`)?.textContent) || input.closest("label")?.textContent || input.value;
       const on = nodes.filter((input) => input.checked).map(labelOf);
       return on.length === wanted.length && wanted.every((w) => on.some((label) => same(label, w)));
     }
-    if (root.type === "date") return root.value === iso(value);
-    return same(root.value, value);
+    return text(root);
   }
+
+  // --- putting it in ---
+  async function fill(nodes) {
+    const root = nodes[0];
+    root.scrollIntoView({ block: "center" });
+    await settle(150, 3000); // let an earlier field's redraw finish first
+
+    // Some widgets ignore a bare click(): they want a hover, then a press, at the element.
+    const press = (element) => {
+      const box = element.getBoundingClientRect();
+      const at = { bubbles: true, cancelable: true, view: window, button: 0, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+      for (const name of ["pointerover", "mouseover", "pointermove", "mousemove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+        element.dispatchEvent(new (name.startsWith("pointer") ? PointerEvent : MouseEvent)(name, { ...at, buttons: name.endsWith("down") ? 1 : 0 }));
+      }
+    };
+    const key = (element, name, code, keyCode) => {
+      for (const kind of ["keydown", "keypress", "keyup"]) element.dispatchEvent(new KeyboardEvent(kind, { key: name, code, keyCode, which: keyCode, bubbles: true, cancelable: true }));
+    };
+    const where = (element) => {
+      // ponytail: the browser's own toolbar height is outer minus inner height; zoom and side
+      // panels shift this a little, which only moves where the cursor points.
+      const box = element.getBoundingClientRect();
+      const scale = window.devicePixelRatio || 1;
+      const left = window.screenX + (window.outerWidth - window.innerWidth) / 2;
+      const top = window.screenY + (window.outerHeight - window.innerHeight);
+      return { x: Math.round((left + box.left + Math.min(box.width, 240) / 2) * scale), y: Math.round((top + box.top + Math.min(box.height, 60) / 2) * scale) };
+    };
+    // The field as it is now: pages that redraw replace it, so look it up again.
+    const current = (field) => {
+      if (field.isConnected) return field;
+      const fresh = locate()[0];
+      if (!fresh) return field;
+      return fresh.matches("input, textarea, select") ? fresh : fresh.querySelector('input[type="date"], textarea, input:not([type="hidden"])') || field;
+    };
+    // Typed in two ways, each read back: the value set as the page's own code would (with input and
+    // change events), then, for pages that only listen to real editing, the browser's own "insert
+    // text" over a selection. Both act on this exact element; nothing is typed at the screen.
+    const type = async (field, text, accepts) => {
+      for (const how of ["set", "insert"]) {
+        field = current(field);
+        field.focus();
+        if (how === "set") {
+          const proto = field.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(proto, "value").set.call(field, text);
+          field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+        } else {
+          if (field.select) field.select();
+          if (!document.execCommand("insertText", false, text)) continue;
+        }
+        field.dispatchEvent(new Event("change", { bubbles: true }));
+        field.blur();
+        await settle();
+        field = current(field);
+        if (accepts(field)) return true;
+      }
+      return false;
+    };
+    const rejected = (field) => !field.value || field.getAttribute("aria-invalid") === "true" || (field.checkValidity && !field.checkValidity());
+
+    const wanted = String(value).split(";").map((part) => part.trim()).filter(Boolean);
+    let reason = null;
+    let target = root;
+
+    if (root.getAttribute("role") === "listitem") {
+      // Google Forms.
+      const radios = [...root.querySelectorAll('[role="radio"]')];
+      const boxes = [...root.querySelectorAll('[role="checkbox"]')];
+      const listbox = root.querySelector('[role="listbox"]');
+      if (radios.length) {
+        const match = radios.find((r) => same(r.getAttribute("data-value") || r.getAttribute("aria-label"), value));
+        if (!match) reason = "no option matches";
+        else if (match.getAttribute("aria-checked") !== "true") { match.click(); await wait(150); if (match.getAttribute("aria-checked") !== "true") press(match); }
+      } else if (boxes.length) {
+        for (const box of boxes) {
+          const on = wanted.some((w) => same(box.getAttribute("data-answer-value") || box.getAttribute("aria-label"), w));
+          if (on !== (box.getAttribute("aria-checked") === "true")) { box.click(); await wait(100); }
+        }
+      } else if (listbox) {
+        // Google's dropdown opens on Space (synthetic clicks don't open it reliably) and takes an
+        // option on a hover-and-press at it.
+        listbox.focus();
+        key(listbox, " ", "Space", 32);
+        let option = null;
+        for (let tries = 0; tries < 12 && !option; tries++) {
+          await wait(120);
+          option = [...root.querySelectorAll('[role="option"][data-value]')].find((o) => o.getBoundingClientRect().height > 0 && same(o.getAttribute("data-value"), value));
+        }
+        if (option) press(option);
+        else { key(listbox, "Escape", "Escape", 27); reason = "no option matches"; }
+      } else {
+        target = root.querySelector('input[type="date"], textarea, input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="time"]');
+        if (!target) reason = "no field to type in";
+        else reason = await typeAnswer(target);
+      }
+    } else if (root.tagName === "SELECT") {
+      const option = [...root.options].find((o) => same(o.textContent, value) || same(o.value, value));
+      if (option) { root.value = option.value; root.dispatchEvent(new Event("change", { bubbles: true })); }
+      else reason = "no option matches";
+    } else if (root.type === "radio" || root.type === "checkbox") {
+      for (const input of nodes) {
+        const on = wanted.some((w) => same(labelOf(input), w));
+        if (on !== input.checked && (on || input.type === "checkbox")) input.click();
+      }
+    } else {
+      reason = await typeAnswer(root);
+    }
+
+    await settle();
+    const again = locate();
+    const filled = reason === null && again.length > 0 && shows(again);
+    return { filled, reason: filled ? null : reason || "the page doesn't show it", ...where(target ? current(target) : root) };
+
+    // A text or date field; null when it took the value.
+    async function typeAnswer(field) {
+      const date = isDateQuestion() || field.type === "date" ? parseDate(value) : null;
+      if (field.type === "date") return date && (await type(field, iso(date), (f) => f.value === iso(date))) ? null : date ? "the page didn't take it" : "not a date";
+      if (!date) return (await type(field, value, (f) => same(f.value, value))) ? null : "the page didn't take it";
+      // A date in a text box: the format the page asks for; if it doesn't say, the page's
+      // language decides day or month first, and the other order is tried if the page refuses.
+      const hint = formatHint(field);
+      const monthFirst = /^en-US$/i.test(document.documentElement.lang || navigator.language);
+      const tries = hint ? [hint] : [monthFirst ? "MM/DD/YYYY" : "DD/MM/YYYY", monthFirst ? "DD/MM/YYYY" : "MM/DD/YYYY"].map((f) => ({ parts: f.split("/"), sep: "/" }));
+      for (const format of tries) {
+        if (await type(field, writeDate(date, format), (f) => !rejected(f) && dateShown(f.value, date))) return null;
+      }
+      return "the page didn't take this date (" + tries.map((f) => f.parts.join(f.sep)).join(" or ") + ")";
+    }
+  }
+
+  // (Down here so every helper above exists before it runs.)
+  if (op === "read") return read();
+  const nodes = locate();
+  if (!nodes.length) return op === "check" ? false : { filled: false, reason: "the field is gone (was the page reloaded?)" };
+  if (op === "check") return shows(nodes);
+  return await fill(nodes);
 }
 
 async function openUrl(url) {

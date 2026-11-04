@@ -213,7 +213,7 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
         }
 
         int? Number(string key) => fill[key] is JsonValue number && number.TryGetValue<double>(out var n) ? (int)n : null;
-        return new FormFill(fill["filled"]?.GetValue<bool>() == true, Number("x"), Number("y"), fill["focused"]?.GetValue<bool>() == true, fill["reason"]?.GetValue<string>());
+        return new FormFill(fill["filled"]?.GetValue<bool>() == true, Number("x"), Number("y"), fill["reason"]?.GetValue<string>());
     }
 
     public async Task<bool> CheckFormAsync(string questionId, string value, CancellationToken cancellationToken)

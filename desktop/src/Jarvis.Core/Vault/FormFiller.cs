@@ -22,7 +22,6 @@ namespace Jarvis.Core.Vault;
 /// <param name="Vocabulary">The speech dictionary's words, so "Say it" spells names right.</param>
 /// <param name="Dictionary">Where "add to dictionary" puts words.</param>
 /// <param name="IsWord">Whether a word is ordinary English (a spell checker), so only new words are offered.</param>
-/// <param name="Typing">Types into the focused field with real keystrokes, for pages that ignore scripted values.</param>
 public sealed record FormServices(
     IVault Vault,
     IBrowserLink Browser,
@@ -35,8 +34,7 @@ public sealed record FormServices(
     string? ResearchDirectory = null,
     Func<IReadOnlyList<string>>? Vocabulary = null,
     IVocabularyStore? Dictionary = null,
-    Func<string, bool>? IsWord = null,
-    ITextInsertion? Typing = null);
+    Func<string, bool>? IsWord = null);
 
 /// <summary>
 /// Fills the browser's form from the vault. The extension reads the questions; answers the user
@@ -504,6 +502,13 @@ public sealed partial class FormFiller
 
                 _fill = CancellationTokenSource.CreateLinkedTokenSource(_cancellation);
                 _toFill = Channel.CreateUnbounded<string>();
+                foreach (var id in _couldNotFill)
+                {
+                    var at = Array.FindIndex(_cards, card => card.Id == id);
+                    _cards[at] = _cards[at] with { Note = null }; // Try again: each gets another go
+                }
+
+                _couldNotFill.Clear();
                 (_passTotal, _passDone, _afterFilling) = (0, 0, null);
                 foreach (var card in _cards.Where(Fillable))
                 {
@@ -573,6 +578,8 @@ public sealed partial class FormFiller
                     Interlocked.Increment(ref _passDone);
                     Show();
                 }
+
+                await ReadBackAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!_cancellation.IsCancellationRequested)
             {
@@ -604,9 +611,9 @@ public sealed partial class FormFiller
         }
 
         /// <summary>
-        /// One field: scripted first, read back; a text field that won't take it gets real keystrokes
-        /// (paste, then read back again). If the page re-rendered and lost the field, the form is read
-        /// again once and it's tried once more.
+        /// One field, put in by the extension on that exact element (found by its HTML id, name or
+        /// label, never by screen position) and read back. If the page lost the field, the form is
+        /// read again once and it's tried once more. Nothing is ever typed at the screen.
         /// </summary>
         private async Task<FormFill?> FillOneAsync(string id, string value, CancellationToken cancellationToken)
         {
@@ -618,18 +625,32 @@ public sealed partial class FormFiller
                 filled = await browser.FillFormAsync(id, value, cancellationToken).ConfigureAwait(false);
             }
 
-            if (filled is { Filled: false, Focused: true } && Services.Typing is { } typing
-                && await typing.CaptureFocusAsync(cancellationToken).ConfigureAwait(false) is { } field)
-            {
-                await typing.InsertAsync(field, value, cancellationToken).ConfigureAwait(false);
-                filled = filled with
-                {
-                    Filled = await browser.CheckFormAsync(id, value, cancellationToken).ConfigureAwait(false),
-                    Reason = "typing it didn't stick either",
-                };
-            }
-
             return filled;
+        }
+
+        /// <summary>
+        /// Pages that redraw after every change (PeopleSoft, many job portals) can drop a value put in
+        /// earlier: once the pass is done, every filled field is read back, and one that lost its value
+        /// is put back once; if it still won't stay, it's not counted and Try again offers another go.
+        /// </summary>
+        private async Task ReadBackAsync(CancellationToken cancellationToken)
+        {
+            foreach (var card in _cards.Where(card => card is { Filled: true, Answer: not null }).ToList())
+            {
+                if (await Services.Browser.CheckFormAsync(card.Id, card.Answer!, cancellationToken).ConfigureAwait(false)
+                    || await FillOneAsync(card.Id, card.Answer!, cancellationToken).ConfigureAwait(false) is { Filled: true })
+                {
+                    continue;
+                }
+
+                lock (_gate)
+                {
+                    _couldNotFill.Add(card.Id);
+                }
+
+                Set(Array.FindIndex(_cards, c => c.Id == card.Id), current => current with { Filled = false, Note = "The page cleared this after it went in. Try again, or copy it." });
+                Show();
+            }
         }
 
         /// <summary>The user picked, copied, kept or typed a value: learn it, and (re)fill the field if Jarvis is filling.</summary>
@@ -976,12 +997,14 @@ public sealed partial class FormFiller
             bool filling;
             int fillable;
             double? progress;
+            int retry;
             lock (_gate)
             {
                 cards = [.. _cards];
                 filling = _fill is not null;
                 fillable = _cards.Count(Fillable);
                 progress = filling ? Math.Clamp((double)_passDone / Math.Max(_passTotal, 1), 0, 1) : null;
+                retry = _cards.Count(card => card is { State: FormCardState.Answered, Answer: not null, Filled: false } && _couldNotFill.Contains(card.Id));
             }
 
             var status = note is null ? Status() : $"{note} {Status()}";
@@ -999,7 +1022,7 @@ public sealed partial class FormFiller
                 Remember,
                 new FormFiles(LoadLibraryAsync, AddContextAsync, AddResumeAsync, DeleteAsync),
                 Reload,
-                NewWords), progress, fillable));
+                NewWords), progress, fillable, retry));
         }
     }
 }

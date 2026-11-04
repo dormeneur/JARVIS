@@ -93,8 +93,8 @@ public sealed class StandardAnswersTests
 
 public sealed class FormFillerTests
 {
-    private static FormFiller Filler(FakeVault vault, IBrowserLink browser, INotchPresenter notch, ITextInsertion? typing = null, Func<string, bool>? isWord = null)
-        => new(new FormServices(vault, browser, notch, Vocabulary: () => ["Asha"], IsWord: isWord, Typing: typing), TimeProvider.System, NullLogger<FormFiller>.Instance);
+    private static FormFiller Filler(FakeVault vault, IBrowserLink browser, INotchPresenter notch, Func<string, bool>? isWord = null)
+        => new(new FormServices(vault, browser, notch, Vocabulary: () => ["Asha"], IsWord: isWord), TimeProvider.System, NullLogger<FormFiller>.Instance);
 
     [Fact]
     public async Task AFieldThePageDidntTake_IsNotCounted_AndSaysWhy()
@@ -113,17 +113,33 @@ public sealed class FormFillerTests
     }
 
     [Fact]
-    public async Task ATextFieldThatIgnoresScriptedValues_GetsRealKeystrokes_ThenIsReadBack()
+    public async Task AFieldThePageClearsAfterItWentIn_IsPutBackOnTheReadBack()
     {
-        var vault = new FakeVault { Answers = [new FormAnswer("q0", "Asha Rao", "Profile/about.md")] };
-        var browser = new FormBrowser { NeedsTyping = { "q0" } };
-        var typing = new FakeTyping(() => browser.Typed.Add("q0"));
+        var vault = new FakeVault { Answers = [new FormAnswer("q0", "Asha Rao", "Profile/about.md"), new FormAnswer("q1", "$75,000 - $100,000", "Profile/about.md")] };
+        var browser = new FormBrowser { ClearedOnce = { "q0" } }; // the page redrew and dropped it
         var notch = new RecordingNotch();
 
-        await Filler(vault, browser, notch, typing).RunAsync(fillIn: true, TestContext.Current.CancellationToken);
+        await Filler(vault, browser, notch).RunAsync(fillIn: true, TestContext.Current.CancellationToken);
 
-        Assert.Equal(["Asha Rao"], typing.Typed);
-        Assert.True(notch.Shown.OfType<NotchState.Form>().Last().Cards[0].Filled);
+        Assert.Equal(2, browser.Filled.Count(fill => fill.Id == "q0"));
+        Assert.All(notch.Shown.OfType<NotchState.Form>().Last().Cards, card => Assert.True(card.Filled));
+    }
+
+    [Fact]
+    public async Task WhatDidntGoIn_OffersTryAgain_WhichRetriesIt()
+    {
+        var vault = new FakeVault { Answers = [new FormAnswer("q0", "Asha Rao", "Profile/about.md"), new FormAnswer("q1", "$75,000 - $100,000", "Profile/about.md")] };
+        var browser = new FormBrowser { Refuse = { ["q1"] = "the page didn't take it" } };
+        var notch = new RecordingNotch();
+        await Filler(vault, browser, notch).RunAsync(fillIn: true, TestContext.Current.CancellationToken);
+        var failed = notch.Shown.OfType<NotchState.Form>().Last();
+        Assert.Equal((0, 1), (failed.Fillable, failed.Retry));
+
+        browser.Refuse.Clear();
+        failed.Actions.FillIn!();
+        await WaitUntil(() => notch.Shown.OfType<NotchState.Form>().Last() is { Retry: 0 } form && form.Cards[1].Filled);
+
+        Assert.Null(notch.Shown.OfType<NotchState.Form>().Last().Cards[1].Note);
     }
 
     [Fact]
@@ -332,20 +348,18 @@ public sealed class FormFillerTests
 
         public string? Problem { get; init; }
 
-        public HashSet<string> NeedsTyping { get; } = [];
-
-        public HashSet<string> Typed { get; } = [];
+        /// <summary>Fields the page clears once after they went in (a redraw); the read-back finds them empty.</summary>
+        public HashSet<string> ClearedOnce { get; } = [];
 
         public Task<FormFill?> FillFormAsync(string questionId, string value, CancellationToken cancellationToken)
         {
             Filled.Add((questionId, value));
             return Task.FromResult<FormFill?>(
-                Refuse.TryGetValue(questionId, out var reason) ? new FormFill(false, 10, 20, Reason: reason)
-                : NeedsTyping.Contains(questionId) ? new FormFill(false, 10, 20, Focused: true, Reason: "the page didn't take a scripted value")
-                : new FormFill(true, 10, 20));
+                Refuse.TryGetValue(questionId, out var reason) ? new FormFill(false, 10, 20, Reason: reason) : new FormFill(true, 10, 20));
         }
 
-        public Task<bool> CheckFormAsync(string questionId, string value, CancellationToken cancellationToken) => Task.FromResult(Typed.Contains(questionId));
+        public Task<bool> CheckFormAsync(string questionId, string value, CancellationToken cancellationToken)
+            => Task.FromResult(!ClearedOnce.Remove(questionId) && !Refuse.ContainsKey(questionId));
 
         public bool IsConnected => true;
 
@@ -514,29 +528,6 @@ public sealed class JvApiVaultTests
             _seen.Add((request.Method.Method, request.RequestUri!.AbsolutePath));
             return Task.FromResult(reply(request));
         }
-    }
-}
-
-internal sealed class FakeTyping(Action typed) : ITextInsertion
-{
-    public List<string> Typed { get; } = [];
-
-    public Task<IFocusedField?> CaptureFocusAsync(CancellationToken cancellationToken) => Task.FromResult<IFocusedField?>(new Field());
-
-    public Task<InsertOutcome> InsertAsync(IFocusedField? field, string text, CancellationToken cancellationToken)
-    {
-        Typed.Add(text);
-        typed();
-        return Task.FromResult(InsertOutcome.Inserted);
-    }
-
-    public Task<string?> ReadAsync(IFocusedField field, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
-
-    private sealed class Field : IFocusedField
-    {
-        public string AppName => "Brave";
-
-        public string? ExistingText => null;
     }
 }
 

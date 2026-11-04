@@ -166,8 +166,7 @@ internal static class AppHost
                 Path.Combine(AppPaths.DataDirectory, "research"),
                 () => provider.GetRequiredService<IOptionsMonitor<DictationOptions>>().CurrentValue.Words,
                 provider.GetRequiredService<IVocabularyStore>(),
-                Jarvis.Platform.Text.EnglishWords.IsKnown,
-                provider.GetRequiredService<ITextInsertion>()),
+                Jarvis.Platform.Text.EnglishWords.IsKnown),
             provider.GetRequiredService<TimeProvider>(),
             provider.GetRequiredService<ILogger<Jarvis.Core.Vault.FormFiller>>()));
         services.AddSingleton(provider => new LocalTurns(

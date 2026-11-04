@@ -29,9 +29,8 @@ public sealed record BrowserForm(string Url, string Title, IReadOnlyList<FormQue
 
 /// <summary>How putting an answer into the page went, and where the field is on screen (physical desktop pixels).</summary>
 /// <param name="Filled">The page shows the value now (read back, not assumed).</param>
-/// <param name="Focused">It's a text field the page wouldn't take a scripted value in; it is focused with its text selected, ready for real keystrokes.</param>
 /// <param name="Reason">Why it isn't filled, in a few words.</param>
-public sealed record FormFill(bool Filled, int? X, int? Y, bool Focused = false, string? Reason = null);
+public sealed record FormFill(bool Filled, int? X, int? Y, string? Reason = null);
 
 /// <param name="Id">Stable within one reading of the page.</param>
 /// <param name="Kind">text, paragraph, choice, checkbox, dropdown, date, time or other.</param>

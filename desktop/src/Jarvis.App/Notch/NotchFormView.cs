@@ -234,7 +234,8 @@ internal sealed class NotchFormView
 
     /// <summary>
     /// The one button on top: Fill it in (greyed until an answer is ready), Stop while filling,
-    /// Update answers once something changed after filling, and Done when the page has it all.
+    /// Update answers once something changed after filling, Try again when some didn't go in, and
+    /// Done when the page has it all.
     /// </summary>
     private void ShowPrimary()
     {
@@ -247,6 +248,7 @@ internal sealed class NotchFormView
         var typed = _shown.Values.Any(card => card.Typed);
         (string Label, bool Enabled, bool Accent) look = form.Actions.StopFilling is not null ? ("Stop", true, false)
             : form.Fillable > 0 || typed ? (anyFilled ? "Update answers" : "Fill it in", true, true)
+            : form.Retry > 0 ? ("Try again", true, true)
             : anyFilled ? ("Done", true, true)
             : ("Fill it in", false, true);
         _primary.Content = look.Label;
@@ -269,7 +271,7 @@ internal sealed class NotchFormView
 
         StopTyping(); // real keystrokes must go to the page, not to a card
         var typed = _shown.Where(pair => pair.Value.Typed).ToList();
-        if (_form!.Fillable == 0 && typed.Count == 0)
+        if (_form!.Fillable == 0 && typed.Count == 0 && _form.Retry == 0)
         {
             actions.Dismiss(); // Done
             return;

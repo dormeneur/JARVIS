@@ -61,7 +61,8 @@ public abstract record NotchState
     /// <param name="Status">One short line above the cards: how many are ready, or how the filling went.</param>
     /// <param name="FillProgress">0..1 while Jarvis is filling the page in; <see langword="null"/> otherwise.</param>
     /// <param name="Fillable">Answers ready to go into the page that aren't in it yet.</param>
-    public sealed record Form(string Title, IReadOnlyList<FormCard> Cards, string Status, FormActions Actions, double? FillProgress = null, int Fillable = 0) : NotchState;
+    /// <param name="Retry">Answers the last fill couldn't put in the page: Try again gives them another go.</param>
+    public sealed record Form(string Title, IReadOnlyList<FormCard> Cards, string Status, FormActions Actions, double? FillProgress = null, int Fillable = 0, int Retry = 0) : NotchState;
 
     /// <summary>
     /// The notch's home, opened by resting the mouse on the sleeping notch: things to start, and
