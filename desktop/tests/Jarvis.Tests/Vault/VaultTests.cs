@@ -28,6 +28,11 @@ public sealed class TurnRouterTests
     [InlineData("fill these details", TurnRoute.Cloud)] // no browser in front
     [InlineData("where is the settings button", TurnRoute.Cloud)]
     [InlineData("what's my screen showing", TurnRoute.Cloud)]
+    [InlineData("what is on my calendar on 26th october", TurnRoute.Calendar)]
+    [InlineData("any meetings tomorrow?", TurnRoute.Calendar)]
+    [InlineData("am I free on Friday", TurnRoute.Calendar)]
+    [InlineData("what's on next week", TurnRoute.Calendar)]
+    [InlineData("schedule a meeting with Sam", TurnRoute.Cloud)] // making events isn't reading the feed
     public void RoutesBeforeAnythingLeavesThePc(string request, TurnRoute expected)
         => Assert.Equal(expected, TurnRouter.Route(request, privateMode: false));
 

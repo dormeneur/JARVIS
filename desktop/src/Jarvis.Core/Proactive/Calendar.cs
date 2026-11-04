@@ -306,6 +306,13 @@ public sealed class CalendarFeed(HttpClient http, TimeProvider time)
     /// <summary>Meetings from an hour ago to a day ahead; none when no address is set.</summary>
     public async Task<IReadOnlyList<Meeting>> UpcomingAsync(string address, TimeZoneInfo local, CancellationToken cancellationToken)
     {
+        var now = time.GetUtcNow();
+        return await MeetingsAsync(address, now - TimeSpan.FromHours(1), now + TimeSpan.FromDays(1), local, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Meetings that start between two times; none when no address is set.</summary>
+    public async Task<IReadOnlyList<Meeting>> MeetingsAsync(string address, DateTimeOffset from, DateTimeOffset to, TimeZoneInfo local, CancellationToken cancellationToken)
+    {
         var url = address.Trim();
         if (url.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase))
         {
@@ -330,6 +337,6 @@ public sealed class CalendarFeed(HttpClient http, TimeProvider time)
             _ics = await http.GetStringAsync(uri, cancellationToken).ConfigureAwait(false);
         }
 
-        return _ics is null ? [] : IcsCalendar.Meetings(_ics, now - TimeSpan.FromHours(1), now + TimeSpan.FromDays(1), local);
+        return _ics is null ? [] : IcsCalendar.Meetings(_ics, from, to, local);
     }
 }

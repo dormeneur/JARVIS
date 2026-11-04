@@ -418,6 +418,24 @@ public sealed class CompanionSessionTests
     }
 
     [Fact]
+    public async Task CalendarQuestion_IsAnsweredFromTheFeed_WithoutAScreenshotOrClaude()
+    {
+        var fakes = new Fakes("what's on my calendar on 26th october", "Claude would say this.");
+        var calendar = new FakeBrain("1 on your calendar on Sunday, 26 October: 10:00 AM, Standup.");
+        fakes.UseLocal(new FakeBrain("unused"), new FakeBrain("unused"), calendar);
+        await using var session = fakes.CreateSession();
+
+        session.BeginListening();
+        session.EndListening();
+        await fakes.Player.Finished.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Null(fakes.Brain.LastTurn);
+        Assert.Empty(calendar.LastTurn!.Images);
+        Assert.DoesNotContain(fakes.Notch.Shown, state => state is NotchState.Thinking { Caption: "Looking at your screen" });
+        Assert.Equal("Answered from your calendar on this PC", fakes.Privacy.Recent()[0].Reason);
+    }
+
+    [Fact]
     public async Task PrivateMode_AnswersLocally_AndAsksBeforeSendingTheScreenToClaude()
     {
         var fakes = new Fakes("what does this error mean", "It means the file is locked.");
@@ -461,10 +479,10 @@ public sealed class CompanionSessionTests
     {
         public LocalTurns? Local { get; private set; }
 
-        public void UseLocal(IAssistantBrain vaultBrain, IAssistantBrain localBrain)
+        public void UseLocal(IAssistantBrain vaultBrain, IAssistantBrain localBrain, IAssistantBrain? calendar = null)
         {
             var vault = new Jarvis.Tests.Vault.FakeVault();
-            Local = new LocalTurns(vault, vaultBrain, localBrain, new Jarvis.Core.Vault.FormFiller(new Jarvis.Core.Vault.FormServices(vault, Browser, Notch), TimeProvider.System, NullLogger<Jarvis.Core.Vault.FormFiller>.Instance));
+            Local = new LocalTurns(vault, vaultBrain, localBrain, new Jarvis.Core.Vault.FormFiller(new Jarvis.Core.Vault.FormServices(vault, Browser, Notch), TimeProvider.System, NullLogger<Jarvis.Core.Vault.FormFiller>.Instance), calendar ?? new FakeBrain("No calendar."));
         }
 
         public TimeSpan BrainDelay { get; init; }

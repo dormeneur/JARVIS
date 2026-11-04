@@ -16,6 +16,9 @@ public enum TurnRoute
 
     /// <summary>Fill the browser's form from the vault on this PC.</summary>
     Form,
+
+    /// <summary>The user's calendar, read from its iCal feed on this PC (no screen, no model).</summary>
+    Calendar,
 }
 
 /// <summary>
@@ -33,6 +36,7 @@ public static partial class TurnRouter
     {
         ArgumentNullException.ThrowIfNull(request);
         return FormRequest().IsMatch(request) || (browserInFront && FillThis().IsMatch(request)) ? TurnRoute.Form
+            : CalendarRequest().IsMatch(request) && !CalendarChange().IsMatch(request) ? TurnRoute.Calendar
             : VaultRequest().IsMatch(request) ? TurnRoute.Vault
             : privateMode ? TurnRoute.Local
             : TurnRoute.Cloud;
@@ -60,6 +64,14 @@ public static partial class TurnRouter
 
     [GeneratedRegex(@"\b(fill|phil|complete)\s+((it|this|these|that|them|everything)\b|(in|out|up)\s+(it|this|these|the)\b|(the|these|my)\s+(details|fields|blanks|questions|answers)\b)", RegexOptions.IgnoreCase)]
     private static partial Regex FillThis();
+
+    // "What's on my calendar on the 26th", "any meetings tomorrow?", "am I free on Friday".
+    [GeneratedRegex(@"\b(calendar|agenda|schedule|meetings?|appointments?)\b|\bam I (free|busy)\b|\bwhat'?s on\b[^.?!]{0,30}\b(today|tomorrow|tonight|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}(st|nd|rd|th)?)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex CalendarRequest();
+
+    // Making or changing events isn't reading the feed (an iCal address is read-only).
+    [GeneratedRegex(@"\b(schedule|book|create|add|set up|move|reschedule|cancel|invite)\s+(a|an|the|my|this)?\s*(meeting|event|call|appointment|invite)", RegexOptions.IgnoreCase)]
+    private static partial Regex CalendarChange();
 
     [GeneratedRegex(@"\bvault\b|\b(my|from my|in my)\s+(notes?|profile|journal|diary|resume|cv)\b|\bstandard answers?\b|\bI\s+(wrote|saved|noted|stored)\b", RegexOptions.IgnoreCase)]
     private static partial Regex VaultRequest();

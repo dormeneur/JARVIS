@@ -173,7 +173,16 @@ internal static class AppHost
             provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>(),
             new Jarvis.Core.Vault.VaultBrain(provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>()),
             provider.GetRequiredKeyedService<IAssistantBrain>(ProviderKeys.Ollama),
-            provider.GetRequiredService<Jarvis.Core.Vault.FormFiller>()));
+            provider.GetRequiredService<Jarvis.Core.Vault.FormFiller>(),
+            new CalendarBrain(
+                async (from, to, cancellationToken) =>
+                {
+                    var address = provider.GetRequiredService<IOptionsMonitor<ProactiveOptions>>().CurrentValue.CalendarAddress;
+                    var time = provider.GetRequiredService<TimeProvider>();
+                    return string.IsNullOrWhiteSpace(address) ? null
+                        : await provider.GetRequiredService<CalendarFeed>().MeetingsAsync(address, from, to, time.LocalTimeZone, cancellationToken).ConfigureAwait(false);
+                },
+                provider.GetRequiredService<TimeProvider>())));
     }
 
     /// <summary>Windows-specific devices and surfaces.</summary>

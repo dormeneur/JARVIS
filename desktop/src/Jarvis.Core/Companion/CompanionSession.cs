@@ -643,13 +643,18 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 return true;
         }
 
-        var vault = route == TurnRoute.Vault;
-        privacy.Record(0, vault ? "Answered from your vault on this PC" : "Answered on this PC (private mode)");
-        _services.Notch.Show(new NotchState.Thinking(vault ? "Looking in your vault" : null));
+        var vault = route is TurnRoute.Vault or TurnRoute.Calendar; // answered from the user's own data, never the screen
+        privacy.Record(0, route switch
+        {
+            TurnRoute.Calendar => "Answered from your calendar on this PC",
+            TurnRoute.Vault => "Answered from your vault on this PC",
+            _ => "Answered on this PC (private mode)",
+        });
+        _services.Notch.Show(new NotchState.Thinking(route switch { TurnRoute.Calendar => "Checking your calendar", TurnRoute.Vault => "Looking in your vault", _ => null }));
         _services.Cursor.SetThinking(true);
         var started = _time.GetTimestamp();
         var (answer, _, _, needScreen) = vault
-            ? await AnswerAsync(local.VaultBrain, string.Empty, request, [], started, typed, cancellationToken).ConfigureAwait(false)
+            ? await AnswerAsync(route == TurnRoute.Calendar ? local.Calendar : local.VaultBrain, string.Empty, request, [], started, typed, cancellationToken).ConfigureAwait(false)
             : await AnswerAsync(local.LocalBrain, CompanionPrompt.PrivateInstructions, request, [], started, typed, cancellationToken).ConfigureAwait(false);
         _services.Cursor.SetThinking(false);
         if (needScreen && !vault)
@@ -870,4 +875,5 @@ public sealed record CompanionServices(
     LocalTurns? Local = null);
 
 /// <summary>What answers on this PC: the vault (its brain and form filling) and the local model for private mode.</summary>
-public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms);
+/// <param name="Calendar">Answers calendar questions from the iCal feed (<see cref="Jarvis.Core.Proactive.CalendarBrain"/>).</param>
+public sealed record LocalTurns(Jarvis.Contracts.Vault.IVault Vault, IAssistantBrain VaultBrain, IAssistantBrain LocalBrain, FormFiller Forms, IAssistantBrain Calendar);
