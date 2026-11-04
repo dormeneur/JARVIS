@@ -656,7 +656,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
         var route = TurnRouter.Route(request, privacy.PrivateMode, browser.IsBrowserInFront);
 
         // Misheard ("feel this farm")? If it sounds form-ish and the page in front has a form, it's that.
-        if (route is TurnRoute.Cloud or TurnRoute.Local && browser.IsConnected && browser.IsBrowserInFront && TurnRouter.MightMeanForm(request)
+        if (route is TurnRoute.Cloud or TurnRoute.Local && !TurnRouter.AsksAdvice(request) && browser.IsConnected && browser.IsBrowserInFront && TurnRouter.MightMeanForm(request)
             && await browser.ReadFormAsync(cancellationToken).ConfigureAwait(false) is { Questions.Count: > 0 })
         {
             route = TurnRoute.Form;
@@ -909,8 +909,8 @@ public sealed partial class CompanionSession : IAsyncDisposable
                         needScreen = true;
                         break;
 
-                    case ReplyItem.FillForm form:
-                        _formWanted = form;
+                    case ReplyItem.FillForm form when !TurnRouter.AsksAdvice(turn.UserText):
+                        _formWanted = form; // a question about the form is answered, not filled
                         break;
 
                     case ReplyItem.Delegate job:

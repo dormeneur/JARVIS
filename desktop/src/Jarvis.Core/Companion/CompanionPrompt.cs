@@ -58,6 +58,8 @@ public static class CompanionPrompt
           (speech-to-text may garble it, e.g. "feel this farm"), reply with exactly [FORM], or
           [FORM:fill] if they want it typed into the page for them. Nothing else: Jarvis fills it from
           the user's own notes on their PC, which you never see. Never say you lack their details.
+        - Only when they ask for it to be filled in. A question about a form or a page (which option
+          to pick, what a choice means, what you'd recommend) is answered by you, from the screen.
 
         Background jobs (bigger work):
         - If the request needs real work that takes more than a quick answer (research and compare,

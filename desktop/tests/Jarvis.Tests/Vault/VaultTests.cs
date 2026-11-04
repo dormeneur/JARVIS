@@ -35,6 +35,8 @@ public sealed class TurnRouterTests
     [InlineData("schedule a meeting with Sam", TurnRoute.CalendarAdd)]
     [InlineData("add lunch with Sam tomorrow at 1pm to my calendar", TurnRoute.CalendarAdd)]
     [InlineData("cancel my meeting with Sam", TurnRoute.Cloud)] // changing events isn't reading or adding
+    [InlineData("based on my jarvis project what do you think I should select on this screen, user data or app data?", TurnRoute.Cloud)]
+    [InlineData("which option should I pick in this form?", TurnRoute.Cloud)] // advice about a form, not filling it
     public void RoutesBeforeAnythingLeavesThePc(string request, TurnRoute expected)
         => Assert.Equal(expected, TurnRouter.Route(request, privateMode: false));
 

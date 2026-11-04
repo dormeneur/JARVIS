@@ -38,7 +38,7 @@ public static partial class TurnRouter
     public static TurnRoute Route(string request, bool privateMode, bool browserInFront = false)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return FormRequest().IsMatch(request) || (browserInFront && FillThis().IsMatch(request)) ? TurnRoute.Form
+        return !AsksAdvice(request) && (FormRequest().IsMatch(request) || (browserInFront && FillThis().IsMatch(request))) ? TurnRoute.Form
             : CalendarAdd().IsMatch(request) ? TurnRoute.CalendarAdd
             : CalendarRequest().IsMatch(request) && !CalendarChange().IsMatch(request) ? TurnRoute.Calendar
             : VaultRequest().IsMatch(request) ? TurnRoute.Vault
@@ -55,6 +55,15 @@ public static partial class TurnRouter
 
     [GeneratedRegex(@"\b(f(i|ee|ea|e)l+(s|ed|ing)?|fil|phil+s?|field|forms?|farms?|foam|forum|applications?|surveys?|questionnaires?|auto[- ]?fill)\b", RegexOptions.IgnoreCase)]
     private static partial Regex FormHint();
+
+    /// <summary>
+    /// A question for an opinion or an explanation ("which should I pick?", "what does this mean?",
+    /// "what do you think"): answered, never taken as "fill this form", even with a form on screen.
+    /// </summary>
+    public static bool AsksAdvice(string request) => Advice().IsMatch(request ?? string.Empty);
+
+    [GeneratedRegex(@"\b(should i|which (one|option|should)|what do you (think|suggest|recommend)|do you (think|recommend)|recommend|suggest|what does|what is|what's the difference|explain|meaning of|mean\b|why|or\s+\w+(\s+\w+)?\s*\?\s*$)", RegexOptions.IgnoreCase)]
+    private static partial Regex Advice();
 
     /// <summary>The user wants Jarvis to put the answers into the page, not just show them.</summary>
     public static bool WantsFillIn(string request) => FillIn().IsMatch(request ?? string.Empty);
