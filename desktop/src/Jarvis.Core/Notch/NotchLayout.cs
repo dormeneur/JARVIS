@@ -12,6 +12,11 @@ public static class NotchLayout
 {
     public const double ExpandedWidth = 532;
     public const double MaxExpandedHeight = 280;
+
+    /// <summary>Settings in the notch: the sections beside a page, as roomy as the window's.</summary>
+    public const double SettingsWidth = 800;
+
+    public const double SettingsHeight = 560;
     public const double EnvelopeWidth = 820;
     public const double SliverTopGap = 4;
     public const double ShoulderRadius = 10;
@@ -53,6 +58,7 @@ public static class NotchLayout
             IsSliver: false,
             Springs.NotchOpen),
         NotchState.Form or NotchState.EventDraft => new NotchFrame(ExpandedWidth, MaxExpandedHeight, 22, IsSliver: false, Springs.NotchOpen),
+        NotchState.Settings => new NotchFrame(SettingsWidth, SettingsHeight, 22, IsSliver: false, Springs.NotchOpen),
         NotchState.Home home => new NotchFrame(ExpandedWidth, HomeHeight + (home.Recent.Count > 0 ? HomeCardsHeight : 0), 22, IsSliver: false, Springs.NotchOpen),
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown notch state."),
     };

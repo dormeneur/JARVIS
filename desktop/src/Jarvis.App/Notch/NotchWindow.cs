@@ -16,7 +16,8 @@ namespace Jarvis.App.Notch;
 internal sealed class NotchWindow : Window
 {
     /// <summary>Tallest panel plus room for the floating sliver's gap.</summary>
-    public const double EnvelopeHeight = NotchLayout.MaxExpandedHeight + 8;
+    /// <summary>Tall enough for the tallest panel (Settings); outside the panel it stays click-through.</summary>
+    public const double EnvelopeHeight = NotchLayout.SettingsHeight + 8;
 
     private nint _returnFocusTo;
 

@@ -121,6 +121,10 @@ public sealed partial class App : Application
             case "notch":
                 _ = CycleNotchDemoAsync(_host.Services.GetRequiredService<INotchPresenter>());
                 break;
+            case { } demo when demo.StartsWith("notchsettings:", StringComparison.Ordinal):
+                var queue = _host.Services.GetRequiredService<DispatcherQueue>();
+                _ = _enginesReady.ContinueWith(_ => queue.TryEnqueue(() => ShowNotchSettings(demo["notchsettings:".Length..])), TaskScheduler.Default);
+                break;
             case { } demo when demo.StartsWith("settings:", StringComparison.Ordinal):
                 ShowSettings(demo["settings:".Length..]);
                 break;
@@ -401,7 +405,7 @@ public sealed partial class App : Application
                 notch.Show(new NotchState.Response(on ? "Private mode is on: everything stays on this PC." : "Private mode is off."));
                 _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => notch.Show(NotchState.Idle), TaskScheduler.Default);
             }),
-            new("\uE713", "Settings", null, () => dispatcher.TryEnqueue(() => ShowSettings(null))),
+            new("\uE713", "Settings", null, () => dispatcher.TryEnqueue(() => ShowNotchSettings(null))),
         ];
 
         var agents = _host.Services.GetRequiredService<IAgentJobs>();
@@ -528,6 +532,24 @@ public sealed partial class App : Application
     private static string TrayIconFile(bool paused) => Path.Combine(AppContext.BaseDirectory, paused ? "jarvis-paused.ico" : "jarvis.ico");
 
     private void ShowSettings() => ShowSettings(null);
+
+    /// <summary>The service provider, for views that build settings pages (the notch's Settings).</summary>
+    internal IServiceProvider Services => _host.Services;
+
+    /// <summary>Settings inside the notch; Pop out moves it to the Settings window on the same page.</summary>
+    internal void ShowNotchSettings(string? section)
+    {
+        var notch = _host.Services.GetRequiredService<INotchPresenter>();
+        var dispatcher = _host.Services.GetRequiredService<DispatcherQueue>();
+        notch.Show(new NotchState.Settings(
+            section,
+            page => dispatcher.TryEnqueue(() =>
+            {
+                notch.Show(NotchState.Idle);
+                ShowSettings(page);
+            }),
+            () => notch.Show(NotchState.Idle)));
+    }
 
     /// <summary>Opens Settings, on the page titled <paramref name="section"/> when given (the notch's form panel opens "Vault").</summary>
     internal void ShowSettings(string? section)

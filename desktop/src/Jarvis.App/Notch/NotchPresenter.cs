@@ -50,6 +50,7 @@ internal sealed class NotchPresenter : INotchPresenter
     private NotchFormView? _formView;
     private NotchHomeView? _homeView;
     private NotchEventView? _eventView;
+    private NotchSettingsView? _settingsView;
     private NotchState _current = NotchState.Idle;
     private Button? _close;
     private DispatcherQueueTimer? _clickAway;
@@ -85,6 +86,7 @@ internal sealed class NotchPresenter : INotchPresenter
             () => ((App)Application.Current).ShowSettings("Vault"));
         _homeView = new NotchHomeView(_window.ContentArea);
         _eventView = new NotchEventView(_window, _window.ContentArea);
+        _settingsView = new NotchSettingsView(_window.ContentArea, ((App)Application.Current).Services);
         BuildClose(_window.ContentArea);
         _caption = new TextBlock
         {
@@ -216,7 +218,7 @@ internal sealed class NotchPresenter : INotchPresenter
         var actions = (state as NotchState.Response)?.Actions ?? [];
         ShowActions(actions);
         // Every open panel takes clicks: it has a close button.
-        (double, double)? clickable = state is NotchState.Response or NotchState.Form or NotchState.Home or NotchState.EventDraft ? (frame.Width, frame.Height) : null;
+        (double, double)? clickable = state is NotchState.Response or NotchState.Form or NotchState.Home or NotchState.EventDraft or NotchState.Settings ? (frame.Width, frame.Height) : null;
         if (clickable != _clickable)
         {
             _clickable = clickable;
@@ -259,7 +261,23 @@ internal sealed class NotchPresenter : INotchPresenter
             _eventView?.Hide();
         }
 
-        if (state is NotchState.Response or NotchState.Composing or NotchState.Form or NotchState.Home or NotchState.EventDraft || caption is not null)
+        // Settings take the keyboard while open (pages have text boxes and lists); closing hands it back.
+        if (state is NotchState.Settings settings)
+        {
+            if (_current is not NotchState.Settings)
+            {
+                _window.BeginTyping();
+            }
+
+            _settingsView?.Show(settings);
+        }
+        else if (_current is NotchState.Settings)
+        {
+            _settingsView?.Hide();
+            _window.EndTyping();
+        }
+
+        if (state is NotchState.Response or NotchState.Composing or NotchState.Form or NotchState.Home or NotchState.EventDraft or NotchState.Settings || caption is not null)
         {
             _responseView.Visibility = state is NotchState.Response ? Visibility.Visible : Visibility.Collapsed;
             _composer.Visibility = state is NotchState.Composing ? Visibility.Visible : Visibility.Collapsed;
@@ -311,7 +329,7 @@ internal sealed class NotchPresenter : INotchPresenter
         if (_close is not null)
         {
             // The form panel has its own, in its header; the composer and every other open panel get this one.
-            _close.Visibility = state is NotchState.Response or NotchState.Home or NotchState.Composing or NotchState.EventDraft ? Visibility.Visible : Visibility.Collapsed;
+            _close.Visibility = state is NotchState.Response or NotchState.Home or NotchState.Composing or NotchState.EventDraft or NotchState.Settings ? Visibility.Visible : Visibility.Collapsed;
         }
 
         if (ClosesOnClickAway(state))

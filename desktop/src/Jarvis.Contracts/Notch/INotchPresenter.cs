@@ -72,6 +72,14 @@ public abstract record NotchState
     public sealed record Home(string Greeting, string Hint, IReadOnlyList<HomeItem> Actions, IReadOnlyList<HomeItem> Recent, Action Dismiss) : NotchState;
 
     /// <summary>
+    /// Settings, inside the notch: the sections down the side and the chosen page beside them.
+    /// Pop out opens the same page in its own window; × or Escape closes it.
+    /// </summary>
+    /// <param name="Section">The page to open on (a section title); null for the first.</param>
+    /// <param name="PopOut">Opens the given section in the Settings window instead.</param>
+    public sealed record Settings(string? Section, Action<string?> PopOut, Action Close) : NotchState;
+
+    /// <summary>
     /// An event about to go on the user's calendar, laid out to check and edit: Add takes the
     /// fields as they are then; Cancel (or ×) adds nothing.
     /// </summary>
