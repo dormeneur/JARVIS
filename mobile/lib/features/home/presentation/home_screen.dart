@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
+import 'package:jarvis_mobile/features/career/presentation/career_screen.dart';
 import 'package:jarvis_mobile/features/chat/presentation/chat_screen.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_screen.dart';
 import 'package:jarvis_mobile/features/inbox/data/inbox_repository.dart';
@@ -60,6 +61,7 @@ class HomeScreen extends ConsumerWidget {
       _Tile(Icons.folder_open_outlined, 'Files', 'Your vault', () => open(const ExplorerScreen())),
       _Tile(Icons.inbox_outlined, 'Inbox', waiting > 0 ? '$waiting waiting for you' : 'Things JARVIS wants to save', () => open(const InboxScreen())),
       if (auth.isSecretsAuthorized) _Tile(Icons.work_outline, 'Jobs', 'Job search runs', () => open(const JobsScreen())),
+      if (auth.isSecretsAuthorized) _Tile(Icons.trending_up, 'Career', 'Your profile for applications', () => open(const CareerScreen())),
       _Tile(Icons.settings_outlined, 'Settings', 'Devices, voice, backups', () => open(const SettingsScreen())),
     ];
 

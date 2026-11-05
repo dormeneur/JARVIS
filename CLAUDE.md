@@ -90,6 +90,13 @@ flutter run
   the user found in `Personal/` (or `--folder X`) become Inbox proposals to append to `Profile/<topic>.md`; ID and
   secret-like facts are dropped; files are remembered by hash. No model is ever fine-tuned: retrieval plus the
   approved Profile files are the memory.
+- **Career copilot** (spec `OFFICIAL-DOCS/14-Career-Copilot.md`; Phase 1 built): the typed profile is
+  `Profile/profile.json` (unknown keys must survive every write). `/career/resume/extract` (jv-api
+  `routers/career.py`) reads a resume via the brain, extracts with Claude through jv-jobs `POST /extract`
+  (the owner allowed the resume, and only the resume, to reach Claude) or the local model, and
+  `services/resume.py` drops anything the text doesn't contain. `brain/app/services/profile_fields.py`
+  answers name/address/authorization/EEO form fields from profile.json before any model call. The
+  job-portal password lives only in each device's OS store, never in the vault, jv-api or a prompt.
 - **`/Secrets` must never reach the AI.** Exclusion is a named constant in
   `brain/app/services/document_loader.py`; e2e guard: `brain/tests/test_rag_secrets_exclusion_e2e.py`.
   The tool layer enforces the same list in `tools.safe_path()` — every model-supplied path is

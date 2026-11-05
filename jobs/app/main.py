@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from app import board
 from app.config import settings
-from app.runner import KINDS, claude_auth_status, runner
+from app.runner import KINDS, claude_auth_status, extract, runner
 
 logging.basicConfig(level=logging.INFO)
 
@@ -36,6 +36,12 @@ app = FastAPI(title="jv-jobs", lifespan=lifespan, dependencies=[Depends(check_se
 class RunRequest(BaseModel):
     kind: str
     args: dict = Field(default_factory=dict)
+
+
+class ExtractRequest(BaseModel):
+    system: str = Field(..., max_length=20_000)
+    text: str = Field(..., min_length=1, max_length=60_000)
+    schema_: dict = Field(..., alias="schema")
 
 
 class AnswerRequest(BaseModel):
@@ -64,6 +70,14 @@ async def status() -> dict:
         "tokens_total": sum(r["usage"]["input_tokens"] + r["usage"]["output_tokens"] for r in runs),
         "kinds": sorted(KINDS),
     }
+
+
+@app.post("/extract")
+async def extract_data(body: ExtractRequest) -> dict:
+    try:
+        return await extract(body.system, body.text, body.schema_)
+    except (OSError, RuntimeError) as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/board")

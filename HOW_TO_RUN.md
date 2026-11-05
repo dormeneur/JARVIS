@@ -144,6 +144,13 @@ for anything wrong.
   as proposals to add to your `Profile/` files. Nothing is saved until you approve it in the app's Inbox;
   ID/passport/card-like facts are dropped. Add `--folder Work` for another folder, `--force` to re-read everything.
   This is how JARVIS "learns" your documents: they are also indexed for search, and no model is retrained.
+- Career profile (`14-Career-Copilot.md`): on the phone, Home → Career runs the one-time setup (upload a resume,
+  check what was found, work authorization, preferences, portal password) and then shows the profile, saved as
+  `Profile/profile.json`. The resume is read by Claude when the jobs stack is up (`--profile jobs`), else by the
+  local model (2 to 9 minutes on the RTX 3050). `docker exec jv-api python -m app.evals.resume --bootstrap Profile/resume/<file>`
+  drafts `<vault>/.system/evals/resume-<file>.json`; correct it by hand, then `docker exec jv-api python -m
+  app.evals.resume` shows roles/schools/dates/skills found. Refresh the bundled country list with
+  `pip install pycountry phonenumbers && python scripts/gen_geo.py`.
 - `docker exec jv-brain python -m app.evals.traces --days 7` shows response times and token use per route and model
   (from `.system/brain/traces.jsonl`; numbers only, no question text unless `JARVIS_TRACE_TEXT=true`).
 - The brain keeps its private state (chat history, traces, trash of deleted/overwritten files, later the keyword

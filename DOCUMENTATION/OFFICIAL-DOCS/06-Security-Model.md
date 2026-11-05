@@ -179,6 +179,13 @@ The brain is the one component that talks to the model, so it is kept deliberate
   (`Jarvis.Core/Assistant/OutboundScanner`): a question asks first, page text and job briefs are redacted,
   dictation with a secret skips the Claude clean-up. Background jobs can only read and write their own
   folder (`Read(./**)`, `Edit(./**)`, `dontAsk`).
+- **The one exception to "vault data never reaches Claude" (owner's decision, 2026-11-05):** the resume
+  the owner picks in the career setup is sent to Claude through jv-jobs (`POST /extract`: no tools, no
+  skills, no MCP, no session) to read it reliably, and later its sections feed the job engine
+  (`14-Career-Copilot.md` §1, §3). Everything else in `Profile/profile.json` (address beyond what the
+  resume prints, work authorization, salary, background/DEI, accommodations), mail, and the job-portal
+  password never do; form answers come from the local brain. The portal password lives only in each
+  device's OS store (Android Keystore, Windows Credential Manager), never in the vault or jv-api.
 
 ## Input Validation
 

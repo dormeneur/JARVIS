@@ -210,7 +210,8 @@ class OllamaClient:
             logger.error("Failed to stream chat from Ollama: %s", exc)
             yield {"error": str(exc)}
 
-    async def chat_json(self, messages: list, schema: Dict[str, Any], model: str | None = None) -> Dict[str, Any]:
+    async def chat_json(self, messages: list, schema: Dict[str, Any], model: str | None = None,
+                        max_tokens: int = MAX_TOKENS, timeout: float | None = None) -> Dict[str, Any]:
         """One deterministic /api/chat reply constrained to a JSON schema, thinking off.
 
         Models without a thinking mode reject `think`, so that call is retried without it.
@@ -222,13 +223,13 @@ class OllamaClient:
             "stream": False,
             "format": schema,
             "think": False,
-            "options": {"temperature": 0, "num_predict": MAX_TOKENS, "num_ctx": settings.num_ctx},
+            "options": {"temperature": 0, "num_predict": max_tokens, "num_ctx": settings.num_ctx},
         }
         if model:
             # Its own model is never shared with chat, so its own context size costs no reloads; 8K
             # holds a form's questions plus the profile and keeps a small model on a small GPU.
             payload["options"]["num_ctx"] = FORM_CONTEXT
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0) if timeout else self.timeout) as client:
             response = await client.post(f"{self.ollama_url}{OLLAMA_CHAT_API_PATH}", json=payload)
             if response.status_code == 400 and "think" in response.text.lower():
                 payload.pop("think")

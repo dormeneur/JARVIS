@@ -221,3 +221,19 @@ def test_api_requires_secret(ws, monkeypatch):
     assert client.get("/board", headers={"X-Jobs-Secret": "s3cret"}).status_code == 200
     monkeypatch.setattr(settings, "jobs_secret", "")
     assert client.get("/board").status_code == 401  # unset secret never means open
+
+
+def test_extract_runs_claude_without_tools(ws, monkeypatch):
+    from app.main import app
+
+    monkeypatch.setattr(settings, "jobs_secret", "s")
+    client = TestClient(app)
+    h = {"X-Jobs-Secret": "s"}
+    ok = client.post("/extract", headers=h, json={"system": "sys", "text": "Jane Doe resume", "schema": {"type": "object"}})
+    assert ok.status_code == 200 and ok.json()["data"] == {"echo": "Jane Doe resume"}
+    argv = json.loads((settings.state_dir / "scratch" / "extract" / "argv.json").read_text(encoding="utf-8"))
+    assert argv[argv.index("--tools") + 1] == "" and "--no-session-persistence" in argv
+    assert argv[argv.index("--setting-sources") + 1] == ""
+    assert "--disable-slash-commands" in argv and "--strict-mcp-config" in argv
+    bad = client.post("/extract", headers=h, json={"system": "s", "text": "BROKEN", "schema": {}})
+    assert bad.status_code == 502

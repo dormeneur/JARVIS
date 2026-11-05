@@ -54,7 +54,7 @@ void main() {
 
     expect(find.text('Ask JARVIS'), findsOneWidget);
     expect(find.text('Or type a question…'), findsOneWidget);
-    for (final tile in ['Chat', 'Interview', 'Files', 'Jobs', 'Settings']) {
+    for (final tile in ['Chat', 'Interview', 'Files', 'Jobs', 'Career', 'Settings']) {
       expect(find.text(tile), findsOneWidget);
     }
     expect(find.text('On Pixel'), findsOneWidget);
@@ -67,6 +67,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Jobs'), findsNothing);
+    expect(find.text('Career'), findsNothing);
     expect(find.text('Lately'), findsNothing); // no chats yet: no empty section
   });
 

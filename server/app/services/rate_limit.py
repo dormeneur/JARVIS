@@ -23,6 +23,7 @@ CREDENTIAL_LIMIT = 10
 GROUP_LIMITS: list[tuple[str, int]] = [
     ("/health", 120),
     ("/backup/export", 2),
+    ("/career/resume/extract", 5),
     ("/ask", 30),
     ("/sync", 3000),
 ]

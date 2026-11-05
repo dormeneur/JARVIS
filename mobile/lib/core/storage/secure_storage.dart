@@ -52,6 +52,13 @@ class SecureStorage {
   Future<void> setDeviceSecret(String secret) =>
       _storage.write(key: _keyDeviceSecret, value: secret);
 
+  // --- Job portal password (career copilot, 14-Career-Copilot.md §8): this phone only ---
+
+  Future<String?> getPortalPassword() => _storage.read(key: 'portal_password');
+
+  Future<void> setPortalPassword(String value) =>
+      _storage.write(key: 'portal_password', value: value);
+
   // --- Clear All ---
 
   Future<void> clearAll() => _storage.deleteAll();

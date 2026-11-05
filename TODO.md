@@ -143,7 +143,7 @@ analyze/test, docker build); chat auto-archive.
 - [ ] (Later) Browser-extension autofill — keeps a human clicking submit, sidesteps CAPTCHAs
       and ToS risk. Needs the web-dashboard CORS/auth work first.
 
-### 3D. Career copilot — a personal "Tsenta" inside JARVIS (requested 2026-11-05, spec written, not built)
+### 3D. Career copilot — a personal "Tsenta" inside JARVIS (requested 2026-11-05, Phase 1 built)
 
 > Aditya's brief: a built-in "apply for jobs" flow like Tsenta (paid), but personal, and as the
 > first of many **life-stage copilots** (career now; later e.g. housing, visas, taxes, health
@@ -195,7 +195,10 @@ job-email Inbox; `Platform/Shell/CredentialVault` (PC) and secure storage (phone
 
 **Spec written: `OFFICIAL-DOCS/14-Career-Copilot.md`** (decisions 2026-11-05: Claude may see the
 resume; JARVIS fills and waits, the user always submits; the portal password lives in each
-device's OS store, never in the vault or a prompt). Next: its Phase 0 checks, then Phase 1.
+device's OS store, never in the vault or a prompt). **Phase 1 built 2026-11-05** (resume extraction,
+setup wizard steps 1–5, Career profile, profile fields in form answers); status and what still needs the
+owner are in the spec's §14. Next: owner checks (wizard on the phone, a Google Form from profile.json,
+Workday/Greenhouse upload test), then Phase 2 (swipe deck + applications).
 
 ---
 

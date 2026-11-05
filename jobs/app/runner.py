@@ -510,4 +510,36 @@ async def claude_auth_status() -> dict:
     return {"ok": proc.returncode == 0, "detail": out.decode("utf-8", "replace").strip()[:500]}
 
 
+async def extract(system: str, text: str, schema: dict) -> dict:
+    """One tool-less `claude -p` turn that returns JSON matching `schema` (resume extraction,
+    14-Career-Copilot.md §4.3). No workspace, no settings, no session: only the text goes in."""
+    scratch = settings.state_dir / "scratch" / "extract"
+    scratch.mkdir(parents=True, exist_ok=True)
+    argv = [
+        *shlex.split(settings.claude_bin), "-p", f"Extract the data from this document.\n<document>\n{text}\n</document>",
+        "--output-format", "json", "--tools", "", "--setting-sources", "", "--no-session-persistence",
+        # No skills or MCP servers: measured 54k → 4.6k input tokens on a 5 KB resume (claude 2.1.310).
+        "--disable-slash-commands", "--strict-mcp-config",
+        "--system-prompt", system, "--json-schema", json.dumps(schema), "--model", settings.extract_model,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *argv, cwd=scratch, env={**os.environ, "SCRATCHPAD": str(scratch)},
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=settings.extract_timeout_seconds)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError("Claude took too long")
+    try:
+        result = json.loads(out.decode("utf-8", "replace"))
+    except ValueError:
+        raise RuntimeError(f"Claude failed: {err.decode('utf-8', 'replace')[-300:]}")
+    structured = result.get("structured_output")
+    if result.get("is_error") or not isinstance(structured, dict):
+        raise RuntimeError(f"Claude returned no data: {str(result.get('result'))[:300]}")
+    return {"data": structured, "usage": result.get("usage") or {}}
+
+
 runner = Runner()

@@ -29,6 +29,16 @@ def result(envelope=None, text="", is_error=False):
     emit(msg)
 
 
+if prompt.startswith("Extract the data"):
+    # --output-format json: one result object, the schema's data in structured_output.
+    if "BROKEN" in prompt:
+        print(json.dumps({"type": "result", "is_error": True, "result": "overloaded"}))
+    else:
+        print(json.dumps({"type": "result", "is_error": False, "result": "",
+                          "structured_output": {"echo": prompt.split("<document>\n", 1)[1].split("\n</document>")[0]},
+                          "usage": {"input_tokens": 10, "output_tokens": 5}}))
+    sys.exit(0)
+
 emit({"type": "system", "subtype": "init", "session_id": "sess-1"})
 
 if prompt.startswith("/apply"):

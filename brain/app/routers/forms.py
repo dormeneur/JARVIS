@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services import profile_fields
 from app.services.ollama_client import OllamaClient
 from app.services.retriever import Retriever
 from app.services.tools import ToolError, safe_path
@@ -85,6 +86,9 @@ class FormAnswersRequest(BaseModel):
     title: str = Field(default="", max_length=300)
     questions: List[FormQuestion] = Field(..., max_length=80)
     attachments: List[str] = Field(default_factory=list, max_length=10, description="Vault files to read in full, e.g. the resume")
+    # What the caller knows about a job application, for "authorized to work here?" and "worked for us before?".
+    country: str = Field(default="", max_length=2)
+    company: str = Field(default="", max_length=200)
 
 
 def load_profile() -> list[tuple[str, str]]:
@@ -191,12 +195,26 @@ def build_messages(title: str, questions: List[FormQuestion], files: list[tuple[
 
 
 async def answer_stream(req: FormAnswersRequest, app_state):
+    # Fields profile.json answers exactly (name, address, work authorization...) need no model.
+    typed = profile_fields.load()
+    rest = []
+    for question in req.questions:
+        found = profile_fields.answer(question.text, question.options, typed, req.country, req.company)
+        if found:
+            yield json.dumps({"id": question.id, "answer": found[0], "source": profile_fields.PROFILE_JSON,
+                              "open": False}, ensure_ascii=False) + "\n"
+        else:
+            rest.append(question)
+    if not rest:
+        yield json.dumps({"done": True}) + "\n"
+        return
+
     ollama = OllamaClient(app_state.embedding_pipeline.ollama_url)
     retriever = Retriever(app_state.embedding_pipeline, app_state.vector_store, getattr(app_state, "keyword_index", None))
     profile = load_profile() + load_attachments(app_state, req.attachments)
 
-    for start in range(0, len(req.questions), BATCH_SIZE):
-        batch = req.questions[start : start + BATCH_SIZE]
+    for start in range(0, len(rest), BATCH_SIZE):
+        batch = rest[start : start + BATCH_SIZE]
         # A batch can take a minute on a small GPU: say so, which also keeps the proxy's read alive.
         yield json.dumps({"working": start}) + "\n"
         files = profile + await _extra_context(retriever, batch)

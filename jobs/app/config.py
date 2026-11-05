@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # Claude Code's bubblewrap sandbox. Off by default: it needs user
     # namespaces, which Docker's default seccomp profile may block.
     sandbox: bool = False
+    # Resume extraction (14-Career-Copilot.md §4.3): an alias, so it follows Claude's current model.
+    extract_model: str = "sonnet"
+    extract_timeout_seconds: int = 150
 
     model_config = {"env_prefix": "JARVIS_"}
 
