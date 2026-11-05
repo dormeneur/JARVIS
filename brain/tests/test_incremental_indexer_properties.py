@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from hypothesis import given, settings, strategies as st, HealthCheck
 from datetime import datetime
 
-from brain.app.services.incremental_indexer import IncrementalIndexer
+from brain.app.services.incremental_indexer import IncrementalIndexer, INDEX_VERSION
 from brain.app.services.document_loader import LoadedDocument
 from brain.app.services.text_chunker import Chunk
 
@@ -77,7 +77,7 @@ async def test_property_13_modified_files(patch_summary, num_files):
     loader, chunker, embedder, store = _make_indexer_mocks()
 
     # DB has old hashes
-    db_meta = [{"source_path": f"file_{i}.md", "content_hash": "old_hash"} for i in range(num_files)]
+    db_meta = [{"source_path": f"file_{i}.md", "file_hash": "old_hash", "index_version": INDEX_VERSION} for i in range(num_files)]
     store.get_all_metadata = AsyncMock(return_value=db_meta)
 
     # Disk has new hashes
@@ -121,7 +121,7 @@ async def test_property_15_unchanged_files(patch_summary, num_files):
     loader, chunker, embedder, store = _make_indexer_mocks()
 
     # DB has files with same hashes
-    db_meta = [{"source_path": f"file_{i}.md", "content_hash": "same_hash"} for i in range(num_files)]
+    db_meta = [{"source_path": f"file_{i}.md", "file_hash": "same_hash", "index_version": INDEX_VERSION} for i in range(num_files)]
     store.get_all_metadata = AsyncMock(return_value=db_meta)
 
     # Disk has same files with same hashes

@@ -23,6 +23,7 @@ async def test_rag_threshold_fallback_to_base_generation():
     app_state.embedding_pipeline.ollama_url = "http://localhost:11434"
     app_state.embedding_pipeline.embed_query = AsyncMock(return_value=[0.1] * 768)
     app_state.vector_store = MagicMock()
+    app_state.keyword_index = None  # plain vector search, as before hybrid
     app_state.text_chunker = MagicMock()
     app_state.text_chunker._count_tokens = MagicMock(side_effect=lambda x: len(x))
     app_state.text_chunker.encoding = MagicMock()

@@ -27,7 +27,7 @@ class FakeOllama:
     def __call__(self, ollama_url):  # stand in for OllamaClient(url)
         return self
 
-    async def chat_with_tools(self, messages, tools=None):
+    async def chat_with_tools(self, messages, tools=None, think=None):
         self.seen_messages.append(list(messages))
         self.seen_tools.append(tools)
         events = self._turns.pop(0) if self._turns else [{"token": "done"}, {"done": {"eval_count": 1}}]
@@ -309,3 +309,95 @@ def test_interview_writes_still_need_approval(agent_env, monkeypatch):
 
     assert any(e.get("type") == "approval_required" for e in events)
     assert not (vault / "Profile" / "about.md").exists()
+
+
+# --- resume: the server authors the transcript (task 0.3) ---------------------
+
+def test_second_approval_does_not_rerun_the_first_mutation(agent_env, monkeypatch):
+    agent_mod, vault = agent_env
+    from app.services import tools as toolkit
+
+    # Pass 1: model wants to create a.md -> pause with an empty transcript.
+    monkeypatch.setattr(
+        agent_mod, "OllamaClient",
+        FakeOllama([turn_calling("create_file", path="Notes/one.md", content="1")]),
+    )
+    events = run_agent(agent_mod, AgentRequest(query="two files"))
+    pause = next(e for e in events if e["type"] == "approval_required")
+    assert pause["transcript"] == []
+
+    # Pass 2: client approves; server creates it, then the model asks for the second file.
+    monkeypatch.setattr(
+        agent_mod, "OllamaClient",
+        FakeOllama([turn_calling("create_file", path="Notes/two.md", content="2")]),
+    )
+    events = run_agent(
+        agent_mod,
+        AgentRequest(
+            query="two files",
+            tool_transcript=[ToolTranscriptEntry(
+                id=pause["id"], name="create_file",
+                arguments={"path": "Notes/one.md", "content": "1"}, approved=True)],
+        ),
+    )
+    assert (vault / "Notes" / "one.md").read_text() == "1"
+    pause2 = next(e for e in events if e["type"] == "approval_required")
+    first = pause2["transcript"][0]
+    assert first["name"] == "create_file" and first["result"].startswith("Created")
+
+    # Pass 3: server-authored transcript + the new decision. The first create must NOT re-run.
+    calls = []
+    real = toolkit.execute
+
+    async def spy(name, arguments, services=None):
+        calls.append((name, arguments.get("path")))
+        return await real(name, arguments, services)
+
+    monkeypatch.setattr(toolkit, "execute", spy)
+    monkeypatch.setattr(agent_mod, "OllamaClient", FakeOllama([turn_saying("Both done.")]))
+    entries = [ToolTranscriptEntry(**t) for t in pause2["transcript"]]
+    entries.append(ToolTranscriptEntry(
+        id=pause2["id"], name="create_file",
+        arguments={"path": "Notes/two.md", "content": "2"}, approved=True))
+    events = run_agent(agent_mod, AgentRequest(query="two files", tool_transcript=entries))
+
+    assert calls == [("create_file", "Notes/two.md")], "an already-executed call was run again"
+    assert (vault / "Notes" / "two.md").read_text() == "2"
+    assert events[-1]["type"] == "final"
+
+
+def test_delete_always_asks_even_with_a_session_grant(agent_env, monkeypatch):
+    agent_mod, vault = agent_env
+    monkeypatch.setattr(
+        agent_mod, "OllamaClient",
+        FakeOllama([turn_calling("delete_file", path="Notes/a.md")]),
+    )
+    events = run_agent(agent_mod, AgentRequest(query="delete a", granted_tools=["delete_file"]))
+    assert any(e["type"] == "approval_required" for e in events)
+    assert (vault / "Notes" / "a.md").exists()
+
+
+# --- loop guard (task 0.6) -----------------------------------------------------
+
+def test_repeated_identical_call_is_refused(agent_env, monkeypatch):
+    agent_mod, _ = agent_env
+    from app.services import tools as toolkit
+
+    ran = []
+    real = toolkit.execute
+
+    async def spy(name, arguments, services=None):
+        ran.append(name)
+        return await real(name, arguments, services)
+
+    monkeypatch.setattr(toolkit, "execute", spy)
+    monkeypatch.setattr(
+        agent_mod, "OllamaClient",
+        FakeOllama([turn_calling("read_file", path="Notes/a.md") for _ in range(5)] + [turn_saying("ok")]),
+    )
+    events = run_agent(agent_mod, AgentRequest(query="read it a lot"))
+
+    assert ran.count("read_file") == agent_mod.MAX_IDENTICAL_CALLS
+    refused = [e for e in events if e["type"] == "tool_result" and not e["ok"]]
+    assert refused and "already called" in refused[0]["summary"]
+    assert events[-1]["type"] == "final"

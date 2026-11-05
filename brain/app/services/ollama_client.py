@@ -69,7 +69,8 @@ class OllamaClient:
             "stream": True,
             "options": {
                 "temperature": TEMPERATURE,
-                "num_predict": MAX_TOKENS
+                "num_predict": MAX_TOKENS,
+                "num_ctx": settings.num_ctx,
             }
         }
         # Thinking off by default: a vault answer should start in seconds, not after a long
@@ -143,7 +144,9 @@ class OllamaClient:
             "stream": True,
             "options": {
                 "temperature": TOOL_TEMPERATURE if tools else TEMPERATURE,
-                "num_predict": MAX_TOKENS,
+                # A thinking turn needs room for the reasoning plus the answer or tool call.
+                "num_predict": MAX_TOKENS * 2 if think else MAX_TOKENS,
+                "num_ctx": settings.num_ctx,
             },
         }
         if tools:
@@ -201,7 +204,7 @@ class OllamaClient:
                         if data.get("done"):
                             if collected_calls:
                                 yield {"tool_calls": collected_calls}
-                            yield {"done": {"eval_count": data.get("eval_count", 0)}}
+                            yield {"done": {"eval_count": data.get("eval_count", 0), "prompt_eval_count": data.get("prompt_eval_count", 0)}}
                             return
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to stream chat from Ollama: %s", exc)
@@ -211,7 +214,7 @@ class OllamaClient:
         """One deterministic /api/chat reply constrained to a JSON schema, thinking off.
 
         Models without a thinking mode reject `think`, so that call is retried without it.
-        No num_ctx on the shared model: a value different from the other callers' makes Ollama reload it.
+        The shared model uses settings.num_ctx like every other caller (a different value makes Ollama reload it).
         """
         payload: Dict[str, Any] = {
             "model": model or LLM_MODEL,
@@ -219,7 +222,7 @@ class OllamaClient:
             "stream": False,
             "format": schema,
             "think": False,
-            "options": {"temperature": 0, "num_predict": MAX_TOKENS},
+            "options": {"temperature": 0, "num_predict": MAX_TOKENS, "num_ctx": settings.num_ctx},
         }
         if model:
             # Its own model is never shared with chat, so its own context size costs no reloads; 8K
@@ -250,7 +253,8 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": TEMPERATURE,
-                "num_predict": MAX_TOKENS
+                "num_predict": MAX_TOKENS,
+                "num_ctx": settings.num_ctx,
             }
         }
         

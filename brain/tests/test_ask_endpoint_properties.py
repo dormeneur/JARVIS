@@ -16,6 +16,7 @@ def _make_app_state():
     state.embedding_pipeline.ollama_url = "http://fake"
     state.embedding_pipeline.embed_query = AsyncMock(return_value=[0.1]*768)
     state.vector_store = MagicMock()
+    state.keyword_index = None
     state.vector_store.query = AsyncMock(
         return_value={"distances": [], "metadatas": [], "documents": []}
     )

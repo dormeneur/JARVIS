@@ -17,6 +17,7 @@ def mock_request():
     request.app.state.embedding_pipeline.ollama_url = "http://fake"
     request.app.state.embedding_pipeline.embed_query = AsyncMock(return_value=[0.1]*768)
     request.app.state.vector_store = MagicMock()
+    request.app.state.keyword_index = None
     request.app.state.vector_store.query = AsyncMock(
         return_value={"distances": [], "metadatas": [], "documents": []}
     )

@@ -19,9 +19,8 @@ COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY app/ ./app/
 
-# history.db lives under /app/data which is a named volume in production,
-# but in tests it needs to exist on the image. Create it and give jarvis
-# ownership before dropping privileges.
+# /app/data holds only the regenerable fs-tree snapshot (chat history lives in the vault's
+# .system/brain/). Create it and give jarvis ownership before dropping privileges.
 RUN mkdir -p /app/data && chown jarvis /app/data
 
 USER jarvis

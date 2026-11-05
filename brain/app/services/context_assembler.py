@@ -9,15 +9,22 @@ from app.models.ask_models import Source
 from app.services.document_loader import DocumentLoader
 from app.services.text_chunker import TextChunker
 from app.config import settings
+from app.services.ollama_client import MAX_TOKENS
 from app.services.tools import ToolError, safe_path
+from app.services.vault_text import DATA_RULE, wrap_vault_text
 
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_CONTEXT_TOKENS = 2048
+# Budget follows the context window: window - reply - ~2k for system prompt, memory index, history
+# and question. 5120 at the default 8192.
+MAX_CONTEXT_TOKENS = max(2048, settings.num_ctx - MAX_TOKENS - 2048)
+# Oldest chat turns are dropped first once history passes this.
+HISTORY_TOKEN_BUDGET = 1500
 SYSTEM_PROMPT = """You are JARVIS, a personal AI assistant. You answer questions using ONLY
 the provided context from the user's personal knowledge vault. If the
-context doesn't contain enough information to answer, say so clearly."""
+context doesn't contain enough information to answer, say so clearly.
+""" + DATA_RULE + "\n"
 
 class ContextAssembler:
     """Service to assemble LLM prompts from retrieved chunks and attachments."""
@@ -64,7 +71,7 @@ class ContextAssembler:
                     continue
                 
                 # Format the context block
-                block = f"[Source: {path}]\n{content}\n"
+                block = f"[Source: {path}]\n{wrap_vault_text(path, content)}\n"
                 
                 # Truncate if it exceeds remaining budget
                 block_tokens = self.chunker._count_tokens(block)
@@ -72,7 +79,7 @@ class ContextAssembler:
                     remaining = MAX_CONTEXT_TOKENS - current_tokens
                     if remaining > 50:  # Only add if we have a reasonable amount of tokens left
                         truncated_content = self._truncate_to_tokens(content, remaining - 20)
-                        block = f"[Source: {path}]\n{truncated_content}...\n"
+                        block = f"[Source: {path}]\n{wrap_vault_text(path, truncated_content + '...')}\n"
                         context_parts.append(block)
                         used_sources.append(Source(path=path, chunk=0, score=1.0))
                     # Budget exhausted, stop processing any more context
@@ -96,14 +103,14 @@ class ContextAssembler:
             if any(s.path == source.path and s.score == 1.0 for s in used_sources):
                 continue
                 
-            block = f"[Source: {source.path}]\n{content}\n"
+            block = f"[Source: {source.path}]\n{wrap_vault_text(source.path, content)}\n"
             block_tokens = self.chunker._count_tokens(block)
             
             if current_tokens + block_tokens > MAX_CONTEXT_TOKENS:
                 remaining = MAX_CONTEXT_TOKENS - current_tokens
                 if remaining > 50:
                     truncated_content = self._truncate_to_tokens(content, remaining - 20)
-                    block = f"[Source: {source.path}]\n{truncated_content}...\n"
+                    block = f"[Source: {source.path}]\n{wrap_vault_text(source.path, truncated_content + '...')}\n"
                     context_parts.append(block)
                     
                     # Store clean Source for API return (remove content payload)
@@ -137,7 +144,12 @@ class ContextAssembler:
         # 4. Process Chat History (last 10 turns max)
         history_parts = []
         # Take the last 10 turns (this avoids massive token blooms)
-        recent_history = chat_history[-10:] if chat_history else []
+        recent_history = list(chat_history[-10:]) if chat_history else []
+        while len(recent_history) > 1 and sum(
+            self.chunker._count_tokens(str(getattr(m, "content", None) or (m.get("content") if isinstance(m, dict) else m)))
+            for m in recent_history
+        ) > HISTORY_TOKEN_BUDGET:
+            recent_history.pop(0)
         for msg in recent_history:
             role_name = "User" if msg.role == "user" else "JARVIS"
             # Ensure safe access whether it's dict or pydantic BaseModel

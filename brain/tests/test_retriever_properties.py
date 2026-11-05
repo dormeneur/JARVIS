@@ -129,4 +129,4 @@ def test_property_23_context_budget(assembler_with_mocks):
 
     # 23: Context Token Budget
     # Check it truncated
-    assert len(prompt) < MAX_CONTEXT_TOKENS + 500  # allow some overhead for the prompt template
+    assert len(prompt) < MAX_CONTEXT_TOKENS + 1000  # overhead: template, data rule, <vault_file> wrapper

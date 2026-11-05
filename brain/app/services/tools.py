@@ -16,11 +16,13 @@ from __future__ import annotations
 import inspect
 import logging
 import shutil
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.config import settings
 from app.services.document_loader import EXCLUDED_FOLDERS
+from app.services.vault_text import wrap_vault_text
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,12 @@ RISK_WRITE = "write"    # creates/modifies — approval required
 RISK_DELETE = "delete"  # destructive — approval required, session-grant refused
 
 # Caps so a confused model cannot flood the vault or the prompt.
-MAX_READ_CHARS = 20_000
+# ~4 chars per token: a tool result may use about a quarter of the context window.
+MAX_TOOL_OUTPUT_CHARS = settings.num_ctx
 MAX_LIST_ENTRIES = 200
 MAX_WRITE_BYTES = 256 * 1024
+TRUNCATION_GUARD_MIN = 2000   # files at least this long can't be rewritten much shorter
+TRASH_KEEP_DAYS = 30
 
 # Mirrors sanitizer.ALLOWED_EXTENSIONS — the set the agent may author.
 WRITABLE_EXTENSIONS = {
@@ -138,9 +143,9 @@ def _tool_read_file(path: str, **_: Any) -> str:
     except OSError as exc:
         raise ToolError(f"could not read {_rel(target)}: {exc}") from exc
 
-    if len(text) > MAX_READ_CHARS:
-        text = text[:MAX_READ_CHARS] + f"\n[truncated at {MAX_READ_CHARS} chars]"
-    return f"Contents of {_rel(target)}:\n{text}"
+    if len(text) > MAX_TOOL_OUTPUT_CHARS:
+        text = text[:MAX_TOOL_OUTPUT_CHARS] + f"\n[truncated at {MAX_TOOL_OUTPUT_CHARS} chars]"
+    return f"Contents of {_rel(target)}:\n{wrap_vault_text(_rel(target), text)}"
 
 
 async def _tool_search_vault(query: str, top_k: int = 5, *, _services: Any = None, **_: Any) -> str:
@@ -155,8 +160,47 @@ async def _tool_search_vault(query: str, top_k: int = 5, *, _services: Any = Non
         snippet = (r.get("content") or "").strip().replace("\n", " ")
         if len(snippet) > 400:
             snippet = snippet[:400] + "…"
-        lines.append(f"- [{r['path']}] {snippet}")
-    return "\n".join(lines)
+        lines.append(f"- [{r['path']}] {wrap_vault_text(r['path'], snippet)}")
+    return "\n".join(lines)[:MAX_TOOL_OUTPUT_CHARS]
+
+
+def _write(target: Path, body: str) -> None:
+    """Write UTF-8 with plain \n endings on every OS (write_text would turn them into \r\n on Windows)."""
+    target.write_bytes(body.encode("utf-8"))
+
+
+def _trash_root() -> Path:
+    # Under .system, so it is never indexed or synced; safe_path refuses .system, so the model
+    # can never reach it either. Daily backups do include it.
+    return _vault_root() / ".system" / "brain" / "trash"
+
+
+def _to_trash(target: Path, *, move: bool) -> None:
+    """Keep the old version of a file (copy) or the whole item (move) for TRASH_KEEP_DAYS."""
+    dest = _trash_root() / datetime.now().strftime("%Y%m%d-%H%M%S-%f") / _rel(target)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if move:
+        shutil.move(str(target), str(dest))
+    else:
+        shutil.copy2(target, dest)
+
+
+def prune_trash(days: int = TRASH_KEEP_DAYS) -> int:
+    """Remove trash stamps older than `days`. Returns how many were removed. Never raises."""
+    removed = 0
+    root = _trash_root()
+    if not root.is_dir():
+        return 0
+    cutoff = datetime.now() - timedelta(days=days)
+    for stamp in root.iterdir():
+        try:
+            when = datetime.strptime(stamp.name[:15], "%Y%m%d-%H%M%S")
+        except ValueError:
+            continue
+        if when < cutoff:
+            shutil.rmtree(stamp, ignore_errors=True)
+            removed += 1
+    return removed
 
 
 def _tool_create_file(path: str, content: str = "", **_: Any) -> str:
@@ -170,7 +214,7 @@ def _tool_create_file(path: str, content: str = "", **_: Any) -> str:
         raise ToolError(f"content exceeds {MAX_WRITE_BYTES} bytes")
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(body, encoding="utf-8")
+    _write(target, body)
     return f"Created {_rel(target)} ({len(body)} chars)."
 
 
@@ -184,8 +228,70 @@ def _tool_edit_file(path: str, content: str, **_: Any) -> str:
     if len(body.encode("utf-8")) > MAX_WRITE_BYTES:
         raise ToolError(f"content exceeds {MAX_WRITE_BYTES} bytes")
 
-    target.write_text(body, encoding="utf-8")
+    old = target.read_text(encoding="utf-8", errors="replace")
+    # A small model can only write ~1000 tokens, so a rewrite of a big file that comes out much
+    # shorter is almost certainly cut off, and saving it would destroy the rest.
+    if len(old) >= TRUNCATION_GUARD_MIN and len(body) < len(old) * 0.6:
+        raise ToolError(
+            "the new content is much shorter than the file, so it looks truncated. "
+            "Use replace_in_file or append_to_file instead."
+        )
+
+    _to_trash(target, move=False)
+    _write(target, body)
     return f"Updated {_rel(target)} ({len(body)} chars)."
+
+
+def _tool_replace_in_file(path: str, old_text: str, new_text: str = "", **_: Any) -> str:
+    target = safe_path(path, must_exist=True)
+    _check_writable_ext(target)
+    if target.is_dir():
+        raise ToolError(f"'{_rel(target)}' is a directory")
+    if not old_text:
+        raise ToolError("old_text must not be empty")
+
+    # Compare on \n endings; the file is written back with \n.
+    text = target.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+    old_text = old_text.replace("\r\n", "\n")
+    n = text.count(old_text)
+    if n == 0:
+        raise ToolError("old_text not found; read_file first and copy it exactly")
+    if n > 1:
+        raise ToolError(f"old_text appears {n} times; include more surrounding text")
+
+    body = text.replace(old_text, (new_text or "").replace("\r\n", "\n"), 1)
+    if len(body.encode("utf-8")) > MAX_WRITE_BYTES:
+        raise ToolError(f"result exceeds {MAX_WRITE_BYTES} bytes")
+    _to_trash(target, move=False)
+    _write(target, body)
+    return f"Edited {_rel(target)} (replaced {len(old_text)} chars with {len(new_text or '')})."
+
+
+def _tool_append_to_file(path: str, text: str, **_: Any) -> str:
+    target = safe_path(path)
+    _check_writable_ext(target)
+    if target.is_dir():
+        raise ToolError(f"'{_rel(target)}' is a directory")
+    add = text or ""
+    if not add:
+        raise ToolError("text must not be empty")
+
+    if target.exists():
+        existing = target.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+        sep = "" if existing == "" or existing.endswith("\n") else "\n"
+        body = existing + sep + add
+        if len(body.encode("utf-8")) > MAX_WRITE_BYTES:
+            raise ToolError(f"result exceeds {MAX_WRITE_BYTES} bytes")
+        _to_trash(target, move=False)
+        verb = "Appended to"
+    else:
+        body = add
+        if len(body.encode("utf-8")) > MAX_WRITE_BYTES:
+            raise ToolError(f"content exceeds {MAX_WRITE_BYTES} bytes")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        verb = "Created"
+    _write(target, body)
+    return f"{verb} {_rel(target)} ({len(add)} chars added)."
 
 
 def _tool_move_file(source: str, destination: str, **_: Any) -> str:
@@ -211,11 +317,9 @@ def _tool_delete_file(path: str, **_: Any) -> str:
     if not rel:
         raise ToolError("refusing to delete the vault root")
 
-    if target.is_dir():
-        shutil.rmtree(target)
-        return f"Deleted folder {rel} and its contents."
-    target.unlink()
-    return f"Deleted {rel}."
+    kind = "folder" if target.is_dir() else "file"
+    _to_trash(target, move=True)
+    return f"Moved {kind} {rel} to trash (kept {TRASH_KEEP_DAYS} days)."
 
 
 # ---------------------------------------------------------------------------
@@ -308,9 +412,38 @@ TOOLS: Dict[str, Tool] = {
             _tool_create_file,
         ),
         Tool(
+            "replace_in_file",
+            "Change one passage in an existing file. old_text must appear exactly once; "
+            "copy it from read_file. Prefer this over edit_file for any file longer than a few lines.",
+            _obj(
+                {
+                    "path": {**_STR, "description": "Vault-relative path to an existing file"},
+                    "old_text": {**_STR, "description": "The exact text to replace (must appear once)"},
+                    "new_text": {**_STR, "description": "What to put there instead"},
+                },
+                ["path", "old_text", "new_text"],
+            ),
+            RISK_WRITE,
+            _tool_replace_in_file,
+        ),
+        Tool(
+            "append_to_file",
+            "Add text to the end of a file (creates the file if it does not exist). "
+            "Use this to record new facts or notes without rewriting what is already there.",
+            _obj(
+                {
+                    "path": {**_STR, "description": "Vault-relative path including filename and extension"},
+                    "text": {**_STR, "description": "The text to add"},
+                },
+                ["path", "text"],
+            ),
+            RISK_WRITE,
+            _tool_append_to_file,
+        ),
+        Tool(
             "edit_file",
-            "Replace the entire contents of an existing file. Read the file first so you "
-            "preserve anything that should stay.",
+            "Replace the whole file. Only for small files (under 2000 characters); for bigger "
+            "files use replace_in_file or append_to_file. Read the file first.",
             _obj(
                 {
                     "path": {**_STR, "description": "Vault-relative path to an existing file"},
@@ -336,7 +469,7 @@ TOOLS: Dict[str, Tool] = {
         ),
         Tool(
             "delete_file",
-            "Permanently delete a file, or a folder and everything inside it. "
+            "Delete a file, or a folder and everything inside it (moved to trash, kept 30 days). "
             "Only use when the user clearly asked for a deletion.",
             _obj({"path": {**_STR, "description": "Vault-relative path to delete"}}, ["path"]),
             RISK_DELETE,

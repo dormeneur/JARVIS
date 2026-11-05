@@ -20,6 +20,7 @@ from app.config import settings
 from app.services.ollama_client import OllamaClient
 from app.services.retriever import Retriever
 from app.services.tools import ToolError, safe_path
+from app.services.traces import traced
 
 router = APIRouter(tags=["forms"])
 logger = logging.getLogger(__name__)
@@ -191,7 +192,7 @@ def build_messages(title: str, questions: List[FormQuestion], files: list[tuple[
 
 async def answer_stream(req: FormAnswersRequest, app_state):
     ollama = OllamaClient(app_state.embedding_pipeline.ollama_url)
-    retriever = Retriever(app_state.embedding_pipeline, app_state.vector_store)
+    retriever = Retriever(app_state.embedding_pipeline, app_state.vector_store, getattr(app_state, "keyword_index", None))
     profile = load_profile() + load_attachments(app_state, req.attachments)
 
     for start in range(0, len(req.questions), BATCH_SIZE):
@@ -230,7 +231,7 @@ class ComposeRequest(BaseModel):
 
 async def compose_stream(req: ComposeRequest, app_state):
     ollama = OllamaClient(app_state.embedding_pipeline.ollama_url)
-    retriever = Retriever(app_state.embedding_pipeline, app_state.vector_store)
+    retriever = Retriever(app_state.embedding_pipeline, app_state.vector_store, getattr(app_state, "keyword_index", None))
     yield json.dumps({"working": 0}) + "\n"
     files = load_profile() + load_attachments(app_state, req.attachments) + await _extra_context(retriever, [FormQuestion(id="c", text=req.question)])
     vault = "\n\n".join(f"File: {path}\n{text}" for path, text in files) or "(no vault files)"
@@ -252,10 +253,16 @@ async def compose_stream(req: ComposeRequest, app_state):
 @router.post("/brain/ai/compose-answer")
 async def compose_answer(req: ComposeRequest, request: Request):
     """NDJSON tokens of a drafted answer to an open question, from the vault (and public research)."""
-    return StreamingResponse(compose_stream(req, request.app.state), media_type="application/x-ndjson")
+    return StreamingResponse(
+        traced("compose", compose_stream(req, request.app.state), model=settings.llm_model),
+        media_type="application/x-ndjson",
+    )
 
 
 @router.post("/brain/ai/form-answers")
 async def form_answers(req: FormAnswersRequest, request: Request):
     """NDJSON: one {id, answer|null, source|null} line per question as each batch finishes, then {done}."""
-    return StreamingResponse(answer_stream(req, request.app.state), media_type="application/x-ndjson")
+    return StreamingResponse(
+        traced("form_answers", answer_stream(req, request.app.state), model=settings.form_model or settings.llm_model),
+        media_type="application/x-ndjson",
+    )

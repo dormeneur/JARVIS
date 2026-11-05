@@ -21,4 +21,6 @@ hypothesis==6.122.3
 
 # Utilities
 tenacity==9.0.0
+numpy>=1.26,<3  # SQLite vector store; already pulled in by chromadb-client
+tzdata==2025.2  # the slim image has no system timezone database
 chromadb-client==0.5.23

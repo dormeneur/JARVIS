@@ -14,11 +14,14 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+from app.config import settings
 from typing import Generator
 
-# Path is under /app/data so the non-root jarvis user can write it
-# (the directory is created + chowned in the Dockerfile).
-_DB_PATH = "/app/data/history.db"
+# Lives in the vault's .system/brain/ so it survives `docker compose up --build`, is hidden from
+# sync and indexing, and is included in the daily vault backup. (The container's own filesystem
+# is wiped on every rebuild.)
+_DB_PATH = str(settings.history_db or Path(settings.vault_path) / ".system" / "brain" / "history.db")
 
 _CREATE_SESSIONS = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -39,8 +42,8 @@ CREATE TABLE IF NOT EXISTS messages (
 )
 """
 
-# Enable WAL mode once at startup for better concurrent read performance.
-_PRAGMA_WAL = "PRAGMA journal_mode=WAL"
+# DELETE mode, not WAL: WAL's shared-memory file is unreliable on Docker Desktop bind mounts.
+_PRAGMA_WAL = "PRAGMA journal_mode=DELETE"
 _PRAGMA_FK  = "PRAGMA foreign_keys=ON"
 
 

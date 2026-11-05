@@ -20,7 +20,13 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = [".md", ".txt", ".pdf", ".json", ".csv", ".docx"]
 MAX_FILE_SIZE_MB = 1
 EXCLUDED_FOLDERS = ["Secrets", "system", ".system", ".git", "__pycache__", "node_modules"]
-EXCLUDED_FILES = [".gitkeep", "file_versions.db", "devices.json"]
+# global_index.md is generated from the index (it lists every file's summary, its own included), so
+# indexing it makes it change on every pass and re-queue itself forever. The brain reads it directly.
+# Top-level folders of model-written summaries (the daily digest). They stay in the vault and sync, but
+# are not indexed: otherwise a small model's paraphrase of your notes would rank as evidence for later
+# answers and its mistakes would compound.
+GENERATED_TOP_FOLDERS = ["Digest"]
+EXCLUDED_FILES = [".gitkeep", "file_versions.db", "devices.json", "global_index.md"]
 
 
 @dataclass
@@ -101,6 +107,13 @@ class DocumentLoader:
             if part in EXCLUDED_FOLDERS:
                 return True
         
+        try:
+            top = path.relative_to(self.vault_path).parts[:1]
+        except ValueError:
+            top = ()
+        if top and top[0].casefold() in {f.casefold() for f in GENERATED_TOP_FOLDERS}:
+            return True
+
         # Check filename exclusions
         if path.name in EXCLUDED_FILES:
             return True

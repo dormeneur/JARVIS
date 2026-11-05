@@ -25,6 +25,7 @@ def _mock_app_state():
     app.state.embedding_pipeline.embed_query = AsyncMock(return_value=[0.1] * 768)
 
     app.state.vector_store = MagicMock()
+    app.state.keyword_index = None
     # Return empty results → forces the threshold-fallback path
     app.state.vector_store.query = AsyncMock(
         return_value={"distances": [], "metadatas": [], "documents": []}

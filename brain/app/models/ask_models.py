@@ -34,6 +34,11 @@ class ToolTranscriptEntry(BaseModel):
     name: str = Field(..., description="Tool name")
     arguments: dict = Field(default_factory=dict, description="Arguments the model chose")
     approved: bool = Field(..., description="Whether the user allowed this call")
+    id: Optional[str] = Field(default=None, description="Call id the server issued")
+    result: Optional[str] = Field(
+        default=None,
+        description="Set by the server once the call ran (or was denied); such entries are replayed, never re-executed",
+    )
 
 
 class AgentRequest(BaseModel):

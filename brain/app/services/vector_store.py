@@ -1,5 +1,6 @@
 """Vector storage service using ChromaDB."""
 
+import asyncio
 import logging
 from typing import List, Dict, Any, Optional
 
@@ -40,7 +41,7 @@ class VectorStore:
         )
         logger.info(f"Connected to ChromaDB at {host}:{port}, collection '{COLLECTION_NAME}'")
 
-    async def upsert_chunks(self, chunks: List[Chunk], embeddings: List[List[float]], last_modified: str, summary: str = "") -> None:
+    async def upsert_chunks(self, chunks: List[Chunk], embeddings: List[List[float]], last_modified: str, summary: str = "", file_hash: str = "", index_version: int = 0) -> None:
         """Insert or update chunks with their embeddings.
         
         Args:
@@ -61,6 +62,9 @@ class VectorStore:
                 "source_path": c.source_path,
                 "chunk_index": c.chunk_index,
                 "content_hash": c.content_hash,
+                # file_hash is what the indexer compares to detect an edit; content_hash is per chunk.
+                "file_hash": file_hash,
+                "index_version": index_version,
                 "last_modified": last_modified,
                 "summary": summary
             }
@@ -68,11 +72,14 @@ class VectorStore:
         ]
         
         # Upsert operation (inserts if ID new, updates if ID exists)
-        self.collection.upsert(
+        # The Chroma client is synchronous: run it in a thread so queries and indexing
+        # don't freeze the event loop (and with it every streaming response).
+        await asyncio.to_thread(
+            self.collection.upsert,
             ids=ids,
             embeddings=embeddings,
             metadatas=metadatas,
-            documents=documents
+            documents=documents,
         )
         logger.debug(f"Upserted {len(chunks)} chunks to ChromaDB")
 
@@ -83,9 +90,7 @@ class VectorStore:
             source_path: The vault-relative path to the file
         """
         # Delete using metadata filtering
-        self.collection.delete(
-            where={"source_path": source_path}
-        )
+        await asyncio.to_thread(self.collection.delete, where={"source_path": source_path})
         logger.debug(f"Deleted chunks for path: {source_path}")
 
     async def query(self, query_embedding: List[float], top_k: int = 5, filter_paths: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -112,7 +117,7 @@ class VectorStore:
             else:
                 kwargs["where"] = {"source_path": {"$in": filter_paths}}
                 
-        results = self.collection.query(**kwargs)
+        results = await asyncio.to_thread(self.collection.query, **kwargs)
         return results
 
     async def get_all_metadata(self) -> List[Dict[str, Any]]:
@@ -122,10 +127,43 @@ class VectorStore:
             List of metadata dictionaries
         """
         # ChromaDB paginates get() by default. We get everything by passing no limit.
-        results = self.collection.get(
-            include=["metadatas"]
-        )
+        results = await asyncio.to_thread(self.collection.get, include=["metadatas"])
         return results.get("metadatas", [])
+
+    async def iter_all(self, batch: int = 500):
+        """Yield (id, document, metadata) for every stored chunk, one page at a time."""
+        offset = 0
+        while True:
+            page = await asyncio.to_thread(
+                self.collection.get, include=["documents", "metadatas"], limit=batch, offset=offset
+            )
+            ids = page.get("ids") or []
+            if not ids:
+                return
+            docs = page.get("documents") or [""] * len(ids)
+            metas = page.get("metadatas") or [{}] * len(ids)
+            for cid, doc, meta in zip(ids, docs, metas):
+                yield cid, doc, meta or {}
+            if len(ids) < batch:
+                return
+            offset += batch
+
+    async def iter_all_with_embeddings(self, batch: int = 200):
+        """Yield (id, document, metadata, embedding) for every chunk: used to migrate to SQLite."""
+        offset = 0
+        while True:
+            page = await asyncio.to_thread(
+                self.collection.get, include=["documents", "metadatas", "embeddings"], limit=batch, offset=offset
+            )
+            ids = page.get("ids") or []
+            if not ids:
+                return
+            embeddings = page.get("embeddings")
+            for i, cid in enumerate(ids):
+                yield cid, (page.get("documents") or [""] * len(ids))[i], (page.get("metadatas") or [{}] * len(ids))[i] or {}, list(embeddings[i])
+            if len(ids) < batch:
+                return
+            offset += batch
 
     async def count(self) -> int:
         """Get the total number of chunks stored.
@@ -133,4 +171,4 @@ class VectorStore:
         Returns:
             Integer count of items in collection
         """
-        return self.collection.count()
+        return await asyncio.to_thread(self.collection.count)

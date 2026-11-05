@@ -6,12 +6,16 @@ from typing import List
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from app.config import settings
 from app.services.text_chunker import Chunk
 
 logger = logging.getLogger(__name__)
 
 # Constants
-EMBEDDING_MODEL = "nomic-embed-text"
+# nomic-embed-text is trained with task prefixes and loses quality without them. The prefix goes into
+# the embedding input only: the text stored in Chroma stays clean.
+NOMIC_DOCUMENT_PREFIX = "search_document: "
+NOMIC_QUERY_PREFIX = "search_query: "
 BATCH_SIZE = 32
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2
@@ -30,6 +34,10 @@ class EmbeddingPipeline:
         self.ollama_url = ollama_url.rstrip("/")
         # We reuse the client for connection pooling
         self.client = httpx.AsyncClient(timeout=30.0)
+
+    @staticmethod
+    def _prefixed(text: str, prefix: str) -> str:
+        return prefix + text if settings.embedding_model.startswith("nomic-embed-text") else text
 
     async def close(self):
         """Close the HTTP client."""
@@ -57,7 +65,7 @@ class EmbeddingPipeline:
             response = await self.client.post(
                 f"{self.ollama_url}{OLLAMA_EMBED_API_PATH}",
                 json={
-                    "model": EMBEDDING_MODEL,
+                    "model": settings.embedding_model,
                     "input": texts
                 }
             )
@@ -95,7 +103,7 @@ class EmbeddingPipeline:
         
         for i in range(0, len(chunks), BATCH_SIZE):
             batch_chunks = chunks[i:i + BATCH_SIZE]
-            batch_texts = [chunk.content for chunk in batch_chunks]
+            batch_texts = [self._prefixed(chunk.content, NOMIC_DOCUMENT_PREFIX) for chunk in batch_chunks]
             batch_embeddings = await self.embed_batch(batch_texts)
             all_embeddings.extend(batch_embeddings)
             
@@ -110,5 +118,5 @@ class EmbeddingPipeline:
         Returns:
             A single 768-dimensional float vector.
         """
-        embeddings = await self.embed_batch([query])
+        embeddings = await self.embed_batch([self._prefixed(query, NOMIC_QUERY_PREFIX)])
         return embeddings[0]

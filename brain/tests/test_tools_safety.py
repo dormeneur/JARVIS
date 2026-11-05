@@ -160,3 +160,88 @@ def test_rag_attachments_cannot_pull_secrets_or_escape(vault, path):
 
     assembler = ContextAssembler(text_chunker=None, document_loader=None)
     assert assembler._load_attachment(path) is None
+
+
+# --- targeted edits, truncation guard, trash (task 0.4) ----------------------
+
+def _call(name, **args):
+    return run(toolkit.execute(name, args))
+
+
+def test_replace_in_file_exactly_once(vault):
+    (vault / "Notes" / "r.md").write_text("one two three", encoding="utf-8")
+    assert "Edited" in _call("replace_in_file", path="Notes/r.md", old_text="two", new_text="2")
+    assert (vault / "Notes" / "r.md").read_text() == "one 2 three"
+
+
+def test_replace_in_file_not_found_and_ambiguous(vault):
+    (vault / "Notes" / "r.md").write_text("aa aa", encoding="utf-8")
+    with pytest.raises(toolkit.ToolError, match="not found"):
+        _call("replace_in_file", path="Notes/r.md", old_text="zz", new_text="x")
+    with pytest.raises(toolkit.ToolError, match="2 times"):
+        _call("replace_in_file", path="Notes/r.md", old_text="aa", new_text="x")
+    with pytest.raises(toolkit.ToolError, match="empty"):
+        _call("replace_in_file", path="Notes/r.md", old_text="", new_text="x")
+
+
+def test_replace_in_file_handles_crlf(vault):
+    (vault / "Notes" / "w.md").write_bytes(b"line1\r\nline2\r\nline3\r\n")
+    _call("replace_in_file", path="Notes/w.md", old_text="line1\r\nline2", new_text="X")
+    assert (vault / "Notes" / "w.md").read_bytes() == b"X\nline3\n"
+
+
+def test_append_creates_and_adds_missing_newline(vault):
+    _call("append_to_file", path="Profile/skills.md", text="- python")
+    assert (vault / "Profile" / "skills.md").read_text() == "- python"
+    _call("append_to_file", path="Profile/skills.md", text="- rust\n")
+    assert (vault / "Profile" / "skills.md").read_text() == "- python\n- rust\n"
+
+
+def test_append_respects_size_cap(vault):
+    with pytest.raises(toolkit.ToolError, match="exceeds"):
+        _call("append_to_file", path="Notes/big.md", text="x" * (toolkit.MAX_WRITE_BYTES + 1))
+
+
+def test_edit_file_refuses_a_truncated_rewrite(vault):
+    (vault / "Notes" / "big.md").write_text("word " * 600, encoding="utf-8")  # 3000 chars
+    with pytest.raises(toolkit.ToolError, match="truncated"):
+        _call("edit_file", path="Notes/big.md", content="word " * 100)
+    assert len((vault / "Notes" / "big.md").read_text()) == 3000
+
+
+def test_edit_file_allows_short_rewrite_of_a_small_file(vault):
+    (vault / "Notes" / "small.md").write_text("w " * 250, encoding="utf-8")  # 500 chars
+    _call("edit_file", path="Notes/small.md", content="new")
+    assert (vault / "Notes" / "small.md").read_text() == "new"
+
+
+def test_edits_keep_the_old_version_in_trash(vault):
+    (vault / "Notes" / "t.md").write_text("original", encoding="utf-8")
+    _call("edit_file", path="Notes/t.md", content="changed")
+    kept = list((vault / ".system" / "brain" / "trash").rglob("t.md"))
+    assert len(kept) == 1 and kept[0].read_text() == "original"
+
+
+def test_delete_moves_to_trash_and_prune_removes_old(vault):
+    (vault / "Notes" / "d").mkdir()
+    (vault / "Notes" / "d" / "x.md").write_text("keep me", encoding="utf-8")
+    out = _call("delete_file", path="Notes/d")
+    assert "trash" in out and not (vault / "Notes" / "d").exists()
+    stamp = next((vault / ".system" / "brain" / "trash").iterdir())
+    assert (stamp / "Notes" / "d" / "x.md").read_text() == "keep me"
+
+    assert toolkit.prune_trash() == 0  # fresh
+    old = stamp.parent / "20200101-000000-000000"
+    stamp.rename(old)
+    assert toolkit.prune_trash() == 1 and not old.exists()
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("append_to_file", {"path": "Secrets/x.md", "text": "a"}),
+    ("append_to_file", {"path": "secrets/x.md", "text": "a"}),
+    ("replace_in_file", {"path": "secrets/keys.jvs", "old_text": "TOP", "new_text": "x"}),
+])
+def test_new_tools_refuse_secrets(vault, tool, args):
+    with pytest.raises(toolkit.ToolError):
+        _call(tool, **args)
+    assert (vault / "Secrets" / "keys.jvs").read_text() == "TOPSECRET"

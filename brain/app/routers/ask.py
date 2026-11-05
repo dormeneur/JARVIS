@@ -7,10 +7,12 @@ import json
 # fitz (PyMuPDF) is a heavy native dep — import lazily inside the PDF
 # endpoint so the module is importable on dev machines without it installed.
 
+from app.services import memory_extractor
 from app.services.retriever import Retriever
 from app.services.context_assembler import ContextAssembler
 from app.services.ollama_client import LLM_MODEL, OllamaClient
 from app.services.tools import ToolError, safe_path
+from app.services.traces import traced
 
 # In standard FastAPI patterns, we might inject this via a dependency,
 # but for simplicity here we assume the indexer instance will be attached to the app state
@@ -36,7 +38,7 @@ async def generate_rag_stream(request_data: AskRequest, app_state):
     ollama_client = OllamaClient(embedder.ollama_url)  # Use same url
     
     # 1. Retrieve context
-    retriever = Retriever(embedder, store)
+    retriever = Retriever(embedder, store, getattr(app_state, "keyword_index", None))
     
     # If attachments are present, scope the vector search strictly to those files.
     # Otherwise, use the filter_paths from options.
@@ -83,6 +85,8 @@ async def generate_rag_stream(request_data: AskRequest, app_state):
             # We yield it similarly to Ollama
             yield json.dumps({"token": token}) + "\n"
             
+    memory_extractor.schedule(query)
+
     # Yield the final structured AskResponse object as the VERY LAST line
     final_response = AskResponse(
         answer=full_answer,
@@ -102,7 +106,7 @@ async def ask_brain(req: AskRequest, request: Request):
     
     if options.stream:
         return StreamingResponse(
-            generate_rag_stream(req, request.app.state),
+            traced("query", generate_rag_stream(req, request.app.state), model=LLM_MODEL, query=req.query),
             media_type="application/x-ndjson"
         )
     else:

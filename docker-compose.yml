@@ -36,7 +36,33 @@ services:
       # by tools.safe_path(), which also keeps Secrets/ and system/ unreachable.
       # (generate-files only returns a manifest; mobile writes those via jv-api.)
       - ${JARVIS_HOST_PATH:?Set JARVIS_HOST_PATH in .env}:/data/JARVIS
-    env_file: .env
+    # Hide the encrypted Secrets and the device registry from the brain: an empty in-memory folder is
+    # laid over each, so even a bug in tools.safe_path() has nothing to reach. (On a case-insensitive
+    # Windows bind mount a differently-cased spelling may still show the real folder; safe_path
+    # casefolds, and it remains the primary guard.)
+    tmpfs:
+      - /data/JARVIS/Secrets:size=64k,mode=0555
+      - /data/JARVIS/system:size=64k,mode=0555
+    # Only what the brain needs. It does NOT get .env wholesale: that holds JARVIS_JWT_SECRET (enough
+    # to mint admin tokens) and the jobs secret. Every field of brain/app/config.py is listed here;
+    # add new settings here too. (JARVIS_HISTORY_DB is left unset on purpose: empty would not mean "default".)
+    environment:
+      JARVIS_VAULT_PATH: /data/JARVIS
+      JARVIS_OLLAMA_URL: ${JARVIS_OLLAMA_URL:-http://host.docker.internal:11434}
+      JARVIS_VECTORDB_URL: ${JARVIS_VECTORDB_URL:-http://chromadb:8000}
+      JARVIS_EMBEDDING_MODEL: ${JARVIS_EMBEDDING_MODEL:-nomic-embed-text}
+      JARVIS_LLM_MODEL: ${JARVIS_LLM_MODEL:-qwen3:4b}
+      JARVIS_FORM_MODEL: ${JARVIS_FORM_MODEL:-}
+      JARVIS_LOG_LEVEL: ${JARVIS_LOG_LEVEL:-INFO}
+      JARVIS_NUM_CTX: ${JARVIS_NUM_CTX:-8192}
+      JARVIS_AGENT_THINK: ${JARVIS_AGENT_THINK:-false}
+      JARVIS_HYBRID_SEARCH: ${JARVIS_HYBRID_SEARCH:-true}
+      JARVIS_VECTOR_BACKEND: ${JARVIS_VECTOR_BACKEND:-sqlite}
+      JARVIS_MEMORY_EXTRACTION: ${JARVIS_MEMORY_EXTRACTION:-true}
+      JARVIS_TRACE_TEXT: ${JARVIS_TRACE_TEXT:-false}
+      JARVIS_TIMEZONE: ${JARVIS_TIMEZONE:-Asia/Kolkata}
+      JARVIS_DIGEST_TIME: ${JARVIS_DIGEST_TIME:-07:30}
+      JARVIS_NTFY_URL: ${JARVIS_NTFY_URL:-}
     depends_on:
       chromadb:
         condition: service_started

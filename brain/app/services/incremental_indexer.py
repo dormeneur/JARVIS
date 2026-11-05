@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any
 
 from app.models.ask_models import IndexStatus
-from app.services.document_loader import DocumentLoader
+from app.services.document_loader import DocumentLoader, EXCLUDED_FOLDERS
 from app.services.text_chunker import TextChunker
 from app.services.embedding_pipeline import EmbeddingPipeline
 from app.services.vector_store import VectorStore
@@ -16,6 +16,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Bump when what gets embedded changes (prefixes, chunking, embedding model); every file is
+# re-indexed once.
+_EXCLUDED_TOP = frozenset(f.casefold() for f in EXCLUDED_FOLDERS)
+INDEX_VERSION = 2  # 2: nomic search_document/search_query prefixes
+
 class IncrementalIndexer:
     """Orchestrates loading, chunking, embedding, and storing documents."""
     
@@ -24,12 +29,14 @@ class IncrementalIndexer:
         document_loader: DocumentLoader,
         text_chunker: TextChunker,
         embedding_pipeline: EmbeddingPipeline,
-        vector_store: VectorStore
+        vector_store: VectorStore,
+        keyword_index=None,
     ):
         self.loader = document_loader
         self.chunker = text_chunker
         self.embedder = embedding_pipeline
         self.store = vector_store
+        self.keyword = keyword_index
         
         # Tracking variables
         self.is_indexing = False
@@ -78,6 +85,8 @@ class IncrementalIndexer:
         logger.info("Starting incremental indexing pass...")
         
         try:
+            await self._sync_keyword_index()
+
             # Get current DB state
             existing_metadata = await self.store.get_all_metadata()
             db_state = self._group_by_path(existing_metadata)
@@ -107,6 +116,8 @@ class IncrementalIndexer:
                 # Needs update
                 if status == "modified":
                     await self.store.delete_by_path(doc.path)
+                    if self.keyword:
+                        await self.keyword.delete_by_path(doc.path)
                     pass_modified += 1
                     self.files_modified += 1
                 else:
@@ -135,8 +146,12 @@ class IncrementalIndexer:
                     chunks=chunks, 
                     embeddings=embeddings, 
                     last_modified=doc.last_modified.isoformat() if hasattr(doc.last_modified, 'isoformat') else str(doc.last_modified),
-                    summary=summary
+                    summary=summary,
+                    file_hash=doc.content_hash,
+                    index_version=INDEX_VERSION,
                 )
+                if self.keyword:
+                    await self.keyword.upsert(chunks)
                 pass_chunks += len(chunks)
                 self.chunks_created += len(chunks)
                 self.files_indexed += 1
@@ -148,6 +163,8 @@ class IncrementalIndexer:
             for path in list(db_state.keys()):
                 if path not in disk_paths:
                     await self.store.delete_by_path(path)
+                    if self.keyword:
+                        await self.keyword.delete_by_path(path)
                     pass_deleted += 1
                     self.files_deleted += 1
                     
@@ -173,28 +190,52 @@ class IncrementalIndexer:
         finally:
             self.is_indexing = False
             
-    def _group_by_path(self, metadatas: List[Dict[str, Any]]) -> Dict[str, str]:
-        """Group existing metadata by source_path to get their hashes.
-        
-        Returns a dict of path -> content_hash.
-        Note: We only need the hash of the first chunk since they all share the document hash.
+    async def _sync_keyword_index(self) -> None:
+        """The keyword index is derived from the vector store: if the counts differ (first run
+        after upgrading, or a crash between the two writes), rebuild it from there."""
+        if not self.keyword:
+            return
+        try:
+            if await self.keyword.count() == await self.store.count():
+                return
+            logger.info("Keyword index out of step with the vector store; rebuilding it.")
+            await self.keyword.clear()
+            batch = []
+            async for chunk_id, document, meta in self.store.iter_all():
+                path = meta.get("source_path", "")
+                if not path or path.replace(chr(92), "/").split("/")[0].casefold() in _EXCLUDED_TOP:
+                    continue
+                batch.append((chunk_id, path, meta.get("chunk_index", 0), document or ""))
+                if len(batch) >= 500:
+                    await self.keyword.upsert_rows(batch)
+                    batch = []
+            await self.keyword.upsert_rows(batch)
+        except Exception as e:
+            logger.error(f"Keyword index rebuild failed: {e}")
+
+    def _group_by_path(self, metadatas: List[Dict[str, Any]]) -> Dict[str, tuple]:
+        """Group existing metadata by source_path.
+
+        Returns path -> (file_hash, index_version). Legacy chunks (indexed before these keys
+        existed) map to (None, None), so they are re-indexed once.
         """
-        paths = {}
+        paths: Dict[str, tuple] = {}
         for meta in metadatas:
             path = meta.get("source_path")
-            hash_val = meta.get("content_hash")
-            if path and hash_val and path not in paths:
-                paths[path] = hash_val
+            if not path:
+                continue
+            current = paths.get(path)
+            if current is None or (current == (None, None) and meta.get("file_hash")):
+                paths[path] = (meta.get("file_hash"), meta.get("index_version"))
         return paths
-        
-    def _has_changed(self, path: str, current_hash: str, db_state: Dict[str, str]) -> str:
+
+    def _has_changed(self, path: str, current_hash: str, db_state: Dict[str, tuple]) -> str:
         """Determine if a file has changed compared to DB state."""
         if path not in db_state:
             return "new"
-        
-        if db_state[path] == current_hash:
+        file_hash, version = db_state[path]
+        if file_hash == current_hash and version == INDEX_VERSION:
             return "unchanged"
-            
         return "modified"
 
     async def _update_global_memory(self) -> None:

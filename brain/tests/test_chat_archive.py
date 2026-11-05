@@ -188,3 +188,10 @@ class TestArchiveJobIntegrity:
         with patch.object(history_db_module, "_DB_PATH", db_path):
             msgs = client.get("/brain/chat/sessions/multi").json()
             assert len(msgs) == 5
+
+
+def test_init_db_creates_missing_folder(tmp_path):
+    db_path = str(tmp_path / ".system" / "brain" / "history.db")
+    with patch.object(history_db_module, "_DB_PATH", db_path):
+        history_db_module.init_db()
+    assert (tmp_path / ".system" / "brain" / "history.db").exists()
