@@ -160,6 +160,26 @@ Exceeding a limit returns `429` + `Retry-After`, and is audit-logged.
 
 ---
 
+## What jv-brain can see (as built 2026-11-05)
+
+The brain is the one component that talks to the model, so it is kept deliberately blind:
+
+- **Environment:** it gets an explicit list of `JARVIS_*` settings in `docker-compose.yml`, not `.env`. It
+  has no `JARVIS_JWT_SECRET` (enough to mint admin tokens) and no jobs secret. A new brain setting must be
+  added to that list.
+- **Filesystem:** the vault is mounted read-write (the agent's approved tools write there), but an empty
+  in-memory folder is laid over `Secrets/` and `system/` (device registry). Defence in depth only: on a
+  case-insensitive Windows bind mount a differently-cased spelling (`secrets/`) can still reach the real
+  folder (verified), so `tools.safe_path()` (casefold + vault-root containment) and the loader's
+  `EXCLUDED_FOLDERS` stay the primary guards, each with tests.
+- **Retrieved text is data:** vault text is wrapped in `<vault_file>` tags and flagged if it reads like
+  instructions (`services/vault_text.py`), and every mutation still needs an approval. Deletions always
+  ask (no session grant) and are moved to `.system/brain/trash/` for 30 days.
+- **Desktop:** text bound for Claude is scanned for keys, passwords and card numbers
+  (`Jarvis.Core/Assistant/OutboundScanner`): a question asks first, page text and job briefs are redacted,
+  dictation with a secret skips the Claude clean-up. Background jobs can only read and write their own
+  folder (`Read(./**)`, `Edit(./**)`, `dontAsk`).
+
 ## Input Validation
 
 ### File Path Validation

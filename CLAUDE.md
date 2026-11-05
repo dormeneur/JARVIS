@@ -69,6 +69,27 @@ flutter run
   `tool_transcript` to resume, so approvals need no server state. **Requires a tool-capable model**
   (`JARVIS_LLM_MODEL=qwen3:4b`) — llama3 has no tool template and will narrate shell commands
   instead of calling tools. Safety tests: `brain/tests/test_tools_safety.py`.
+- **Brain-private state** lives in `<vault>/.system/brain/` (chat history, `traces.jsonl`, `fts.db`
+  keyword index, `proposals.db`, `scheduler.json`, `trash/`): hidden from sync and indexing, included in
+  backups. SQLite there uses `journal_mode=DELETE`, never WAL (unreliable on Docker Desktop bind mounts).
+- **Agent resume is server-authored:** each executed tool call carries its `result` in the transcript the
+  server returns with `approval_required`; the client sends it back and the server never re-runs an entry
+  that has a result. `delete_file` always asks (no session grant). Files are changed with `append_to_file` /
+  `replace_in_file`; `edit_file` refuses a rewrite that looks truncated, and every overwrite or delete keeps
+  the old version in `.system/brain/trash/` for 30 days. Retrieved vault text is wrapped in `<vault_file>`
+  tags (`services/vault_text.py`) so it is treated as data, not instructions.
+- **Search is hybrid:** Chroma vectors + SQLite FTS5 (BM25) fused with RRF (`services/retriever.py`,
+  `keyword_index.py`). Re-embedding is driven by `INDEX_VERSION` in `incremental_indexer.py`: bump it when
+  what gets embedded changes. Measure changes with `python -m app.evals.retrieval` (golden set stays in the
+  vault, never in git) and `python -m app.evals.traces`.
+- **Background AI work goes through the Inbox:** the memory extractor (user's words only) and later
+  features file *proposals* (`services/proposals.py`, `/ask/proposals`); nothing is written until the user
+  approves on the phone. The scheduler (`services/scheduler.py`) runs reindex, the daily digest, trash
+  pruning and proposal expiry. `python scripts/doctor.py` checks the whole stack.
+- **Learning from the user's documents** is `python -m app.services.profile_import` (local model only): facts about
+  the user found in `Personal/` (or `--folder X`) become Inbox proposals to append to `Profile/<topic>.md`; ID and
+  secret-like facts are dropped; files are remembered by hash. No model is ever fine-tuned: retrieval plus the
+  approved Profile files are the memory.
 - **`/Secrets` must never reach the AI.** Exclusion is a named constant in
   `brain/app/services/document_loader.py`; e2e guard: `brain/tests/test_rag_secrets_exclusion_e2e.py`.
   The tool layer enforces the same list in `tools.safe_path()` — every model-supplied path is
@@ -86,5 +107,7 @@ flutter run
   files from JARVIS; adapt via CLI flags and the headless contract in `jobs/app/runner.py`. It never
   mounts the vault. Admin-only proxy at `/jobs/*`. Spec: `OFFICIAL-DOCS/12-Job-Search-Integration.md`.
   Tests: `cd jobs && python -m pytest` (a fake `claude` replays stream-json; no tokens spent).
-- ChromaDB: use the v2 API and the thin `chromadb-client` package (never full `chromadb`); the
-  container image has no curl, so compose uses `service_started`, not healthchecks.
+- **Vectors live in SQLite by default** (`JARVIS_VECTOR_BACKEND=sqlite`, `services/sqlite_vector_store.py`,
+  `<vault>/.system/brain/vectors.db`, brute-force cosine). ChromaDB is kept only as a rollback
+  (`=chroma`): use its v2 API and the thin `chromadb-client` package (never full `chromadb`); the container
+  image has no curl, so compose uses `service_started`, not healthchecks.

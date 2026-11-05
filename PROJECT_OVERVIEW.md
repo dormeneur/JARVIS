@@ -27,7 +27,8 @@ Host machine (Windows or Mac)
 ├── Docker (compose, network "jarvis-internal")
 │     ├── jv-api      FastAPI, port 8000  ← ONLY host-exposed service
 │     ├── jv-brain    FastAPI, port 8001  ← RAG engine (internal only)
-│     ├── jv-chromadb ChromaDB 0.5.23     ← vector store (internal only)
+│     ├── jv-chromadb ChromaDB 0.5.23     ← legacy vector store, kept only as a rollback (vectors now live in
+│     │                                     the vault at .system/brain/vectors.db, SQLite)
 │     (Ollama runs on the host, port 11434, reached as host.docker.internal)
 │           ├── llama3:8b            ← answer generation
 │           └── nomic-embed-text     ← 768-dim embeddings

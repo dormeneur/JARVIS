@@ -4,6 +4,10 @@
 > actual code as of 2026-09-24. Horizons: **Now** (gaps against our own specs), **Next**
 > (decided features not yet built), **Vision** (cognitive-assistant direction), **Parking lot**.
 > Items marked 🙋 need something from Aditya (hardware, an account, or a decision).
+>
+> **2026-11-05:** the active work list is `DOCUMENTATION/AI-AGENT-DOCS/7-upgrade-plan.md`
+> (audit and OpenJarvis comparison in `6-openjarvis-notes.md`). It supersedes §3A's proposal
+> queue, scheduler, digest and model spike items below.
 
 ---
 
@@ -113,18 +117,18 @@ analyze/test, docker build); chat auto-archive.
 - [ ] 🙋 **Push notifications via self-hosted ntfy** — needs the ntfy app on the phone and a
       decision on how the phone reaches it (a second `tailscale serve` port). Then wire to: sync
       conflicts, proposal queue items, digest ready.
-- [ ] **Proposal queue + approval inbox** — server-side table of AI-proposed actions
+- [x] **Proposal queue + approval inbox** (built 2026-11-05: `brain/app/services/proposals.py`, phone Inbox tile; needs an on-device check) — server-side table of AI-proposed actions
       (`draft_email`, `fill_form`, `write_file`) with `proposed/approved/rejected/done` status
       + a mobile inbox. The agent's `approval_required` flow is the in-chat version of this.
-- [ ] **Scheduler in jv-brain** — asyncio job loop for digest / mail-poll / reindex. jv-api's
+- [x] **Scheduler in jv-brain** (built 2026-11-05: `brain/app/services/scheduler.py`) — asyncio job loop for digest / mail-poll / reindex. jv-api's
       hourly backup loop (`server/app/main.py`) is the pattern to copy.
-- [ ] **Daily digest** — morning summary of vault changes, pending conflicts, pending
+- [x] **Daily digest** (built 2026-11-05: writes `Digest/YYYY-MM-DD.md`; set `JARVIS_TIMEZONE`; push via ntfy still open) — morning summary of vault changes, pending conflicts, pending
       proposals → push. First real "proactive JARVIS" milestone. Needs push first.
 - [ ] 🙋 **Model upgrade spike** — compare `qwen3:4b` (the `.env.template` default) against
       `qwen2.5:7b` / `llama3.1:8b` on the agent loop, especially interview mode (it needs one-
       question discipline and reliable edit_file calls). Needs the stack running on the RTX 3050.
 
-### 3B. Email (read → digest → drafts, strictly in that order — not started)
+### 3B. Email (read → digest → drafts, strictly in that order — spec written: `OFFICIAL-DOCS/13-Mail-Ingest.md`; needs 🙋 Gmail API + consent screen set to "In production")
 
 - [ ] Read-only Gmail ingest → vault files (`Mail/YYYY-MM/…`), auto-indexed by existing RAG.
 - [ ] Email triage digest (urgent / needs-reply / FYI) via scheduler + push.
@@ -139,13 +143,79 @@ analyze/test, docker build); chat auto-archive.
 - [ ] (Later) Browser-extension autofill — keeps a human clicking submit, sidesteps CAPTCHAs
       and ToS risk. Needs the web-dashboard CORS/auth work first.
 
+### 3D. Career copilot — a personal "Tsenta" inside JARVIS (requested 2026-11-05, not started)
+
+> Aditya's brief: a built-in "apply for jobs" flow like Tsenta (paid), but personal, and as the
+> first of many **life-stage copilots** (career now; later e.g. housing, visas, taxes, health
+> admin): JARVIS as a second brain that does the repetitive work (applying to many jobs) while
+> Aditya decides. **Don't clone Tsenta**; design so the same pieces (profile, matching, swipe
+> queue, tracker, email triage, approval) serve other life stages too. Pick up after the current
+> upgrade-plan run; design discussion first, then a spec in `OFFICIAL-DOCS/`.
+
+**One-time setup (onboarding wizard on the phone):**
+1. **Upload resume** → "found X roles, Y schools, Z skills" (extraction must be reliable: local
+   model + validation, like `profile_import` / form-answer evidence checks).
+2. **Review details** (all editable):
+   - A. Contact: name, phone, email.
+   - B. Where you live: street, city, ZIP/postal, country (dropdown), state/province (dropdown
+     filtered by country).
+   - C. Resume:
+     - Work experience: list of roles, most recent first; tap to open, edit, save.
+     - Education: degree, major, university, GPA, honors, start, end, currently enrolled?
+       (+ Add education).
+     - Skills by category, as removable chips + a text box to add: Languages, Frontend & Mobile,
+       Backend & Data, AI / ML, Infrastructure & Tooling (+ Add category).
+3. **Work authorization** (yes/no): authorized to work in <the job's country>? need visa
+   sponsorship now or later? security clearance? ties to government/public office? worked for
+   this company before? (the last two are per-company; store a default, ask per application).
+4. **Work preferences** (checkboxes): open to in-person/onsite; willing to relocate; can start
+   right away; reliable transportation; need workplace accommodations.
+5. **Workday password**: one saved password reused to create Workday accounts. **Goes in
+   `Secrets/` (encrypted `.jvs`), never into any AI prompt**; only the autofill step reads it.
+6. "Finding your matches… you're all set" → start swiping.
+
+**Profile dashboard** ("91% complete, fill in the rest"): personal info (summary, basics filled
+from resume, links: GitHub/LinkedIn/website), work preferences (expected salary), work auth
+(visa type), background / DEI / additional info.
+
+**Home tabs:**
+- **Jobs**: swipe right/left on job cards.
+- **Applications**: needs you · in progress · submitted · failed · skipped.
+- **Auto**: applies automatically (rules-based; see open questions).
+- **Inbox**: all · verification · rejection · interview · recruiter · assessment · reminder ·
+  offer · applied (job-related email, classified).
+- **Profile**: resume (experience, education, skills, projects, certificates) · personal ·
+  files · answers.
+
+**What already exists to build on:** `Profile/*.md` + `profile_import` (resume facts → Inbox
+proposals); desktop form filling (`/ask/ai/form-answers`, `Profile/form-memory.json`,
+per-form `answers.md`); jv-jobs job search (`jobs/`, desktop job carousel); proposal Inbox +
+approvals; scheduler + digest; Gmail ingest spec (`OFFICIAL-DOCS/13-Mail-Ingest.md`) for the
+job-email Inbox; `Secrets/` crypto for the portal password.
+
+**Open questions to settle in the design pass:**
+- Structured profile store: keep `Profile/*.md` as the source of truth and add a typed
+  `Profile/profile.json` (resume sections, auth answers, preferences) the wizard edits? Plain
+  files stay the truth either way.
+- Who submits: the desktop companion drives the browser with the user watching (fits the
+  "assist, not autopilot" rule and handles CAPTCHAs/Workday accounts), vs headless. "Auto" tab =
+  pre-approved rules (role, location, salary floor, company blocklist) with a per-day cap and a
+  review log, never silent.
+- Privacy: matching and answering stay local (vault data). Job search runs through Claude today
+  (jv-jobs, no vault access); decide whether the resume itself may go to Claude for matching,
+  or matching runs locally on job descriptions pulled by jv-jobs.
+- Honesty guard: answers only from approved Profile facts; anything unknown goes to "needs you",
+  never invented (the evidence rule from form-answers).
+- Generalize: "life-stage copilot" = profile section + intake wizard + item queue + tracker +
+  mail categories. Career is the first instance; don't hard-code it.
+
 ---
 
 ## 4. PARKING LOT — later / probably never
 
 - **Fully autonomous job applications** (Playwright driving portals) — brittle, ToS risk,
   CAPTCHA arms race, model misrepresentation risk. Revisit only after 3A–3C are solid, as a
-  supervised extension, never a bot.
+  supervised extension, never a bot. (§3D revisits this as a supervised career copilot.)
 - **Voice STT/TTS** — after interview mode proves the conversation loop works.
 - **Relationship/knowledge graph, smart tagging** — wait until vault size makes retrieval
   quality the actual bottleneck.

@@ -120,6 +120,10 @@ Every run snapshots the tracker, job list and profile files first, so the run sc
 
 ## If something breaks
 
+**First, run `python scripts/doctor.py`** on the host. It checks `.env`, Docker, the three containers, Ollama
+(models pulled, reachable from Docker, fitting on the GPU), the newest backup and Tailscale, and prints the fix
+for anything wrong.
+
 | Problem | Fix |
 |---|---|
 | `flutter run` stuck at "Resolving dependencies" | Slow internet to pub.dev — just wait or retry |
@@ -127,5 +131,22 @@ Every run snapshots the tracker, job list and profile files first, so the run sc
 | AI chat says offline | `docker exec jv-api curl -s http://brain:8001/brain/status`: if Ollama is unreachable, start the Ollama app on this machine; if models are missing, redo the `ollama pull` step |
 | Changed a database table in `mobile/` and build breaks | `dart run build_runner build --delete-conflicting-outputs` |
 | Lost the setup secret | It shows only on the server's first boot — check `docker logs jv-api` |
+
+## Measuring the AI (optional, for tuning)
+
+- `docker exec jv-brain python -m app.evals.retrieval --bootstrap 20` drafts search test questions with the local
+  model into `<vault>/.system/evals/retrieval.candidates.jsonl`. Review them, copy the good lines into
+  `retrieval.jsonl` in the same folder (`{"q": "...", "expect": ["Profile/education.md"]}`), then
+  `docker exec jv-brain python -m app.evals.retrieval --label baseline` prints hit@1 / hit@5 / MRR and appends to
+  `history.jsonl`. Run it before and after any retrieval or model change. These files stay in your vault, never in git.
+- `docker exec jv-brain python -m app.services.profile_import` reads the documents in `Personal/` (new or changed
+  ones only) with the local model and files the durable facts it finds (education, skills, work, goals, people...)
+  as proposals to add to your `Profile/` files. Nothing is saved until you approve it in the app's Inbox;
+  ID/passport/card-like facts are dropped. Add `--folder Work` for another folder, `--force` to re-read everything.
+  This is how JARVIS "learns" your documents: they are also indexed for search, and no model is retrained.
+- `docker exec jv-brain python -m app.evals.traces --days 7` shows response times and token use per route and model
+  (from `.system/brain/traces.jsonl`; numbers only, no question text unless `JARVIS_TRACE_TEXT=true`).
+- The brain keeps its private state (chat history, traces, trash of deleted/overwritten files, later the keyword
+  index and proposals) in `<vault>/.system/brain/`. It is hidden from sync and search and included in backups.
 
 > Before writing code, read `PROJECT_OVERVIEW.md` — especially the gotchas and the list of locked sync files.
