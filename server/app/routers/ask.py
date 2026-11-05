@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.config import settings
-from app.dependencies import get_current_device
-from app.services import auth as auth_service
+from app.dependencies import get_current_device, require_admin
+from app.services import audit, auth as auth_service
 
 router = APIRouter(tags=["ask"])
 logger = logging.getLogger(__name__)
@@ -134,6 +134,57 @@ async def ask_list_tools(device=Depends(get_current_device)):
     except Exception as e:
         logger.error(f"Failed to fetch tool catalogue from brain: {e}")
         raise HTTPException(status_code=503, detail="AI service offline")
+
+
+async def _brain_json(method: str, path: str, *, json_body: dict | None = None, params: dict | None = None):
+    """Call a non-streaming brain endpoint and pass its JSON (and its 404) through."""
+    url = f"{settings.brain_url.rstrip('/')}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(method, url, json=json_body, params=params)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Not found")
+        logger.error(f"Brain {path} returned {e.response.status_code}")
+        raise HTTPException(status_code=502, detail="AI service error")
+    except Exception as e:
+        logger.error(f"Brain {path} unreachable: {e}")
+        raise HTTPException(status_code=503, detail="AI service offline")
+
+
+@router.post("/ask/digest/run")
+async def ask_run_digest(force: bool = False, device=Depends(require_admin)):
+    """Write today's digest now (admin devices only). The scheduler does this daily on its own."""
+    return await _brain_json("POST", "/brain/digest/run", params={"force": str(force).lower()})
+
+
+@router.get("/ask/proposals")
+async def ask_list_proposals(status: str = "pending", limit: int = 50, device=Depends(get_current_device)):
+    """Things JARVIS wants to save/do, waiting for the user's yes (the phone's Inbox)."""
+    return await _brain_json("GET", "/brain/proposals", params={"status": status, "limit": limit})
+
+
+@router.get("/ask/proposals/count")
+async def ask_count_proposals(device=Depends(get_current_device)):
+    return await _brain_json("GET", "/brain/proposals/count")
+
+
+@router.post("/ask/proposals/{proposal_id}/decision")
+async def ask_decide_proposal(proposal_id: str, request: Request, device=Depends(get_current_device)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    approve = body.get("approve")
+    if not isinstance(approve, bool):
+        raise HTTPException(status_code=422, detail="'approve' must be true or false")
+    result = await _brain_json("POST", f"/brain/proposals/{proposal_id}/decision", json_body={"approve": approve})
+    # Ids and the decision only: never what the proposal would write.
+    audit.record("proposal.decision", proposal_id=proposal_id, approve=approve,
+                 status=result.get("status"), device_id=device.get("device_id"))
+    return result
 
 
 @router.get("/ask/status")

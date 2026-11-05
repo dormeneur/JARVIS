@@ -59,3 +59,25 @@ def test_guest_cannot_revoke_admin_but_can_revoke_self(client, auth_headers, gue
 def test_guest_cannot_mint_devices(client, guest_headers):
     resp = client.post("/auth/register/device", json={"device_name": "x"}, headers=guest_headers)
     assert resp.status_code == 403
+
+
+class TestLegacyDeviceRecords:
+    """A device record with no is_secrets_authorized key used to be treated as admin (fail-open)."""
+
+    def test_missing_key_is_made_explicit_once_and_missing_after_that_means_not_admin(self, vault_settings, tmp_vault):
+        import json
+
+        from app.services import auth
+
+        path = tmp_vault / "system" / "devices.json"
+        path.write_text(json.dumps({"old": {"device_name": "old", "device_secret": "s", "registered_at": "x"}}), encoding="utf-8")
+
+        # The migration keeps what that record always had (admin), but now as an explicit value.
+        assert auth.get_device("old")["is_secrets_authorized"] is True
+        assert json.loads(path.read_text(encoding="utf-8"))["old"]["is_secrets_authorized"] is True
+
+    def test_new_devices_are_not_admin_by_default(self, vault_settings, tmp_vault):
+        from app.services import auth
+
+        device_id, _ = auth._add_device("guest")
+        assert auth.get_device(device_id)["is_secrets_authorized"] is False

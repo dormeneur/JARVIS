@@ -48,7 +48,17 @@ def _load_devices() -> dict:
     path = _devices_path()
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    devices = json.loads(path.read_text(encoding="utf-8"))
+    # Very old records have no is_secrets_authorized key and used to be treated as admin when it was
+    # missing, which is fail-open. Make that grant explicit once (same behaviour for them), so every
+    # lookup can default to "not admin".
+    legacy = [d for d in devices.values() if "is_secrets_authorized" not in d]
+    if legacy:
+        for d in legacy:
+            d["is_secrets_authorized"] = True
+        _save_devices(devices)
+        logger.warning("Marked %d legacy device(s) as admin explicitly", len(legacy))
+    return devices
 
 
 def _save_devices(devices: dict) -> None:
@@ -66,8 +76,7 @@ def get_all_devices() -> list[dict]:
             "device_id": did,
             "device_name": d["device_name"],
             "registered_at": d["registered_at"],
-            # Legacy devices missing the key default to True
-            "is_secrets_authorized": d.get("is_secrets_authorized", True) if "is_secrets_authorized" not in d else d["is_secrets_authorized"],
+            "is_secrets_authorized": d.get("is_secrets_authorized", False),
         }
         for did, d in devices.items()
     ]
@@ -80,8 +89,7 @@ def get_device(device_id: str) -> dict | None:
         return None
     return {
         "device_id": device_id,
-        # Legacy devices missing the key default to True
-        "is_secrets_authorized": info.get("is_secrets_authorized", True) if "is_secrets_authorized" not in info else info["is_secrets_authorized"],
+        "is_secrets_authorized": info.get("is_secrets_authorized", False),
         **info
     }
 
@@ -235,8 +243,7 @@ def decode_token(token: str) -> dict:
         raise InvalidTokenError("Device is no longer registered")
 
     device_info = devices[device_id]
-    # Legacy devices missing the key default to True
-    payload["is_secrets_authorized"] = device_info.get("is_secrets_authorized", True) if "is_secrets_authorized" not in device_info else device_info["is_secrets_authorized"]
+    payload["is_secrets_authorized"] = device_info.get("is_secrets_authorized", False)
     return payload
 
 
