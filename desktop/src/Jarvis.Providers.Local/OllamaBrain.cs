@@ -20,6 +20,13 @@ public sealed class OllamaOptions
 
     /// <summary>After this much quiet, the next turn starts a fresh conversation.</summary>
     public TimeSpan FreshConversationAfter { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Context window sent as <c>num_ctx</c>. Ollama's own default silently cuts long prompts from
+    /// the front, and a value that differs from other callers of the same model makes it reload,
+    /// so keep this equal to the brain's <c>JARVIS_NUM_CTX</c> when both use one model.
+    /// </summary>
+    public int ContextLength { get; set; } = 8192;
 }
 
 /// <summary>
@@ -76,7 +83,7 @@ public sealed class OllamaBrain : IAssistantBrain
                 messages = [new JsonObject { ["role"] = "system", ["content"] = turn.Instructions }, .. _history.Select(message => message.DeepClone()), question.DeepClone()];
             }
 
-            var body = new JsonObject { ["model"] = options.Model, ["messages"] = messages, ["stream"] = true, ["think"] = false };
+            var body = new JsonObject { ["model"] = options.Model, ["messages"] = messages, ["stream"] = true, ["think"] = false, ["options"] = new JsonObject { ["num_ctx"] = options.ContextLength } };
             using var request = new HttpRequestMessage(HttpMethod.Post, options.Address.TrimEnd('/') + "/api/chat") { Content = JsonContent.Create(body) };
             using var response = await SendAsync(request, options, cancellationToken).ConfigureAwait(false);
             using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));

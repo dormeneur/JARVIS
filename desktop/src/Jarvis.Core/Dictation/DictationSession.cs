@@ -205,7 +205,8 @@ public sealed partial class DictationSession : IAsyncDisposable
         var options = _options.CurrentValue;
         var started = _time.GetTimestamp();
         var text = raw;
-        if (options.Cleanup)
+        // Clean-up goes to Claude: text with a password or key in it is inserted as heard instead.
+        if (options.Cleanup && Jarvis.Core.Assistant.OutboundScanner.Scan(raw).Count == 0)
         {
             _services.Notch.Show(new NotchState.Working());
             text = await _cleaner.CleanAsync(raw, field, Words(options), cancellationToken).ConfigureAwait(false);

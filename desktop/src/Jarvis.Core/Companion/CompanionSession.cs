@@ -256,7 +256,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 {
                     // The page changed (or another tab is in front): fresh ids for the next steps.
                     _services.Privacy.Record(0, "Read the page open in your browser");
-                    next = CompanionPrompt.DescribePage(page) + next;
+                    next = Jarvis.Core.Assistant.OutboundScanner.Redact(CompanionPrompt.DescribePage(page)) + next;
                     _page = page;
                 }
 
@@ -576,7 +576,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 && await _services.Browser.ReadPageAsync(cancellationToken).ConfigureAwait(false) is { } page)
             {
                 privacy.Record(0, "Read the page open in your browser");
-                request = CompanionPrompt.DescribePage(page) + request;
+                request = Jarvis.Core.Assistant.OutboundScanner.Redact(CompanionPrompt.DescribePage(page)) + request;
                 _page = page;
             }
 
@@ -667,6 +667,18 @@ public sealed partial class CompanionSession : IAsyncDisposable
             && await browser.ReadFormAsync(cancellationToken).ConfigureAwait(false) is { Questions.Count: > 0 })
         {
             route = TurnRoute.Form;
+        }
+
+        // The keyword router can miss a request that belongs on this PC. A password or key about to go
+        // to Claude is the one thing worth stopping to ask about (the text itself is never logged).
+        if (route == TurnRoute.Cloud && Jarvis.Core.Assistant.OutboundScanner.Scan(request) is { Count: > 0 } found)
+        {
+            LogSecretFound(string.Join(',', found));
+            // "Yes" is the risky choice, so a timeout, Escape or a click away all end up private.
+            route = await ApproveAsync(
+                "That looks like it has a password or key in it. Send it to Claude?", "Send anyway", "Keep on this PC", cancellationToken).ConfigureAwait(false)
+                ? TurnRoute.Cloud
+                : TurnRoute.Local;
         }
 
         LogRoute(route);
@@ -1005,6 +1017,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
     }
 
     // Who answered, never what was asked.
+    [LoggerMessage(Level = LogLevel.Information, Message = "A question headed for Claude contained: {Kinds}")]
+    private partial void LogSecretFound(string kinds);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Turn routed to {Route}")]
     private partial void LogRoute(Jarvis.Core.Vault.TurnRoute route);
 

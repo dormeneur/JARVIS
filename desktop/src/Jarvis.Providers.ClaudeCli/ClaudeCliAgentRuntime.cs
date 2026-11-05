@@ -10,8 +10,9 @@ namespace Jarvis.Providers.ClaudeCli;
 /// <summary>
 /// Background jobs on the user's Claude Code login: one `claude -p` per job, working in the job's
 /// folder. Deliberately limited tools: read and write files there, search and fetch the web, and
-/// the user's connectors (remote MCP servers they added in Settings). No shell, so a job can't run
-/// programs or reach the rest of the PC. Isolated from the user's own Claude Code setup (no
+/// the user's connectors (remote MCP servers they added in Settings). No shell, and file access is
+/// confined to the job's folder (see <see cref="Arguments"/>), so a job can't run programs or reach
+/// the rest of the PC, the vault included. Isolated from the user's own Claude Code setup (no
 /// settings, hooks, their MCP servers or CLAUDE.md), like the brain.
 /// </summary>
 public sealed class ClaudeCliAgentRuntime : IAgentRuntime
@@ -115,6 +116,41 @@ public sealed class ClaudeCliAgentRuntime : IAgentRuntime
         return new System.Text.Json.Nodes.JsonObject { ["mcpServers"] = servers }.ToJsonString();
     }
 
+    /// <summary>
+    /// The `claude` command line for a job. File tools are allowed only inside the job's folder
+    /// (<c>Read(./**)</c>, <c>Edit(./**)</c>, which also cover Glob/Grep and Write): a bare tool name
+    /// matches every path on the PC, vault included. <c>dontAsk</c> turns anything not allowed into
+    /// a denial (verified with `claude` 2.1: a read of C:\Windows\win.ini and a write outside the
+    /// folder are both refused, while work inside it and web search still run).
+    /// </summary>
+    internal static IReadOnlyList<string> Arguments(AgentJob job, string model, IDictionary<string, string?> environment)
+    {
+        var connectors = job.Connectors ?? [];
+        var allowed = new List<string> { "Read(./**)", "Edit(./**)", "WebSearch", "WebFetch" };
+        allowed.AddRange(connectors.Select(connector => $"mcp__{connector.Name}"));
+        var arguments = new List<string>
+        {
+            "-p",
+            "--output-format", "stream-json",
+            "--verbose",
+            "--model", model,
+            "--system-prompt", job.Instructions,
+            "--tools", Tools,
+            "--allowedTools", string.Join(' ', allowed),
+            "--permission-mode", "dontAsk",
+            "--setting-sources", string.Empty,
+            "--strict-mcp-config",
+            "--no-session-persistence",
+        };
+        if (connectors.Count > 0)
+        {
+            arguments.Add("--mcp-config");
+            arguments.Add(McpConfig(connectors, environment));
+        }
+
+        return arguments;
+    }
+
     private Process Start(AgentJob job)
     {
         var start = new ProcessStartInfo(_options.Executable)
@@ -128,30 +164,9 @@ public sealed class ClaudeCliAgentRuntime : IAgentRuntime
             CreateNoWindow = true,
             WorkingDirectory = job.WorkingDirectory,
         };
-        var connectors = job.Connectors ?? [];
-        var allowed = string.Join(' ', [.. Tools.Split(','), .. connectors.Select(connector => $"mcp__{connector.Name}")]);
-        foreach (var argument in new[]
-        {
-            "-p",
-            "--output-format", "stream-json",
-            "--verbose",
-            "--model", _options.Model,
-            "--system-prompt", job.Instructions,
-            "--tools", Tools,
-            "--allowedTools", allowed,
-            "--permission-mode", "acceptEdits",
-            "--setting-sources", string.Empty,
-            "--strict-mcp-config",
-            "--no-session-persistence",
-        })
+        foreach (var argument in Arguments(job, _options.Model, start.Environment))
         {
             start.ArgumentList.Add(argument);
-        }
-
-        if (connectors.Count > 0)
-        {
-            start.ArgumentList.Add("--mcp-config");
-            start.ArgumentList.Add(McpConfig(connectors, start.Environment));
         }
 
         var process = Process.Start(start)

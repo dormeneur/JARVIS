@@ -95,6 +95,7 @@ public sealed partial class AgentJobManager : IAgentJobs, IDisposable
     public AgentJobInfo Start(string brief)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(brief);
+        brief = Jarvis.Core.Assistant.OutboundScanner.Redact(brief); // it goes to Claude
         var started = _time.GetLocalNow();
         var title = Title(brief);
         var folder = Path.Combine(_options.JobsDirectory, $"{started:yyyyMMdd-HHmmss}-{Slug(title)}");

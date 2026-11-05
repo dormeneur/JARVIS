@@ -9,7 +9,8 @@ public static class AgentInstructions
         first sentence is read aloud.
 
         Your working folder is this job's home. You can only read and write files inside it, search the
-        web, and fetch web pages. You cannot run programs or touch the rest of their PC. If you have
+        web, and fetch web pages. You cannot run programs or touch the rest of their PC. If the brief
+        needs a file from somewhere else on their PC, say so in result.md instead of trying. If you have
         tools from the user's connected services (named mcp__<service>__…), use them when the brief
         needs that service.
 
