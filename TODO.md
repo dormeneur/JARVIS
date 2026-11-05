@@ -143,7 +143,7 @@ analyze/test, docker build); chat auto-archive.
 - [ ] (Later) Browser-extension autofill — keeps a human clicking submit, sidesteps CAPTCHAs
       and ToS risk. Needs the web-dashboard CORS/auth work first.
 
-### 3D. Career copilot — a personal "Tsenta" inside JARVIS (requested 2026-11-05, not started)
+### 3D. Career copilot — a personal "Tsenta" inside JARVIS (requested 2026-11-05, spec written, not built)
 
 > Aditya's brief: a built-in "apply for jobs" flow like Tsenta (paid), but personal, and as the
 > first of many **life-stage copilots** (career now; later e.g. housing, visas, taxes, health
@@ -191,23 +191,11 @@ from resume, links: GitHub/LinkedIn/website), work preferences (expected salary)
 proposals); desktop form filling (`/ask/ai/form-answers`, `Profile/form-memory.json`,
 per-form `answers.md`); jv-jobs job search (`jobs/`, desktop job carousel); proposal Inbox +
 approvals; scheduler + digest; Gmail ingest spec (`OFFICIAL-DOCS/13-Mail-Ingest.md`) for the
-job-email Inbox; `Secrets/` crypto for the portal password.
+job-email Inbox; `Platform/Shell/CredentialVault` (PC) and secure storage (phone) for the portal password.
 
-**Open questions to settle in the design pass:**
-- Structured profile store: keep `Profile/*.md` as the source of truth and add a typed
-  `Profile/profile.json` (resume sections, auth answers, preferences) the wizard edits? Plain
-  files stay the truth either way.
-- Who submits: the desktop companion drives the browser with the user watching (fits the
-  "assist, not autopilot" rule and handles CAPTCHAs/Workday accounts), vs headless. "Auto" tab =
-  pre-approved rules (role, location, salary floor, company blocklist) with a per-day cap and a
-  review log, never silent.
-- Privacy: matching and answering stay local (vault data). Job search runs through Claude today
-  (jv-jobs, no vault access); decide whether the resume itself may go to Claude for matching,
-  or matching runs locally on job descriptions pulled by jv-jobs.
-- Honesty guard: answers only from approved Profile facts; anything unknown goes to "needs you",
-  never invented (the evidence rule from form-answers).
-- Generalize: "life-stage copilot" = profile section + intake wizard + item queue + tracker +
-  mail categories. Career is the first instance; don't hard-code it.
+**Spec written: `OFFICIAL-DOCS/14-Career-Copilot.md`** (decisions 2026-11-05: Claude may see the
+resume; JARVIS fills and waits, the user always submits; the portal password lives in each
+device's OS store, never in the vault or a prompt). Next: its Phase 0 checks, then Phase 1.
 
 ---
 
