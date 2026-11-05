@@ -51,6 +51,30 @@ void main() {
       expect(e.call.risk, ToolRisk.delete);
     });
 
+    test('approval carries the server transcript when present, null otherwise', () {
+      final withT = decode({
+        'type': 'approval_required',
+        'id': 'c2',
+        'name': 'edit_file',
+        'arguments': {},
+        'risk': 'write',
+        'transcript': [
+          {'id': 'c1', 'name': 'create_file', 'arguments': {}, 'approved': true, 'result': 'Created a.md'}
+        ],
+      }) as AgentApprovalRequired;
+      expect(withT.transcript, hasLength(1));
+      expect(withT.transcript!.first['result'], 'Created a.md');
+
+      final without = decode({'type': 'approval_required', 'id': 'c1', 'name': 'x', 'arguments': {}})
+          as AgentApprovalRequired;
+      expect(without.transcript, isNull);
+    });
+
+    test('transcript entries carry the call id', () {
+      const call = ToolCall(id: 'c9', name: 'create_file', arguments: {'path': 'a.md'});
+      expect(call.toTranscriptJson(true)['id'], 'c9');
+    });
+
     test('unknown risk string defaults to write, never read', () {
       // An unrecognised risk must not silently become auto-approved.
       expect(toolRiskFrom('bogus'), ToolRisk.write);

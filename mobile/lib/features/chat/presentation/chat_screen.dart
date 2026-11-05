@@ -471,6 +471,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       // Each pass runs until the stream ends or an approval interrupts it.
       for (var pass = 0; pass < 12; pass++) {
         ToolCall? awaiting;
+        List<Map<String, dynamic>>? serverTranscript;
 
         await for (final event in repo.askAgent(
           effectiveQuery,
@@ -505,8 +506,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         .withToolCall(existing.copyWith(ok: ok, summary: summary))));
               }
 
-            case AgentApprovalRequired(:final call):
+            case AgentApprovalRequired(:final call, :final transcript):
               awaiting = call;
+              serverTranscript = transcript;
 
             case AgentFinal(:final sources):
               setState(() => _messages[i] = _messages[i]
@@ -534,6 +536,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 .read(toolPermissionProvider.notifier)
                 .applyDecision(pending, decision);
 
+        // The server authors the transcript (executed calls carry their results and are never
+        // re-run); an older server sends none, so fall back to appending.
+        if (serverTranscript != null) {
+          transcript
+            ..clear()
+            ..addAll(serverTranscript);
+        }
         transcript.add(pending.toTranscriptJson(approved));
 
         final i = _messages.length - 1;

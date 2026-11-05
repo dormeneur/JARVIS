@@ -7,6 +7,7 @@ import 'package:jarvis_mobile/core/storage/secure_storage.dart';
 import 'package:jarvis_mobile/features/auth/data/auth_repository.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/home/presentation/home_screen.dart';
+import 'package:jarvis_mobile/features/inbox/data/inbox_repository.dart';
 import 'package:jarvis_mobile/features/voice/voice_service.dart';
 
 class _NoRepo implements AuthRepository {
@@ -35,6 +36,7 @@ Widget _home({required bool admin, List<ChatSession> recent = const []}) => Prov
       overrides: [
         authProvider.overrideWith((ref) => _SignedIn(admin: admin)),
         recentChatsProvider.overrideWith((ref) async => recent),
+        inboxCountProvider.overrideWith((ref) async => 0),
       ],
       child: const MaterialApp(home: HomeScreen()),
     );

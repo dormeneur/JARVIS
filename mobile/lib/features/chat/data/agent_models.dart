@@ -56,6 +56,8 @@ class ToolCall {
   String get label => switch (name) {
         'create_file' => 'Create file',
         'edit_file' => 'Edit file',
+        'replace_in_file' => 'Edit part of a file',
+        'append_to_file' => 'Add to a file',
         'move_file' => 'Move',
         'delete_file' => 'Delete',
         'read_file' => 'Read file',
@@ -65,6 +67,7 @@ class ToolCall {
       };
 
   Map<String, dynamic> toTranscriptJson(bool approved) => {
+        'id': id,
         'name': name,
         'arguments': arguments,
         'approved': approved,
@@ -92,12 +95,17 @@ sealed class AgentEvent {
           summary: j['summary'] as String? ?? '',
         );
       case 'approval_required':
-        return AgentApprovalRequired(ToolCall(
-          id: j['id'] as String? ?? '',
-          name: j['name'] as String? ?? '',
-          arguments: Map<String, dynamic>.from(j['arguments'] as Map? ?? {}),
-          risk: toolRiskFrom(j['risk'] as String?),
-        ));
+        return AgentApprovalRequired(
+          ToolCall(
+            id: j['id'] as String? ?? '',
+            name: j['name'] as String? ?? '',
+            arguments: Map<String, dynamic>.from(j['arguments'] as Map? ?? {}),
+            risk: toolRiskFrom(j['risk'] as String?),
+          ),
+          transcript: (j['transcript'] as List?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList(),
+        );
       case 'final':
         return AgentFinal(
           answer: j['answer'] as String? ?? '',
@@ -131,7 +139,11 @@ class AgentToolResult extends AgentEvent {
 
 class AgentApprovalRequired extends AgentEvent {
   final ToolCall call;
-  const AgentApprovalRequired(this.call);
+
+  /// Every call the server already ran this turn, with its result. Send it back as the base of
+  /// the next request so nothing is run twice. Null from an older server.
+  final List<Map<String, dynamic>>? transcript;
+  const AgentApprovalRequired(this.call, {this.transcript});
 }
 
 class AgentFinal extends AgentEvent {

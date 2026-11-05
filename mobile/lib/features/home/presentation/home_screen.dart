@@ -5,6 +5,8 @@ import 'package:jarvis_mobile/core/storage/app_database.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/chat/presentation/chat_screen.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_screen.dart';
+import 'package:jarvis_mobile/features/inbox/data/inbox_repository.dart';
+import 'package:jarvis_mobile/features/inbox/presentation/inbox_screen.dart';
 import 'package:jarvis_mobile/features/jobs/presentation/jobs_screen.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_screen.dart';
 
@@ -41,17 +43,22 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authProvider);
     final recent = ref.watch(recentChatsProvider);
+    final waiting = ref.watch(inboxCountProvider).valueOrNull ?? 0;
     final hour = DateTime.now().hour;
     final greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
     void open(Widget screen) => Navigator.of(context)
         .push(MaterialPageRoute(builder: (_) => screen))
-        .then((_) => ref.invalidate(recentChatsProvider));
+        .then((_) {
+      ref.invalidate(recentChatsProvider);
+      ref.invalidate(inboxCountProvider);
+    });
 
     final tiles = <_Tile>[
       _Tile(Icons.chat_bubble_outline, 'Chat', 'Ask about your notes', () => open(const ChatScreen())),
       _Tile(Icons.badge_outlined, 'Interview', 'Teach JARVIS about you', () => open(const ChatScreen(interviewOnOpen: true))),
       _Tile(Icons.folder_open_outlined, 'Files', 'Your vault', () => open(const ExplorerScreen())),
+      _Tile(Icons.inbox_outlined, 'Inbox', waiting > 0 ? '$waiting waiting for you' : 'Things JARVIS wants to save', () => open(const InboxScreen())),
       if (auth.isSecretsAuthorized) _Tile(Icons.work_outline, 'Jobs', 'Job search runs', () => open(const JobsScreen())),
       _Tile(Icons.settings_outlined, 'Settings', 'Devices, voice, backups', () => open(const SettingsScreen())),
     ];
