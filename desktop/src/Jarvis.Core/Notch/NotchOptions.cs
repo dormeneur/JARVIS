@@ -9,7 +9,7 @@ public sealed class NotchOptions
     public bool OpenOnHover { get; set; } = true;
 
     /// <summary>How long the mouse rests on the notch before it opens, in milliseconds (0 = at once).</summary>
-    public int HoverDelayMs { get; set; } = 150;
+    public int HoverDelayMs { get; set; } = 50;
 
     /// <summary>"snappy", "smooth" (the design springs as they are) or "relaxed".</summary>
     public string Speed { get; set; } = "snappy";
@@ -20,7 +20,7 @@ public sealed class NotchOptions
     /// <summary>Spring response multiplier for <see cref="Speed"/>; damping is left alone so nothing starts bouncing.</summary>
     public double SpeedFactor => Speed.ToUpperInvariant() switch
     {
-        "SNAPPY" => 0.6,
+        "SNAPPY" => 0.5,
         "RELAXED" => 1.4,
         _ => 1.0,
     };

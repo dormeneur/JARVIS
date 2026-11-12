@@ -188,6 +188,7 @@ public sealed unsafe partial class MacOverlay : ICursorOverlay, IScreenDrawing, 
         var options = _options.CurrentValue;
         var rgb = CursorColor.Parse(options.Color);
         _cursor.ShakeToDetachEnabled = options.ShakeToDetach;
+        _cursor.Follow = options.FollowSpring;
         Native.Mouse(out var mouseX, out var mouseY);
 
         // Desktop units are points, so Core's DIP distances apply as they are: scale 1.

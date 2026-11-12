@@ -403,6 +403,13 @@ struct NotchRoot: View {
         return model.hardwareNotch.width > 0 && !view.sliver ? max(base, model.hardwareNotch.width + 2 * 10 + 24) : base
     }
 
+    /// Asleep behind the camera housing: nothing of Jarvis's shows.
+    var behindHousing: Bool { view.sliver && model.hardwareNotch.width > 0 }
+
+    var bodyWidth: Double { behindHousing ? model.hardwareNotch.width - 4 : shapeWidth }
+
+    var bodyHeight: Double { behindHousing ? model.hardwareNotch.height - 2 : view.height + top + (view.sliver ? 4 : 0) }
+
     var animation: Animation? {
         guard let response = view.response, let damping = view.damping else { return nil }
         return .spring(response: response, dampingFraction: damping)
@@ -410,34 +417,36 @@ struct NotchRoot: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            if !(view.sliver && model.hardwareNotch.width > 0) { // the hardware notch is the sliver
-                ZStack(alignment: .top) {
-                    NotchShape(width: shapeWidth, height: view.height + top + (view.sliver ? 4 : 0), radius: view.radius, shoulder: view.sliver ? 0 : 10)
-                        .fill(Color.black)
-                    if let glow = view.glow {
-                        CornerGlow(colours: glow, moves: view.glowMoves, reach: view.glowReach ?? 150, strength: view.glowStrength)
-                            .frame(width: shapeWidth - 20, height: view.height + top)
-                            .clipShape(NotchShape(width: shapeWidth - 20, height: view.height + top, radius: view.radius, shoulder: 0))
-                            .allowsHitTesting(false)
-                    }
-                    if view.sweep {
-                        WorkingSweep().frame(width: view.width, height: view.height).padding(.top, 4)
-                    }
+            // At rest on a Mac with a camera housing the body hides just inside the housing (black on
+            // black), so opening is the same shape springing out of it rather than a panel fading in.
+            ZStack(alignment: .top) {
+                NotchShape(width: bodyWidth, height: bodyHeight, radius: view.radius, shoulder: view.sliver ? 0 : 10)
+                    .fill(Color.black)
+                if let glow = view.glow, !behindHousing {
+                    CornerGlow(colours: glow, moves: view.glowMoves, reach: view.glowReach ?? 150, strength: view.glowStrength)
+                        .frame(width: shapeWidth - 20, height: view.height + top)
+                        .clipShape(NotchShape(width: shapeWidth - 20, height: view.height + top, radius: view.radius, shoulder: 0))
+                        .allowsHitTesting(false)
                 }
-                .mask(view.sliver ? AnyView(Rectangle().padding(.top, 4)) : AnyView(Rectangle()))
-                .frame(width: shapeWidth, height: view.height + top + 4)
-                .overlay(alignment: .top) {
-                    content
-                        .frame(width: max(0, shapeWidth - 20 - 36), height: max(0, view.height))
-                        .padding(.top, top)
-                        .opacity(view.sliver ? 0 : 1)
+                if view.sweep && !behindHousing {
+                    WorkingSweep().frame(width: view.width, height: view.height).padding(.top, 4)
                 }
             }
+            .mask(Rectangle().padding(.top, view.sliver && !behindHousing ? 4 : 0))
+            .frame(width: bodyWidth, height: bodyHeight + (behindHousing ? 0 : 4))
+            .overlay(alignment: .top) {
+                content
+                    .frame(width: max(0, shapeWidth - 20 - 36), height: max(0, view.height))
+                    .padding(.top, top)
+                    .opacity(view.sliver ? 0 : 1)
+            }
+            // While it grows, the content stays inside the body.
+            .clipShape(NotchShape(width: bodyWidth, height: bodyHeight, radius: view.radius, shoulder: view.sliver ? 0 : 10))
         }
         .frame(width: Notch.envelope.width, height: Notch.envelope.height, alignment: .top)
         .animation(animation, value: view.width)
         .animation(animation, value: view.height)
-        .animation(.easeOut(duration: 0.2), value: view.kind)
+        .animation(.easeOut(duration: 0.12), value: view.kind)
         .preferredColorScheme(.dark)
     }
 

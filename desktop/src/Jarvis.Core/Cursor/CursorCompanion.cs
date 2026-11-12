@@ -64,6 +64,9 @@ public sealed class CursorCompanion
     public bool IsListening { get; private set; }
 
     /// <summary>Just trailing the mouse: nothing is happening that the user asked for.</summary>
+    /// <summary>How the cursor trails the mouse; <see langword="null"/> sticks to it with no trail at all.</summary>
+    public Spring? Follow { get; set; } = Springs.CursorFollow;
+
     public bool IsIdle => _phase == CursorPhase.Following && !IsThinking && !IsListening;
 
     /// <summary>Starts or stops the thinking dots; takes effect on the next <see cref="Update"/>.</summary>
@@ -141,7 +144,15 @@ public sealed class CursorCompanion
         switch (_phase)
         {
             case CursorPhase.Following:
-                _position.Advance(mouseX + (FollowOffsetX * scale), mouseY + (FollowOffsetY * scale), seconds, Springs.CursorFollow);
+                if (Follow is { } follow)
+                {
+                    _position.Advance(mouseX + (FollowOffsetX * scale), mouseY + (FollowOffsetY * scale), seconds, follow);
+                }
+                else
+                {
+                    _position.SnapTo(mouseX + (FollowOffsetX * scale), mouseY + (FollowOffsetY * scale));
+                }
+
                 SettleRotation(seconds);
                 break;
 

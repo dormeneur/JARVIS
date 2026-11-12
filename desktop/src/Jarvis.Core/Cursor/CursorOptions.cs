@@ -19,6 +19,17 @@ public sealed class CursorOptions
     /// <summary>While the talk keys are held, moving the mouse draws a highlighter trail Jarvis reads as "this".</summary>
     public bool Highlighter { get; set; } = true;
 
+    /// <summary>How closely it trails the mouse: "instant", "fast" or "natural" (the bouncy design spring).</summary>
+    public string FollowSpeed { get; set; } = "fast";
+
+    /// <summary>The spring for <see cref="FollowSpeed"/>; <see langword="null"/> means no trailing.</summary>
+    public Motion.Spring? FollowSpring => FollowSpeed.ToUpperInvariant() switch
+    {
+        "INSTANT" => null,
+        "NATURAL" => Motion.Springs.CursorFollow,
+        _ => new Motion.Spring(0.08, 0.85),
+    };
+
     /// <summary>The floating cursor's size, 1 = the design size (0.5 to 2).</summary>
     public double Size { get; set; } = 1.0;
 }

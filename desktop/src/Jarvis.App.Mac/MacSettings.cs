@@ -253,6 +253,7 @@ internal sealed class MacSettings
                 Choice($"{CursorOptions.SectionName}:{nameof(CursorOptions.Color)}", "Colour", cursor.Color, CursorColours(cursor.Color)),
                 Text($"{CursorOptions.SectionName}:{nameof(CursorOptions.Color)}", "Custom colour", cursor.Color, "Any hex colour, e.g. #FF8800. Press Enter to apply."),
                 Number($"{CursorOptions.SectionName}:{nameof(CursorOptions.Size)}", "Size", cursor.Size, 0.5, 2, 0.1),
+                Choice($"{CursorOptions.SectionName}:{nameof(CursorOptions.FollowSpeed)}", "Follows the mouse", cursor.FollowSpeed, [("instant", "Instantly"), ("fast", "Fast"), ("natural", "Natural (bouncy)")]),
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.ShakeToDetach)}", "Shake the mouse to leave it behind", cursor.ShakeToDetach, "Then click it to talk."),
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.HideInFullscreen)}", "Hide while something is fullscreen", cursor.HideInFullscreen),
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.Highlighter)}", "Highlighter trail while talking", cursor.Highlighter, "Circle something with the mouse and say \"this\".")),
