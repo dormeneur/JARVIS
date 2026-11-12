@@ -62,6 +62,10 @@ public sealed class MacNotchPresenter : INotchPresenter
 
     private bool _dropping;
     private bool _openedByDrag;
+    private bool _hoverOpened;
+
+    /// <summary>The next home was opened by resting on the notch (or a file drag), so leaving it closes it.</summary>
+    public void OpenedByHover() => _hoverOpened = true;
 
     /// <summary>Creates the native notch; call once, after the app loop started.</summary>
     public void Initialize(PauseSwitch pause)
@@ -122,6 +126,11 @@ public sealed class MacNotchPresenter : INotchPresenter
         {
             _typed = [];
             _files = null;
+        }
+
+        if (show is not NotchState.Home)
+        {
+            _hoverOpened = false;
         }
 
         if (_state is NotchState.Home && show is not NotchState.Home)
@@ -185,6 +194,7 @@ public sealed class MacNotchPresenter : INotchPresenter
             ["close"] = state is NotchState.Response or NotchState.Home or NotchState.Composing or NotchState.EventDraft,
             ["clickable"] = state is NotchState.Response or NotchState.Form or NotchState.Home or NotchState.EventDraft or NotchState.Composing or NotchState.Parked,
             ["typing"] = state is NotchState.Composing,
+            ["leaveCloses"] = state is NotchState.Home && _hoverOpened,
         };
         if (frame.Spring is { } spring)
         {
@@ -488,7 +498,7 @@ public sealed class MacNotchPresenter : INotchPresenter
         }
         else if (_state is NotchState.IdleState or NotchState.Working or NotchState.Parked)
         {
-            (_dropping, _openedByDrag) = (true, true);
+            (_dropping, _openedByDrag, _hoverOpened) = (true, true, true);
             FilesDragged?.Invoke();
         }
     }

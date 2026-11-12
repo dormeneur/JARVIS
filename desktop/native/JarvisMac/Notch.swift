@@ -113,6 +113,7 @@ struct NotchView: Decodable {
     var hidden = false
     var talk: Int?
     var shelf: NotchShelfView?
+    var leaveCloses = false
 
     init() {}
 
@@ -148,10 +149,11 @@ struct NotchView: Decodable {
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         talk = try c.decodeIfPresent(Int.self, forKey: .talk)
         shelf = try c.decodeIfPresent(NotchShelfView.self, forKey: .shelf)
+        leaveCloses = try c.decodeIfPresent(Bool.self, forKey: .leaveCloses) ?? false
     }
 
     private enum Key: String, CodingKey {
-        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk, shelf
+        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk, shelf, leaveCloses
     }
 }
 
@@ -193,6 +195,8 @@ final class Notch: NSObject {
     var dragMonitor: Any?
     var dragStart = 0
     var dragNear = false
+    var leaveTimer: Timer?
+    var outsideSince: Date?
     var previousApp: NSRunningApplication?
 
     init(action: IntCallback, text: TextCallback) {
@@ -223,6 +227,38 @@ final class Notch: NSObject {
                 return nil
             }
             return event
+        }
+    }
+
+    /// A home opened by hovering closes once the mouse has been off it for a moment (never mid-drag).
+    func watchLeave(_ on: Bool) {
+        guard on else {
+            leaveTimer?.invalidate()
+            leaveTimer = nil
+            return
+        }
+        outsideSince = nil
+        guard leaveTimer == nil else { return }
+        leaveTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.checkLeave() }
+    }
+
+    func checkLeave() {
+        guard let screen = NSScreen.screens.first else { return }
+        let view = model.view
+        let notch = model.hardwareNotch
+        let width = notch.width > 0 ? max(view.width, notch.width + 44) : view.width
+        let mouse = NSEvent.mouseLocation
+        let margin = 16.0
+        let inside = abs(mouse.x - screen.frame.midX) <= width / 2 + margin && mouse.y >= screen.frame.maxY - (view.height + notch.height + margin)
+        if inside || NSEvent.pressedMouseButtons != 0 {
+            outsideSince = nil
+        } else if let since = outsideSince {
+            if Date().timeIntervalSince(since) >= 0.3 {
+                watchLeave(false)
+                model.send(-2) // as a click away: C# closes the home
+            }
+        } else {
+            outsideSince = Date()
         }
     }
 
@@ -267,6 +303,7 @@ final class Notch: NSObject {
         if view.typing && !wasTyping { model.draft = "" }
         model.view = view
         panel.ignoresMouseEvents = !view.clickable
+        watchLeave(view.leaveCloses)
         panel.orderFrontRegardless()
         if view.hidden {
             panel.orderOut(nil)

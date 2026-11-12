@@ -81,6 +81,7 @@ internal sealed partial class MacApp
         overlay.DwellAllowed = () => notch.Current is NotchState.IdleState or NotchState.Working or NotchState.Parked && !pause.IsPaused;
         overlay.NotchDwelled += () => MainThread.Post(() =>
         {
+            presenter.OpenedByHover();
             if (!notch.Restore())
             {
                 ShowHome();
