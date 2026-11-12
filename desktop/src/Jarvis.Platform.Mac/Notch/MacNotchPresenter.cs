@@ -22,7 +22,11 @@ public sealed class MacNotchPresenter : INotchPresenter
     private static readonly TimeSpan ParkedFor = TimeSpan.FromMinutes(30);
     private static MacNotchPresenter? _current;
 
+    /// <summary>The shelf strip under the home's buttons: header, gap, one row of tiles.</summary>
+    private const double ShelfHeight = 16 + 8 + 70 + 10;
+
     private readonly IOptionsMonitor<CursorOptions> _cursorOptions;
+    private readonly IOptionsMonitor<NotchOptions> _notchOptions;
     private readonly Dictionary<int, Action> _actions = [];
     private Dictionary<string, string> _typed = [];
 
@@ -36,9 +40,10 @@ public sealed class MacNotchPresenter : INotchPresenter
     private bool _hidden;
     private Timer? _visibilityCheck;
 
-    public MacNotchPresenter(IOptionsMonitor<CursorOptions> cursorOptions)
+    public MacNotchPresenter(IOptionsMonitor<CursorOptions> cursorOptions, IOptionsMonitor<NotchOptions> notchOptions)
     {
         _cursorOptions = cursorOptions;
+        _notchOptions = notchOptions;
     }
 
     /// <summary>The × and Escape outside the composer: cancel what's running (CompanionSession.Cancel).</summary>
@@ -48,6 +53,15 @@ public sealed class MacNotchPresenter : INotchPresenter
     public Action<string?>? OpenSettings { get; set; }
 
     public NotchState Current => Volatile.Read(ref _shown);
+
+    /// <summary>Files dropped on the notch; unset, the notch takes no drops.</summary>
+    public NotchShelf? Shelf { get; set; }
+
+    /// <summary>Raised on the main thread when files are dragged up to the sleeping notch: open the home to take them.</summary>
+    public event Action? FilesDragged;
+
+    private bool _dropping;
+    private bool _openedByDrag;
 
     /// <summary>Creates the native notch; call once, after the app loop started.</summary>
     public void Initialize(PauseSwitch pause)
@@ -110,6 +124,11 @@ public sealed class MacNotchPresenter : INotchPresenter
             _files = null;
         }
 
+        if (_state is NotchState.Home && show is not NotchState.Home)
+        {
+            (_dropping, _openedByDrag) = (false, false);
+        }
+
         _state = show;
         Volatile.Write(ref _shown, show);
         Send();
@@ -169,11 +188,11 @@ public sealed class MacNotchPresenter : INotchPresenter
         };
         if (frame.Spring is { } spring)
         {
-            view["response"] = spring.Response;
+            view["response"] = spring.Response * _notchOptions.CurrentValue.SpeedFactor;
             view["damping"] = spring.DampingFraction;
         }
 
-        if (NotchAccent.GlowFor(state) is { } glow)
+        if (_notchOptions.CurrentValue.Glow && NotchAccent.GlowFor(state) is { } glow)
         {
             view["glow"] = new JsonArray(glow.Select(rgb => (JsonNode)rgb).ToArray());
         }
@@ -223,6 +242,22 @@ public sealed class MacNotchPresenter : INotchPresenter
                 view["hint"] = home.Hint;
                 view["homeActions"] = new JsonArray(home.Actions.Select(item => (JsonNode)HomeItem(item)).ToArray());
                 view["recent"] = new JsonArray(home.Recent.Select(item => (JsonNode)HomeItem(item)).ToArray());
+                if (Shelf is { } shelf && shelf.Items is var items && (items.Count > 0 || _dropping))
+                {
+                    view["height"] = frame.Height + ShelfHeight;
+                    view["shelf"] = new JsonObject
+                    {
+                        ["dropping"] = _dropping,
+                        ["clear"] = Id(() => { shelf.Clear(); Send(); }),
+                        ["items"] = new JsonArray(items.Select(path => (JsonNode)new JsonObject
+                        {
+                            ["path"] = path,
+                            ["name"] = Path.GetFileName(path.TrimEnd('/')),
+                            ["remove"] = Id(() => { shelf.Remove(path); Send(); }),
+                        }).ToArray()),
+                    };
+                }
+
                 break;
             case NotchState.Form form:
                 view["form"] = FormView(form);
@@ -438,6 +473,56 @@ public sealed class MacNotchPresenter : INotchPresenter
 
     private static bool ClosesOnClickAway(NotchState state) => state is NotchState.Home or NotchState.Form or NotchState.Response { KeepOnClickAway: false };
 
+    /// <summary>A file drag reached the notch: open the home (or show its drop zone) to take it.</summary>
+    private void FilesNear()
+    {
+        if (Shelf is null || _pause?.IsPaused == true)
+        {
+            return;
+        }
+
+        if (_state is NotchState.Home)
+        {
+            _dropping = true;
+            Send();
+        }
+        else if (_state is NotchState.IdleState or NotchState.Working or NotchState.Parked)
+        {
+            (_dropping, _openedByDrag) = (true, true);
+            FilesDragged?.Invoke();
+        }
+    }
+
+    /// <summary>The drag ended. Dropped elsewhere, a home that only opened for it closes again.</summary>
+    private void DragEnded()
+    {
+        if (!_dropping)
+        {
+            return;
+        }
+
+        _dropping = false;
+        if (_openedByDrag && _state is NotchState.Home)
+        {
+            _openedByDrag = false;
+            Apply(NotchState.Idle);
+        }
+        else
+        {
+            Send();
+        }
+    }
+
+    private void Dropped(IEnumerable<string> paths)
+    {
+        Shelf?.Add(paths);
+        (_dropping, _openedByDrag) = (false, false);
+        if (_state is NotchState.Home)
+        {
+            Send();
+        }
+    }
+
     /// <summary>Esc or a click outside: the chat is put aside as it is, a form shrinks to its pill, anything else closes.</summary>
     private void Collapse()
     {
@@ -504,6 +589,12 @@ public sealed class MacNotchPresenter : INotchPresenter
             case -3:
                 notch.Restore();
                 break;
+            case -4:
+                notch.FilesNear();
+                break;
+            case -5:
+                notch.DragEnded();
+                break;
             default:
                 if (notch._actions.TryGetValue(id, out var action))
                 {
@@ -526,6 +617,10 @@ public sealed class MacNotchPresenter : INotchPresenter
         if (kind == 0 && notch._state is NotchState.Composing composing)
         {
             Task.Run(() => composing.Submit(value)); // off the UI thread: a turn starts with a screen capture
+        }
+        else if (kind == 5 && JsonSerializer.Deserialize<List<string>>(value) is { } dropped)
+        {
+            notch.Dropped(dropped);
         }
         else if (kind == 4)
         {

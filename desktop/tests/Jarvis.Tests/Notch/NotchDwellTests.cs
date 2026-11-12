@@ -37,4 +37,16 @@ public sealed class NotchDwellTests
     [InlineData(960, 60, false)]
     public void TheSliverAndAMarginAroundIt_Count(double x, double y, bool on)
         => Assert.Equal(on, NotchDwell.OnSliver(x, y, 0, 0, 1920, 1.25));
+
+    [Fact]
+    public void ZeroDelay_OpensOnTheFirstFrame()
+        => Assert.Equal((null, true), new NotchDwell { Delay = TimeSpan.Zero }.Update(At(1), onSliver: true, allowed: true));
+
+    [Theory]
+    [InlineData(756 - 92, 5, true)] // the left end of a 185 pt housing on a 1512 pt display
+    [InlineData(756 + 92 + 20, 30, true)]
+    [InlineData(756 + 92 + 30, 10, false)]
+    [InlineData(756, 32 + 30, false)]
+    public void TheWholeCameraHousing_Counts(double x, double y, bool on)
+        => Assert.Equal(on, NotchDwell.OnHardwareNotch(x, y, 0, 0, 1512, 185, 32));
 }

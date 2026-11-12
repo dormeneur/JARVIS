@@ -54,6 +54,7 @@ internal static class MacAppHost
         var configuration = builder.Configuration;
         services.Configure<ProviderOptions>(configuration.GetSection(ProviderOptions.SectionName));
         services.Configure<CursorOptions>(configuration.GetSection(CursorOptions.SectionName));
+        services.Configure<Jarvis.Core.Notch.NotchOptions>(configuration.GetSection(Jarvis.Core.Notch.NotchOptions.SectionName));
         services.Configure<CompanionOptions>(configuration.GetSection(CompanionOptions.SectionName));
         services.Configure<DictationOptions>(configuration.GetSection(DictationOptions.SectionName));
         services.Configure<ShortcutOptions>(configuration.GetSection(ShortcutOptions.SectionName));

@@ -18,4 +18,7 @@ public sealed class CursorOptions
 
     /// <summary>While the talk keys are held, moving the mouse draws a highlighter trail Jarvis reads as "this".</summary>
     public bool Highlighter { get; set; } = true;
+
+    /// <summary>The floating cursor's size, 1 = the design size (0.5 to 2).</summary>
+    public double Size { get; set; } = 1.0;
 }

@@ -217,6 +217,9 @@ internal static unsafe partial class Native
     [LibraryImport(Library, EntryPoint = "jv_notch_start")]
     public static partial void NotchStart(delegate* unmanaged[Cdecl]<int, void> action, delegate* unmanaged[Cdecl]<int, byte*, void> text);
 
+    [LibraryImport(Library, EntryPoint = "jv_notch_hardware")]
+    public static partial void NotchHardware(out double width, out double height);
+
     [LibraryImport(Library, EntryPoint = "jv_notch_show", StringMarshalling = StringMarshalling.Utf8)]
     public static partial void NotchShow(string json);
 

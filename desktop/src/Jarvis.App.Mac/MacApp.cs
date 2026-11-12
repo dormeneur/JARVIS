@@ -6,6 +6,7 @@ using Jarvis.Core.Agents;
 using Jarvis.Core.Companion;
 using Jarvis.Core.Cursor;
 using Jarvis.Core.Dictation;
+using Jarvis.Core.Notch;
 using Jarvis.Platform.Mac;
 using Jarvis.Platform.Mac.Audio;
 using Jarvis.Platform.Mac.Capture;
@@ -67,6 +68,8 @@ internal sealed partial class MacApp
         presenter.Escape = () => Services.GetRequiredService<CompanionSession>().Cancel();
         _settings = new MacSettings(Services, Restart);
         presenter.OpenSettings = ShowSettings;
+        presenter.Shelf = new NotchShelf(Path.Combine(AppPaths.DataDirectory, "shelf.json"));
+        presenter.FilesDragged += ShowHome;
         _enginesReady = PrewarmEnginesAsync();
 
         // Nothing else depends on the announcer; resolve it so it starts listening for finished jobs.

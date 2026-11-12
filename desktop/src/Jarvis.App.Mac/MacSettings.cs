@@ -9,6 +9,7 @@ using Jarvis.Core.Companion;
 using Jarvis.Core.Cursor;
 using Jarvis.Core.Dictation;
 using Jarvis.Core.Input;
+using Jarvis.Core.Notch;
 using Jarvis.Core.Proactive;
 using Jarvis.Core.Providers;
 using Jarvis.Core.Sound;
@@ -150,11 +151,19 @@ internal sealed class MacSettings
     /// <summary>"Ctrl + Alt" as a Mac user reads it.</summary>
     internal static string MacChord(string chord) => chord.Replace("Ctrl", "Control", StringComparison.Ordinal).Replace("Alt", "Option", StringComparison.Ordinal).Replace("Win", "Command", StringComparison.Ordinal);
 
+    private static readonly (string Value, string Label)[] Colours =
+        [("#3380FF", "Blue"), ("#26C281", "Green"), ("#D4A017", "Yellow"), ("#FF4C4C", "Red"), ("#A35CFF", "Purple"), ("#FF5CA8", "Pink"), ("#FF8A1F", "Orange"), ("#F2F2F2", "White")];
+
+    /// <summary>The presets, plus the current colour when it's a custom one (so the picker still shows it).</summary>
+    private static IEnumerable<(string, string)> CursorColours(string current)
+        => Colours.Any(colour => colour.Value.Equals(current, StringComparison.OrdinalIgnoreCase)) ? Colours : [.. Colours, (current, "Custom")];
+
     private static readonly (string, string)[] Models = [("sonnet", "Sonnet"), ("opus", "Opus"), ("haiku", "Haiku")];
 
     private List<object> Pages()
     {
         var cursor = Options<CursorOptions>();
+        var notch = Options<NotchOptions>();
         var privacy = Options<PrivacyOptions>();
         var voice = Options<CompanionOptions>();
         var dictation = Options<DictationOptions>();
@@ -241,10 +250,20 @@ internal sealed class MacSettings
                 "Cursor",
                 "cursorarrow.rays",
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.Visible)}", "Show the floating cursor", cursor.Visible),
-                Choice($"{CursorOptions.SectionName}:{nameof(CursorOptions.Color)}", "Colour", cursor.Color, [("#3380FF", "Blue"), ("#26C281", "Green"), ("#D4A017", "Yellow"), ("#FF4C4C", "Red")]),
+                Choice($"{CursorOptions.SectionName}:{nameof(CursorOptions.Color)}", "Colour", cursor.Color, CursorColours(cursor.Color)),
+                Text($"{CursorOptions.SectionName}:{nameof(CursorOptions.Color)}", "Custom colour", cursor.Color, "Any hex colour, e.g. #FF8800. Press Enter to apply."),
+                Number($"{CursorOptions.SectionName}:{nameof(CursorOptions.Size)}", "Size", cursor.Size, 0.5, 2, 0.1),
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.ShakeToDetach)}", "Shake the mouse to leave it behind", cursor.ShakeToDetach, "Then click it to talk."),
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.HideInFullscreen)}", "Hide while something is fullscreen", cursor.HideInFullscreen),
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.Highlighter)}", "Highlighter trail while talking", cursor.Highlighter, "Circle something with the mouse and say \"this\".")),
+            Page(
+                "Notch",
+                "rectangle.topthird.inset.filled",
+                Toggle($"{NotchOptions.SectionName}:{nameof(NotchOptions.OpenOnHover)}", "Open when the mouse rests on the notch", notch.OpenOnHover),
+                Number($"{NotchOptions.SectionName}:{nameof(NotchOptions.HoverDelayMs)}", "Hover delay (ms)", notch.HoverDelayMs, 0, 1000, 50, "0 opens it the moment the mouse arrives."),
+                Choice($"{NotchOptions.SectionName}:{nameof(NotchOptions.Speed)}", "Animation", notch.Speed, [("snappy", "Snappy"), ("smooth", "Smooth"), ("relaxed", "Relaxed")]),
+                Toggle($"{NotchOptions.SectionName}:{nameof(NotchOptions.Glow)}", "Colour glow", notch.Glow),
+                Note("Shelf", "Drag files up to the notch to keep them there, then drag them out wherever you need them.")),
             Page(
                 "Agents",
                 "person.2.wave.2",

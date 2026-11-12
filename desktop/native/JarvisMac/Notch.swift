@@ -38,6 +38,19 @@ struct NotchCard: Decodable, Identifiable {
     let choices: [String]?
 }
 
+struct NotchShelfItem: Decodable, Identifiable {
+    var id: String { path }
+    let path: String
+    let name: String
+    let remove: Int
+}
+
+struct NotchShelfView: Decodable {
+    let dropping: Bool
+    let clear: Int
+    let items: [NotchShelfItem]
+}
+
 struct NotchStoredFile: Decodable, Identifiable {
     var id: String { path }
     let path: String
@@ -99,6 +112,7 @@ struct NotchView: Decodable {
     var typing = false
     var hidden = false
     var talk: Int?
+    var shelf: NotchShelfView?
 
     init() {}
 
@@ -133,10 +147,11 @@ struct NotchView: Decodable {
         typing = try c.decodeIfPresent(Bool.self, forKey: .typing) ?? false
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         talk = try c.decodeIfPresent(Int.self, forKey: .talk)
+        shelf = try c.decodeIfPresent(NotchShelfView.self, forKey: .shelf)
     }
 
     private enum Key: String, CodingKey {
-        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk
+        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk, shelf
     }
 }
 
@@ -175,6 +190,9 @@ final class Notch: NSObject {
     let panel = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     var clickMonitor: Any?
     var keyMonitor: Any?
+    var dragMonitor: Any?
+    var dragStart = 0
+    var dragNear = false
     var previousApp: NSRunningApplication?
 
     init(action: IntCallback, text: TextCallback) {
@@ -195,12 +213,40 @@ final class Notch: NSObject {
             guard let self, self.model.view.clickable else { return }
             self.model.send(-2)
         }
+        // Files dragged up to the notch from another app open its shelf (C# decides when it may).
+        dragMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            self?.watchDrag(event)
+        }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53, let self { // Escape while typing in the notch
                 self.model.send(-1)
                 return nil
             }
             return event
+        }
+    }
+
+    /// A drag only counts once the drag pasteboard changed since the button went down and holds files.
+    func watchDrag(_ event: NSEvent) {
+        let board = NSPasteboard(name: .drag)
+        switch event.type {
+        case .leftMouseDown:
+            dragStart = board.changeCount
+            dragNear = false
+        case .leftMouseDragged:
+            guard !dragNear, board.changeCount != dragStart, board.types?.contains(.fileURL) == true, let screen = NSScreen.screens.first else { return }
+            let mouse = NSEvent.mouseLocation
+            if mouse.y >= screen.frame.maxY - 60 && abs(mouse.x - screen.frame.midX) <= 220 {
+                dragNear = true
+                model.send(-4)
+            }
+        case .leftMouseUp:
+            guard dragNear else { return }
+            dragNear = false
+            // After the drop (if it landed on the notch) has been delivered.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.model.send(-5) }
+        default:
+            break
         }
     }
 
@@ -564,6 +610,9 @@ struct HomeView: View {
                     .buttonStyle(.plain)
                 }
             }
+            if let shelf = model.view.shelf {
+                ShelfStrip(shelf: shelf, model: model)
+            }
             if let recent = model.view.recent, !recent.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(recent) { item in
@@ -586,6 +635,33 @@ struct HomeView: View {
             }
         }
         .padding(.vertical, 14)
+        .contentShape(Rectangle())
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            drop(providers)
+            return true
+        }
+    }
+
+    /// Dropped files go to C# as one JSON array of paths (text kind 5).
+    func drop(_ providers: [NSItemProvider]) {
+        var paths: [String] = []
+        let group = DispatchGroup()
+        let lock = NSLock()
+        for provider in providers {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url, url.isFileURL {
+                    lock.lock()
+                    paths.append(url.path)
+                    lock.unlock()
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            guard let data = try? JSONSerialization.data(withJSONObject: paths), let json = String(data: data, encoding: .utf8) else { return }
+            model.send(text: 5, json)
+        }
     }
 
     /// Segoe Fluent glyph names (or a literal character) as SF Symbols.
@@ -685,6 +761,72 @@ struct FormView: View {
                 Spacer()
             }
         }
+    }
+}
+
+/// The shelf: files dropped on the notch. Drag one out to use it, click to open it, × to let it go.
+struct ShelfStrip: View {
+    let shelf: NotchShelfView
+    let model: NotchModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Shelf").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                Spacer()
+                if !shelf.items.isEmpty {
+                    Button("Clear") { model.send(shelf.clear) }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                }
+            }
+            .frame(height: 16)
+            if shelf.items.isEmpty {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.white.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                    .overlay(Text("Drop files to keep them here").font(.system(size: 12)).foregroundStyle(.white.opacity(0.6)))
+                    .frame(height: 70)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        if shelf.dropping {
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.white.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                                .overlay(Image(systemName: "plus").foregroundStyle(.white.opacity(0.6)))
+                                .frame(width: 76, height: 70)
+                        }
+                        ForEach(shelf.items) { item in ShelfTile(item: item, model: model) }
+                    }
+                }
+                .frame(height: 70)
+            }
+        }
+    }
+}
+
+struct ShelfTile: View {
+    let item: NotchShelfItem
+    let model: NotchModel
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: item.path)).resizable().frame(width: 32, height: 32)
+            Text(item.name).font(.system(size: 10)).foregroundStyle(.white.opacity(0.85)).lineLimit(1).truncationMode(.middle)
+        }
+        .padding(6).frame(width: 76, height: 70)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(hovering ? 0.12 : 0.06)))
+        .overlay(alignment: .topTrailing) {
+            if hovering {
+                Button { model.send(item.remove) } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
+                }
+                .buttonStyle(.plain).padding(3).help("Take off the shelf")
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { NSWorkspace.shared.open(URL(fileURLWithPath: item.path)) }
+        .onDrag { NSItemProvider(contentsOf: URL(fileURLWithPath: item.path)) ?? NSItemProvider() }
+        .help(item.path)
     }
 }
 

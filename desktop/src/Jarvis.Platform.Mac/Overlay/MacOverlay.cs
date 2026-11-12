@@ -30,6 +30,8 @@ public sealed unsafe partial class MacOverlay : ICursorOverlay, IScreenDrawing, 
     private static MacOverlay? _current;
 
     private readonly IOptionsMonitor<CursorOptions> _options;
+    private readonly IOptionsMonitor<Jarvis.Core.Notch.NotchOptions> _notchOptions;
+    private (double Width, double Height) _hardwareNotch;
     private readonly PauseSwitch _pause;
     private readonly TimeProvider _time;
     private readonly ILogger<MacOverlay> _logger;
@@ -54,9 +56,10 @@ public sealed unsafe partial class MacOverlay : ICursorOverlay, IScreenDrawing, 
     private TimeSpan _lastFrame;
     private Timer? _fullscreenCheck;
 
-    public MacOverlay(IOptionsMonitor<CursorOptions> options, PauseSwitch pause, TimeProvider time, ILogger<MacOverlay> logger)
+    public MacOverlay(IOptionsMonitor<CursorOptions> options, IOptionsMonitor<Jarvis.Core.Notch.NotchOptions> notchOptions, PauseSwitch pause, TimeProvider time, ILogger<MacOverlay> logger)
     {
         _options = options;
+        _notchOptions = notchOptions;
         _pause = pause;
         _time = time;
         _logger = logger;
@@ -115,6 +118,8 @@ public sealed unsafe partial class MacOverlay : ICursorOverlay, IScreenDrawing, 
         MainThread.Post(() =>
         {
             _screens = Screen.All();
+            Native.NotchHardware(out var notchWidth, out var notchHeight);
+            _hardwareNotch = (notchWidth, notchHeight);
             Native.OverlayStart(&OnFrame, &OnClicked, &OnDisplaysChanged, ShowInRecordings ? 1 : 0);
             LogDisplays(_screens.Count);
         });
@@ -163,6 +168,8 @@ public sealed unsafe partial class MacOverlay : ICursorOverlay, IScreenDrawing, 
         if (_current is { } overlay)
         {
             overlay._screens = Screen.All();
+            Native.NotchHardware(out var notchWidth, out var notchHeight);
+            overlay._hardwareNotch = (notchWidth, notchHeight);
             overlay._inkPainted = false;
             overlay.LogDisplays(overlay._screens.Count);
         }
@@ -189,8 +196,14 @@ public sealed unsafe partial class MacOverlay : ICursorOverlay, IScreenDrawing, 
 
         // Resting on the sleeping notch fills a ring beside the cursor, then opens the notch's home.
         var main = _screens.Count > 0 ? _screens[0] : null;
-        var onSliver = main is not null && Jarvis.Core.Notch.NotchDwell.OnSliver(mouseX, mouseY, main.Left, main.Top, main.Width, 1);
-        var mayOpen = visible && !_cursor.IsListening && (Native.MouseButtons() & 1) == 0 && DwellAllowed?.Invoke() == true;
+        // With a camera housing the whole housing is the target, not the 60 pt sliver drawn on other Macs.
+        var notchOptions = _notchOptions.CurrentValue;
+        _dwell.Delay = TimeSpan.FromMilliseconds(Math.Clamp(notchOptions.HoverDelayMs, 0, 2000));
+        var onSliver = main is not null && (_hardwareNotch.Width > 0
+            ? Jarvis.Core.Notch.NotchDwell.OnHardwareNotch(mouseX, mouseY, main.Left, main.Top, main.Width, _hardwareNotch.Width, _hardwareNotch.Height)
+            : Jarvis.Core.Notch.NotchDwell.OnSliver(mouseX, mouseY, main.Left, main.Top, main.Width, 1));
+        // Not tied to the floating cursor: hidden (or stepped aside for fullscreen), the notch still opens.
+        var mayOpen = notchOptions.OpenOnHover && !_cursor.IsListening && (Native.MouseButtons() & 1) == 0 && DwellAllowed?.Invoke() == true;
         var (ring, opened) = _dwell.Update(now, onSliver, mayOpen);
         pose = pose with { Dwell = ring };
         if (opened && NotchDwelled is { } open)
@@ -241,7 +254,7 @@ public sealed unsafe partial class MacOverlay : ICursorOverlay, IScreenDrawing, 
                 dotsArgument = dots;
             }
 
-            Native.Cursor(visible ? 1 : 0, pose.X, pose.Y, pose.RotationDegrees, pose.Scale, rgb, dotsArgument, barsArgument, pose.Dwell ?? -1);
+            Native.Cursor(visible ? 1 : 0, pose.X, pose.Y, pose.RotationDegrees, pose.Scale * Math.Clamp(_options.CurrentValue.Size, 0.5, 2), rgb, dotsArgument, barsArgument, pose.Dwell ?? -1);
         }
     }
 

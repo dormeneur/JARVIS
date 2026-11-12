@@ -45,6 +45,7 @@ The same Core and Providers run on a Mac through `Jarvis.Platform.Mac` + `Jarvis
 - Permissions: Input Monitoring (shortcuts, relaunch after granting), Accessibility (dictation typing, driving, window titles), Screen Recording, Microphone. Settings → Permissions lists them. They are tied to the code signature, so ad-hoc builds may be asked again after a rebuild.
 - `claude` is looked up in the usual install folders (`MacAppHost.FindExecutable`): apps opened from Finder get launchd's bare PATH.
 - Package: `packaging/macos/make-app.sh [arm64|x64] [version]` builds a self-contained, hardened-runtime `artifacts/macos-<arch>/Jarvis.app`. It is ad-hoc signed unless `JARVIS_SIGN_IDENTITY` is set, and notarized when `JARVIS_NOTARY_PROFILE` is also set.
+- Notch hover: with a camera housing the whole housing is the hover target (`NotchDwell.OnHardwareNotch`); the delay, animation speed and glow come from `NotchOptions` (Settings → Notch). Hover doesn't depend on the floating cursor being shown. Shelf: files dragged to the notch open the home and land on `NotchShelf` (`shelf.json`, paths only); Swift handles drag in/out (`Notch.watchDrag`, `ShelfStrip`).
 - Settings → Connectors on a Mac covers custom servers (API key or browser sign-in), Test, sign in again and remove; the Windows catalog (one-click GitHub, Google…) isn't there yet. The Windows and Mac pages share `ConnectorCheck.TestAsync`.
 
 ## Design notes (local only)
