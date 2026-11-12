@@ -849,6 +849,14 @@ struct ShelfStrip: View {
 }
 
 struct ShelfTile: View {
+    /// The file itself (its URL, as Finder drags it), not a copy of its bytes: given bytes, apps
+    /// save them under a temporary name like ".com.apple.Foundation.NSItemProvider.X.pdf".
+    static func provider(for item: NotchShelfItem) -> NSItemProvider {
+        let provider = NSItemProvider(object: URL(fileURLWithPath: item.path) as NSURL)
+        provider.suggestedName = item.name
+        return provider
+    }
+
     let item: NotchShelfItem
     let model: NotchModel
     @State private var hovering = false
@@ -871,7 +879,7 @@ struct ShelfTile: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { NSWorkspace.shared.open(URL(fileURLWithPath: item.path)) }
-        .onDrag { NSItemProvider(contentsOf: URL(fileURLWithPath: item.path)) ?? NSItemProvider() }
+        .onDrag { ShelfTile.provider(for: item) }
         .help(item.path)
     }
 }
