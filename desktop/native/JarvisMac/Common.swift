@@ -60,10 +60,35 @@ public func jv_free(_ pointer: UnsafeMutableRawPointer?) {
     free(pointer)
 }
 
+/// Key equivalents (⌘C, ⌘V, ⌘A, ⌘Z…) only reach text fields through the main menu, so even a
+/// menu-bar app needs one: Settings and the notch composer would refuse to paste without it.
+private func editMenu() -> NSMenu {
+    let main = NSMenu()
+    // The first item is always the app menu; left empty so ⌘Q can't skip Jarvis's own Quit (which cleans up).
+    let appItem = NSMenuItem()
+    appItem.submenu = NSMenu()
+    main.addItem(appItem)
+
+    let edit = NSMenu(title: "Edit")
+    edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    let redo = edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+    redo.keyEquivalentModifierMask = [.command, .shift]
+    edit.addItem(.separator())
+    edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    let editItem = NSMenuItem()
+    editItem.submenu = edit
+    main.addItem(editItem)
+    return main
+}
+
 @_cdecl("jv_app_run")
 public func jv_app_run(_ ready: VoidCallback) {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory) // menu bar only: no Dock icon, no app menu
+    app.mainMenu = editMenu()
     DispatchQueue.main.async { ready() }
     app.run()
 }
