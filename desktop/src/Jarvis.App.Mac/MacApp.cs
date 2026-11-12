@@ -78,7 +78,9 @@ internal sealed partial class MacApp
 
         // Resting the mouse on the sleeping notch opens its home (or what was put aside).
         var notch = Services.GetRequiredService<INotchPresenter>();
-        overlay.DwellAllowed = () => notch.Current is NotchState.IdleState or NotchState.Working or NotchState.Parked && !pause.IsPaused;
+        // The presenter's own state: it closes the home itself (mouse left, click away), which the
+        // AmbientNotch wrapper never hears about.
+        overlay.DwellAllowed = () => presenter.Current is NotchState.IdleState or NotchState.Working or NotchState.Parked && !pause.IsPaused;
         overlay.NotchDwelled += () => MainThread.Post(() =>
         {
             presenter.OpenedByHover();
