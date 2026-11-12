@@ -15,22 +15,25 @@ struct SettingsRow: Decodable, Identifiable {
     let type: String // toggle, choice, text, secret, number, button, note, group
     let label: String
     let detail: String?
-    let on: Bool?
-    let text: String?
-    let number: Double?
+    var on: Bool?
+    var text: String?
+    var number: Double?
     let minimum: Double?
     let maximum: Double?
     let step: Double?
     let choices: [SettingsChoice]?
     let action: Int?
     let enabled: Bool?
+
+    /// The setting this row edits; "Section:Name#custom" is a second row for the same one.
+    var setting: String { String(id.split(separator: "#").first ?? Substring(id)) }
 }
 
 struct SettingsPage: Decodable, Identifiable {
     var id: String { title }
     let title: String
     let symbol: String
-    let rows: [SettingsRow]
+    var rows: [SettingsRow]
 }
 
 final class SettingsModel: ObservableObject {
@@ -46,6 +49,18 @@ final class SettingsModel: ObservableObject {
     }
 
     func change(_ key: String, _ value: Any) {
+        // Shown at once (every row editing that setting); C#'s re-send moments later confirms it.
+        let setting = String(key.split(separator: "#").first ?? Substring(key))
+        for page in pages.indices {
+            for row in pages[page].rows.indices where pages[page].rows[row].setting == setting {
+                switch value {
+                case let on as Bool: pages[page].rows[row].on = on
+                case let number as Double: pages[page].rows[row].number = number
+                case let text as String: pages[page].rows[row].text = text
+                default: break
+                }
+            }
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: ["key": key, "value": value]), let json = String(data: data, encoding: .utf8) else { return }
         json.withCString { text(2, $0) }
     }

@@ -56,6 +56,10 @@ internal sealed class MacSettings
         _restart = restart;
         _startupSnapshot = RestartOnlyValues();
         MainThread.Post(() => SettingsWindow.Start(Changed, Clicked));
+
+        // Re-send the pages as soon as settings.json has reloaded (after a change here or anywhere).
+        var configuration = services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+        Microsoft.Extensions.Primitives.ChangeToken.OnChange(configuration.GetReloadToken, () => MainThread.Post(() => Send(show: false, null)));
     }
 
     public void Show(string? section) => MainThread.Post(() => Send(show: true, section));
@@ -73,8 +77,8 @@ internal sealed class MacSettings
         SettingsWindow.Update(Pages(), banner, show, section);
     }
 
-    /// <summary>The config file reloads on its own a moment after a write; re-send once it has.</summary>
-    private void Refresh() => _ = Task.Delay(400).ContinueWith(_ => MainThread.Post(() => Send(show: false, null)), TaskScheduler.Default);
+    /// <summary>Re-sends the pages now; file-backed settings are re-sent again when the file reloads.</summary>
+    private void Refresh() => MainThread.Post(() => Send(show: false, null));
 
     private void Changed(string key, JsonElement value)
     {
@@ -102,13 +106,15 @@ internal sealed class MacSettings
                 _connectorKey = value.GetString() ?? string.Empty;
                 break;
             default:
-                var split = key.LastIndexOf(':');
+                // "Section:Name#view": a second row editing the same setting (the custom colour field).
+                var setting = key.Split('#')[0];
+                var split = setting.LastIndexOf(':');
                 if (split > 0)
                 {
-                    SettingsFile.Set(key[..split], key[(split + 1)..], JsonNode.Parse(value.GetRawText()));
+                    SettingsFile.Set(setting[..split], setting[(split + 1)..], JsonNode.Parse(value.GetRawText()));
                 }
 
-                break;
+                return; // the reload re-sends the pages
         }
 
         Refresh();
@@ -251,7 +257,7 @@ internal sealed class MacSettings
                 "cursorarrow.rays",
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.Visible)}", "Show the floating cursor", cursor.Visible),
                 Choice($"{CursorOptions.SectionName}:{nameof(CursorOptions.Color)}", "Colour", cursor.Color, CursorColours(cursor.Color)),
-                Text($"{CursorOptions.SectionName}:{nameof(CursorOptions.Color)}", "Custom colour", cursor.Color, "Any hex colour, e.g. #FF8800. Press Enter to apply."),
+                Text($"{CursorOptions.SectionName}:{nameof(CursorOptions.Color)}#custom", "Custom colour", cursor.Color, "Any hex colour, e.g. #FF8800. Press Enter to apply."),
                 Number($"{CursorOptions.SectionName}:{nameof(CursorOptions.Size)}", "Size", cursor.Size, 0.5, 2, 0.1),
                 Choice($"{CursorOptions.SectionName}:{nameof(CursorOptions.FollowSpeed)}", "Follows the mouse", cursor.FollowSpeed, [("instant", "Instantly"), ("fast", "Fast"), ("natural", "Natural (bouncy)")]),
                 Toggle($"{CursorOptions.SectionName}:{nameof(CursorOptions.ShakeToDetach)}", "Shake the mouse to leave it behind", cursor.ShakeToDetach, "Then click it to talk."),
