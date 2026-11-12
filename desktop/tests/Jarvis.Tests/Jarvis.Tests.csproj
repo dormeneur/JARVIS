@@ -3,6 +3,8 @@
     <TargetFramework>net9.0</TargetFramework>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
+    <!-- Lets the tests run where only a newer .NET runtime is installed (e.g. .NET 10 on a Mac). -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Jarvis.Core\Jarvis.Core.csproj" />

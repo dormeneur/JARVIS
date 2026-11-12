@@ -295,7 +295,7 @@ public sealed class FormFillerTests
         await Filler(vault, new FormBrowser(), notch).RunAsync(fillIn: false, TestContext.Current.CancellationToken);
         vault.Asked.Clear();
 
-        var said = await notch.Shown.OfType<NotchState.Form>().Last().Actions.Files!.AddContext([@"C:\\Users\\me\\offer.pdf"]);
+        var said = await notch.Shown.OfType<NotchState.Form>().Last().Actions.Files!.AddContext(["/Users/me/offer.pdf"]);
         await WaitUntil(() => vault.Asked.Count > 0);
 
         Assert.StartsWith("Added offer.pdf.", said, StringComparison.Ordinal);

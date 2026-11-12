@@ -128,7 +128,7 @@ public sealed class AgentTests : IDisposable
     [Fact]
     public void Protocol_ParsesAgentNotesToolsAndResult()
     {
-        var tools = ClaudeProtocol.ParseAgent("""{"type":"assistant","message":{"content":[{"type":"text","text":"Found five."},{"type":"tool_use","name":"WebFetch","input":{"url":"https://www.example.com/page"}},{"type":"tool_use","name":"Write","input":{"file_path":"C:\\jobs\\x\\output\\plan.md"}}]}}""");
+        var tools = ClaudeProtocol.ParseAgent("""{"type":"assistant","message":{"content":[{"type":"text","text":"Found five."},{"type":"tool_use","name":"WebFetch","input":{"url":"https://www.example.com/page"}},{"type":"tool_use","name":"Write","input":{"file_path":"/jobs/x/output/plan.md"}}]}}""");
         var result = ClaudeProtocol.ParseAgent("""{"type":"result","is_error":false,"result":"Done."}""");
 
         Assert.Equal(

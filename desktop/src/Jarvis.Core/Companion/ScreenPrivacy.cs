@@ -105,7 +105,7 @@ public sealed class ScreenPrivacy
                 File.WriteAllLines(_logPath, lines); // keep the file small
             }
 
-            return [.. lines.Reverse().Take(count).Select(Parse).OfType<ScreenLook>()];
+            return [.. Enumerable.Reverse(lines).Take(count).Select(Parse).OfType<ScreenLook>()];
         }
     }
 

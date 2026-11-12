@@ -391,7 +391,7 @@ public sealed class CompanionSessionTests
 
     private static async Task WaitUntil(Func<bool> condition)
     {
-        for (var i = 0; i < 200 && !condition(); i++)
+        for (var i = 0; i < 500 && !condition(); i++) // drive steps really wait (~2.4 s for two rounds)
         {
             await Task.Delay(10, TestContext.Current.CancellationToken);
         }
