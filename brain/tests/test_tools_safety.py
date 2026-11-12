@@ -112,6 +112,15 @@ def test_create_then_read_roundtrip(vault):
     assert "abc" in out
 
 
+def test_read_pdf_uses_extractor_not_raw_bytes(vault, monkeypatch):
+    (vault / "Notes" / "cv.pdf").write_bytes(b"%PDF-1.4\x00\xff binary junk")
+    monkeypatch.setattr(
+        toolkit.DocumentLoader, "_extract_content", lambda self, p: "Interned at Acme"
+    )
+    out = run(toolkit.execute("read_file", {"path": "Notes/cv.pdf"}))
+    assert "Interned at Acme" in out and "%PDF" not in out
+
+
 def test_create_refuses_to_clobber(vault):
     with pytest.raises(toolkit.ToolError, match="already exists"):
         run(toolkit.execute("create_file", {"path": "Notes/hello.md", "content": "x"}))

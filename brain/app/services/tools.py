@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.config import settings
-from app.services.document_loader import EXCLUDED_FOLDERS
+from app.services.document_loader import EXCLUDED_FOLDERS, DocumentLoader
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,13 @@ def _tool_read_file(path: str, **_: Any) -> str:
         raise ToolError(f"'{_rel(target)}' is a directory; use list_directory")
 
     try:
-        text = target.read_text(encoding="utf-8", errors="replace")
+        if target.suffix.lower() in (".pdf", ".docx"):
+            # Binary formats: reuse the indexer's extractor instead of decoding raw bytes.
+            text = DocumentLoader(str(settings.vault_path))._extract_content(target)
+            if text is None:
+                raise ToolError(f"could not extract text from {_rel(target)}")
+        else:
+            text = target.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         raise ToolError(f"could not read {_rel(target)}: {exc}") from exc
 
