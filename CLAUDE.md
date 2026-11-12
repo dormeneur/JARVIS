@@ -40,7 +40,7 @@ cd mobile
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs   # REQUIRED after any Drift table change
 flutter test
-flutter analyze
+flutter analyze --no-fatal-infos                          # CI flags; CI also docker-builds ./server and ./brain
 flutter run
 ```
 
@@ -112,7 +112,7 @@ flutter run
 - **Job search (`jobs/`, jv-jobs, compose profile `jobs`):** runs the external ai-job-search
   workspace through headless Claude Code on the owner's subscription. Never edit that workspace's
   files from JARVIS; adapt via CLI flags and the headless contract in `jobs/app/runner.py`. It never
-  mounts the vault. Admin-only proxy at `/jobs/*`. Spec: `OFFICIAL-DOCS/12-Job-Search-Integration.md`.
+  mounts the vault. Admin-only proxy at `/jobs/*`. Spec: `DOCUMENTATION/OFFICIAL-DOCS/12-Job-Search-Integration.md`.
   Tests: `cd jobs && python -m pytest` (a fake `claude` replays stream-json; no tokens spent).
 - **Vectors live in SQLite by default** (`JARVIS_VECTOR_BACKEND=sqlite`, `services/sqlite_vector_store.py`,
   `<vault>/.system/brain/vectors.db`, brute-force cosine). ChromaDB is kept only as a rollback

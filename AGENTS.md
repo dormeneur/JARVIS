@@ -27,7 +27,7 @@ cd mobile
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs   # REQUIRED after any Drift table change
 flutter test
-flutter analyze
+flutter analyze --no-fatal-infos                          # CI flags; CI also docker-builds ./server and ./brain
 flutter run
 ```
 
