@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 SUPPORTED_EXTENSIONS = [".md", ".txt", ".pdf", ".json", ".csv", ".docx"]
 MAX_FILE_SIZE_MB = 1
+# PDF and Word files are mostly images and layout: a 14 MB slide deck holds little text. Their
+# extracted text is chunked like any other, so the raw-size cap for them is much higher.
+MAX_BINARY_DOC_SIZE_MB = 50
+BINARY_DOC_EXTENSIONS = (".pdf", ".docx")
 EXCLUDED_FOLDERS = ["Secrets", "system", ".system", ".git", "__pycache__", "node_modules"]
 # global_index.md is generated from the index (it lists every file's summary, its own included), so
 # indexing it makes it change on every pass and re-queue itself forever. The brain reads it directly.
@@ -120,7 +124,8 @@ class DocumentLoader:
         
         # Check file size
         try:
-            if path.stat().st_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+            limit_mb = MAX_BINARY_DOC_SIZE_MB if path.suffix.lower() in BINARY_DOC_EXTENSIONS else MAX_FILE_SIZE_MB
+            if path.stat().st_size > limit_mb * 1024 * 1024:
                 logger.info(f"Skipping large file: {path} ({path.stat().st_size / (1024*1024):.1f} MB)")
                 return True
         except OSError as e:

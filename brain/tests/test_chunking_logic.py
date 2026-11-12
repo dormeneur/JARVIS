@@ -122,6 +122,17 @@ class TestFileSizeLimit:
             assert "ok.md" in paths, "Normal file should be loaded"
             assert "big.md" not in paths, "Oversized file should be skipped"
 
+    def test_large_pdf_is_not_skipped_for_its_raw_size(self):
+        """A slide-deck PDF over the text cap is still read: its size is images, not text."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vault = Path(tmpdir)
+            deck = vault / "deck.pdf"
+            deck.write_bytes(b"%PDF-1.4" + b"\0" * (MAX_FILE_SIZE_MB * 1024 * 1024 + 1))
+
+            loader = DocumentLoader(str(vault))
+
+            assert not loader._should_skip(deck)
+
     def test_file_exactly_at_limit_loaded(self):
         """A file exactly at 1MB should still be loaded."""
         with tempfile.TemporaryDirectory() as tmpdir:
