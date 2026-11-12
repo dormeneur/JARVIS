@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-The JARVIS desktop app: a Windows AI buddy that lives next to your cursor. It sees the screen, talks, points and draws, and can run background jobs. It runs on free engines: the user's own `claude` CLI for general screen help, Whisper for speech-to-text, Kokoro for text-to-speech. Anything that touches the user's vault stays on the PC (see the root `CLAUDE.md`). All paths below are relative to `desktop/`.
+The JARVIS desktop app: a Windows (and macOS, see below) AI buddy that lives next to your cursor. It sees the screen, talks, points and draws, and can run background jobs. It runs on free engines: the user's own `claude` CLI for general screen help, Whisper for speech-to-text, Kokoro for text-to-speech. Anything that touches the user's vault stays on the PC (see the root `CLAUDE.md`). All paths below are relative to `desktop/`.
 
 ## Commands
 
@@ -32,6 +32,20 @@ Run from `desktop/`:
   - `selftest` makes Kokoro speak a sentence and Whisper transcribe it back, then records 1.5 s from the mic and logs the level.
 - Models download on first run to `%LOCALAPPDATA%\Jarvis\models` (Whisper base 141 MB, Kokoro 310 MB; about 4 min at ~1.3 MB/s). The notch shows the working light meanwhile.
 - Logs go to the Windows Application event log (source ".NET Runtime"). Cursor phase changes log at Debug: set `Logging__EventLog__LogLevel__Default=Debug`.
+
+## macOS
+The same Core and Providers run on a Mac through `Jarvis.Platform.Mac` + `Jarvis.App.Mac` (net9.0, osx-arm64/x64; macOS 14+). Nothing in Core is Mac-specific.
+- `native/JarvisMac/*.swift` builds `libjarvis_mac.dylib` (`native/build.sh [arm64|x86_64|universal]`; the Platform.Mac build runs it when the Swift changes). It exposes a plain C ABI (`jv_*`, UTF-8 strings, C callbacks); `Jarvis.Platform.Mac/Native.cs` is its P/Invoke surface. Callbacks into C# must never throw (`MainThread.Guard`).
+- Threads: `Main` runs the AppKit loop on the process's first thread (`MainThread.Run`); UI work goes through `MainThread.Post`. The overlay's frame loop is a CADisplayLink callback on the main thread (`MacOverlay.Frame`), running the same Core state machines as `OverlayService`.
+- Coordinates: points on a y-down desktop (origin = main display's top-left), so Core gets scale 1.
+- Keys: the CGEvent tap's key codes become Windows virtual keys (`MacKeys`) for the shared `ChordDetector`: Control+Option talks (Ctrl+Alt), Control+Command dictates (Ctrl+Win). Settings keep the Windows names; the UI shows Mac names (`MacSettings.MacChord`).
+- Notch: `MacNotchPresenter` keeps the Windows presenter's state rules and sends one JSON view per change to SwiftUI (`Notch.swift`); buttons come back as ids. On a Mac with a camera housing the idle sliver is the hardware notch, and open panels grow out from under it. Settings is a native window whose pages C# describes (`MacSettings`).
+- Secrets: `CredentialVault`/`ProtectedFile` keep their Windows API on the Keychain (service `com.jarvis.desktop`), so the shared settings stores link unchanged.
+- Run: `dotnet build src/Jarvis.App.Mac`, then `src/Jarvis.App.Mac/bin/Debug/net9.0/osx-<arch>/Jarvis`. Data lives in `~/Library/Application Support/Jarvis`. `JARVIS_DEMO` works as on Windows (plus `settings[:page]`). `JARVIS_SNAPSHOT=<dir>` writes Jarvis's own windows as PNGs without Screen Recording. Windows are excluded from capture unless `JARVIS_OVERLAY_CAPTURABLE=1`.
+- Permissions: Input Monitoring (shortcuts, relaunch after granting), Accessibility (dictation typing, driving, window titles), Screen Recording, Microphone. Settings → Permissions lists them. They are tied to the code signature, so ad-hoc builds may be asked again after a rebuild.
+- `claude` is looked up in the usual install folders (`MacAppHost.FindExecutable`): apps opened from Finder get launchd's bare PATH.
+- Package: `packaging/macos/make-app.sh [arm64|x64] [version]` builds a self-contained, hardened-runtime `artifacts/macos-<arch>/Jarvis.app`. It is ad-hoc signed unless `JARVIS_SIGN_IDENTITY` is set, and notarized when `JARVIS_NOTARY_PROFILE` is also set.
+- Not ported yet: the composer's mic button, the form panel's Files page, Settings → Routines and Connectors (edit `settings.json` for those).
 
 ## Design notes (local only)
 - The look-and-feel spec (`DESIGN-FACTS.md`, cited in code comments as "DESIGN-FACTS.md §n"), the architecture and tech-stack notes and the research notes live **outside this repo**, on the owner's machine, and are never committed. Every spring, size, timing, colour and threshold comes from that spec; don't invent values. If it isn't available, keep the existing constants.

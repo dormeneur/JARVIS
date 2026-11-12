@@ -51,8 +51,8 @@ public sealed partial class DictationSession : IAsyncDisposable
         {
             _services.Cursor.SetListening(false);
             _services.Notch.Show(new NotchState.Response(
-                "Windows is blocking Jarvis from the microphone. Turn on \"Let desktop apps access your microphone\" in Windows settings, then try again.",
-                [new NotchAction("Open Windows settings", () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(MicrophoneBlockedException.SettingsPage) { UseShellExecute = true })?.Dispose()), new NotchAction("Dismiss", () => _services.Notch.Show(NotchState.Idle))]));
+                MicrophoneBlockedException.Advice,
+                [new NotchAction(MicrophoneBlockedException.SettingsLabel, () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(MicrophoneBlockedException.SettingsPage) { UseShellExecute = true })?.Dispose()), new NotchAction("Dismiss", () => _services.Notch.Show(NotchState.Idle))]));
             return;
         }
 

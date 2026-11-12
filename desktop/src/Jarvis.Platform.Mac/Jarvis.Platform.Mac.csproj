@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The macOS platform layer: the contracts implemented on libjarvis_mac.dylib (desktop/native). -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Jarvis.Platform.Mac</RootNamespace>
+    <NativeDirectory>$(MSBuildThisFileDirectory)..\..\native\</NativeDirectory>
+    <NativeLibrary>$(NativeDirectory)build\libjarvis_mac.dylib</NativeLibrary>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Jarvis.Core\Jarvis.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The Mac app (assembly "Jarvis") opens System Settings panes and links through the bridge. -->
+    <InternalsVisibleTo Include="Jarvis" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Plain .NET code shared with Windows; the Win32 bits live in per-OS partials. -->
+    <Compile Include="..\Jarvis.Platform\Browser\BrowserLinkServer.cs" Link="Browser\BrowserLinkServer.cs" />
+    <Compile Include="..\Jarvis.Platform\Audio\MicrophoneOptions.cs" Link="Audio\MicrophoneOptions.cs" />
+  </ItemGroup>
+  <!-- Build the Swift bridge when its sources change (Mac only), and ship it beside the app. -->
+  <Target Name="BuildNativeBridge" BeforeTargets="BeforeBuild" Condition="$([MSBuild]::IsOSPlatform('OSX'))"
+          Inputs="@(SwiftSource)" Outputs="$(NativeLibrary)">
+    <Exec Command="&quot;$(NativeDirectory)build.sh&quot; $(NativeArchitecture)" />
+  </Target>
+  <ItemGroup>
+    <SwiftSource Include="$(NativeDirectory)JarvisMac\*.swift" />
+    <None Include="$(NativeLibrary)" Link="libjarvis_mac.dylib" CopyToOutputDirectory="PreserveNewest" Visible="false" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+  </ItemGroup>
+</Project>

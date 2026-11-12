@@ -10,6 +10,7 @@
     <ProjectReference Include="..\..\src\Jarvis.Core\Jarvis.Core.csproj" />
     <ProjectReference Include="..\..\src\Jarvis.Providers.ClaudeCli\Jarvis.Providers.ClaudeCli.csproj" />
     <ProjectReference Include="..\..\src\Jarvis.Providers.Local\Jarvis.Providers.Local.csproj" />
+    <ProjectReference Include="..\..\src\Jarvis.Platform.Mac\Jarvis.Platform.Mac.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3" />

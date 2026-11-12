@@ -107,13 +107,13 @@ public sealed partial class CompanionSession : IAsyncDisposable
         LogListening();
     }
 
-    /// <summary>Windows refused the microphone: say why, with a button to the switch.</summary>
+    /// <summary>The OS refused the microphone: say why, with a button to the switch.</summary>
     private void ShowMicrophoneBlocked()
     {
         _services.Cursor.SetListening(false);
         _services.Notch.Show(new NotchState.Response(
-            "Windows is blocking Jarvis from the microphone. Turn on \"Let desktop apps access your microphone\" in Windows settings, then try again.",
-            [new NotchAction("Open Windows settings", OpenMicrophoneSettings), new NotchAction("Dismiss", () => _services.Notch.Show(NotchState.Idle))]));
+            MicrophoneBlockedException.Advice,
+            [new NotchAction(MicrophoneBlockedException.SettingsLabel, OpenMicrophoneSettings), new NotchAction("Dismiss", () => _services.Notch.Show(NotchState.Idle))]));
     }
 
     private static void OpenMicrophoneSettings()

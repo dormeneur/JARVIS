@@ -48,3 +48,6 @@ SECOND-BRAIN/
 
 # Personal secrets notes (tokens, keys): never committed.
 DOCUMENTATION/SECRETS/
+
+# macOS app bundles (desktop/packaging/macos/make-app.sh)
+desktop/artifacts/

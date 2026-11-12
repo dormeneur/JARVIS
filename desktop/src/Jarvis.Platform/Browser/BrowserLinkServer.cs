@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text;
@@ -10,7 +9,6 @@ using Jarvis.Core.Companion;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Windows.Win32;
 
 namespace Jarvis.Platform.Browser;
 
@@ -31,7 +29,6 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
 
     /// <summary>Reading every frame of a big page can take a few seconds.</summary>
     private static readonly TimeSpan FormTimeout = TimeSpan.FromSeconds(6);
-    private static readonly string[] Browsers = ["chrome", "msedge", "brave", "arc", "vivaldi", "opera", "chromium"];
 
     private readonly IOptionsMonitor<BrowserOptions> _options;
     private readonly ILogger<BrowserLinkServer> _logger;
@@ -56,23 +53,7 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
 
     public bool IsConnected => _socket?.State == WebSocketState.Open;
 
-    public unsafe bool IsBrowserInFront
-    {
-        get
-        {
-            uint process;
-            PInvoke.GetWindowThreadProcessId(PInvoke.GetForegroundWindow(), &process);
-            try
-            {
-                using var owner = Process.GetProcessById((int)process);
-                return Browsers.Contains(owner.ProcessName, StringComparer.OrdinalIgnoreCase);
-            }
-            catch (ArgumentException)
-            {
-                return false;
-            }
-        }
-    }
+    public bool IsBrowserInFront => BrowserInFront();
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -192,16 +173,11 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
         return new BrowserForm(Read(form, "url"), Read(form, "title"), questions, Read(form, "description"), questions.Count == 0 ? problem ?? "I couldn't find any questions on this page." : null);
     }
 
-    /// <summary>The title bar text of the window in front (browsers put the tab's title there).</summary>
-    private static unsafe string FrontWindowTitle()
-    {
-        Span<char> buffer = stackalloc char[512];
-        fixed (char* text = buffer)
-        {
-            var length = PInvoke.GetWindowText(PInvoke.GetForegroundWindow(), text, buffer.Length);
-            return new string(buffer[..Math.Max(0, length)]);
-        }
-    }
+    /// <summary>Whether the app in front is a Chromium browser the extension runs in (per OS).</summary>
+    private static partial bool BrowserInFront();
+
+    /// <summary>The title bar text of the window in front (browsers put the tab's title there), per OS.</summary>
+    private static partial string FrontWindowTitle();
 
     public async Task<FormFill?> FillFormAsync(string questionId, string value, CancellationToken cancellationToken)
     {

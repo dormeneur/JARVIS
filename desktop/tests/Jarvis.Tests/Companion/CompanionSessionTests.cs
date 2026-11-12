@@ -332,7 +332,7 @@ public sealed class CompanionSessionTests
     }
 
     [Fact]
-    public async Task BlockedMicrophone_SaysWhy_AndOffersTheWindowsSetting()
+    public async Task BlockedMicrophone_SaysWhy_AndOffersTheSystemSetting()
     {
         var fakes = new Fakes("unused", "unused") { Microphone = new BlockedMicrophone() };
         await using var session = fakes.CreateSession();
@@ -341,8 +341,9 @@ public sealed class CompanionSessionTests
         session.EndListening();
 
         var shown = Assert.IsType<NotchState.Response>(fakes.Notch.Shown[^1]);
-        Assert.Contains("Let desktop apps access your microphone", shown.Text, StringComparison.Ordinal);
-        Assert.Equal("Open Windows settings", shown.Actions![0].Label);
+        Assert.Equal(MicrophoneBlockedException.Advice, shown.Text);
+        Assert.Contains("Microphone", shown.Text, StringComparison.Ordinal);
+        Assert.Equal(MicrophoneBlockedException.SettingsLabel, shown.Actions![0].Label);
         Assert.Null(fakes.Brain.LastTurn);
     }
 

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- JARVIS for macOS: the shared engine (Core, Providers) on the macOS platform layer. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>Jarvis.App.Mac</RootNamespace>
+    <AssemblyName>Jarvis</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">osx-$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
+    <!-- Runs on whichever .NET is installed (9 or newer); the .app bundle ships its own. -->
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Host code shared with Windows as-is: paths, the settings file and the settings-backed stores. -->
+    <Compile Include="..\Jarvis.App\Hosting\AppPaths.cs" Link="Hosting\AppPaths.cs" />
+    <Compile Include="..\Jarvis.App\Hosting\SettingsFile.cs" Link="Hosting\SettingsFile.cs" />
+    <Compile Include="..\Jarvis.App\Hosting\SettingsVocabularyStore.cs" Link="Hosting\SettingsVocabularyStore.cs" />
+    <Compile Include="..\Jarvis.App\Hosting\SettingsRoutineStore.cs" Link="Hosting\SettingsRoutineStore.cs" />
+    <Compile Include="..\Jarvis.App\Hosting\SettingsConnectorStore.cs" Link="Hosting\SettingsConnectorStore.cs" />
+    <Compile Include="..\Jarvis.App\Hosting\SettingsGoogleAccounts.cs" Link="Hosting\SettingsGoogleAccounts.cs" />
+    <Compile Include="..\Jarvis.App\Hosting\SettingsWorkflowStore.cs" Link="Hosting\SettingsWorkflowStore.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The Jarvis Browser Link extension, loaded unpacked from next to the app (Settings → Browser). -->
+    <Content Include="../../browser-extension/**" LinkBase="browser-extension" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Jarvis.Platform.Mac\Jarvis.Platform.Mac.csproj" />
+    <ProjectReference Include="..\Jarvis.Providers.ClaudeCli\Jarvis.Providers.ClaudeCli.csproj" />
+    <ProjectReference Include="..\Jarvis.Providers.Kokoro\Jarvis.Providers.Kokoro.csproj" />
+    <ProjectReference Include="..\Jarvis.Providers.Local\Jarvis.Providers.Local.csproj" />
+    <ProjectReference Include="..\Jarvis.Providers.Whisper\Jarvis.Providers.Whisper.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+</Project>
