@@ -180,12 +180,14 @@ public sealed class MacNotchPresenter : INotchPresenter
     private JsonObject Describe(NotchState state)
     {
         var frame = NotchLayout.FrameFor(state);
+        var look = _notchOptions.CurrentValue;
         var view = new JsonObject
         {
             ["kind"] = Kind(state),
-            ["width"] = frame.Width,
+            ["width"] = frame.IsSliver ? frame.Width : Math.Round(frame.Width * look.SizeFactor),
             ["height"] = frame.Height,
-            ["radius"] = NotchLayout.EffectiveCornerRadius(frame),
+            ["radius"] = NotchLayout.EffectiveCornerRadius(frame) * (frame.IsSliver ? 1 : look.CornerFactor),
+            ["haptic"] = look.Haptics,
             ["sliver"] = frame.IsSliver,
             ["glowMoves"] = NotchAccent.GlowMoves(state),
             ["glowStrength"] = NotchAccent.GlowStrength(state),
@@ -194,7 +196,7 @@ public sealed class MacNotchPresenter : INotchPresenter
             ["close"] = state is NotchState.Response or NotchState.Home or NotchState.Composing or NotchState.EventDraft,
             ["clickable"] = state is NotchState.Response or NotchState.Form or NotchState.Home or NotchState.EventDraft or NotchState.Composing or NotchState.Parked,
             ["typing"] = state is NotchState.Composing,
-            ["leaveCloses"] = state is NotchState.Home && _hoverOpened,
+            ["leaveCloses"] = state is NotchState.Home && _hoverOpened && look.CloseOnLeave,
         };
         if (frame.Spring is { } spring)
         {
@@ -202,9 +204,12 @@ public sealed class MacNotchPresenter : INotchPresenter
             view["damping"] = spring.DampingFraction;
         }
 
-        if (_notchOptions.CurrentValue.Glow && NotchAccent.GlowFor(state) is { } glow)
+        if (look.Glow && NotchAccent.GlowFor(state) is { } glow)
         {
-            view["glow"] = new JsonArray(glow.Select(rgb => (JsonNode)rgb).ToArray());
+            // "cursor": the cursor's colour in all three blobs, so the notch matches it.
+            var cursor = CursorColor.Parse(_cursorOptions.CurrentValue.Color);
+            var colours = look.GlowColour.Equals("cursor", StringComparison.OrdinalIgnoreCase) ? glow.Select(_ => cursor) : glow;
+            view["glow"] = new JsonArray(colours.Select(rgb => (JsonNode)rgb).ToArray());
         }
 
         if (NotchAccent.GlowReach(state) is { } reach)
@@ -252,7 +257,7 @@ public sealed class MacNotchPresenter : INotchPresenter
                 view["hint"] = home.Hint;
                 view["homeActions"] = new JsonArray(home.Actions.Select(item => (JsonNode)HomeItem(item)).ToArray());
                 view["recent"] = new JsonArray(home.Recent.Select(item => (JsonNode)HomeItem(item)).ToArray());
-                if (Shelf is { } shelf && shelf.Items is var items && (items.Count > 0 || _dropping))
+                if (ShelfOn && Shelf is { } shelf && shelf.Items is var items && (items.Count > 0 || _dropping))
                 {
                     view["height"] = frame.Height + ShelfHeight;
                     view["shelf"] = new JsonObject
@@ -484,9 +489,11 @@ public sealed class MacNotchPresenter : INotchPresenter
     private static bool ClosesOnClickAway(NotchState state) => state is NotchState.Home or NotchState.Form or NotchState.Response { KeepOnClickAway: false };
 
     /// <summary>A file drag reached the notch: open the home (or show its drop zone) to take it.</summary>
+    private bool ShelfOn => Shelf is not null && _notchOptions.CurrentValue.Shelf;
+
     private void FilesNear()
     {
-        if (Shelf is null || _pause?.IsPaused == true)
+        if (!ShelfOn || _pause?.IsPaused == true)
         {
             return;
         }

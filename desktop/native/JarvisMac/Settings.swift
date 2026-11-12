@@ -68,6 +68,7 @@ final class SettingsModel: ObservableObject {
 
 final class SettingsWindow: NSObject, NSWindowDelegate {
     static var shared: SettingsWindow?
+    var lastPages = ""
     let model: SettingsModel
     var window: NSWindow?
     var previousApp: NSRunningApplication?
@@ -84,7 +85,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             window.title = "Jarvis Settings"
             window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsRoot(model: model))
+            window.contentView = FirstClickHostingView(rootView: SettingsRoot(model: model))
             window.setFrameAutosaveName("JarvisSettings")
             window.center()
             window.delegate = self
@@ -110,10 +111,14 @@ public func jv_settings_start(_ action: IntCallback, _ text: TextCallback) {
 @_cdecl("jv_settings_update")
 public func jv_settings_update(_ pages: UnsafePointer<CChar>?, _ banner: UnsafePointer<CChar>?, _ show: Int32, _ section: UnsafePointer<CChar>?) {
     guard let pages, let decoded = try? JSONDecoder().decode([SettingsPage].self, from: Data(bytes: pages, count: strlen(pages))) else { return }
+    let raw = String(cString: pages)
     let note = string(banner)
     let page = string(section)
     onMain {
         guard let settings = SettingsWindow.shared else { return }
+        // Nothing new: leave the view alone, so an open menu or a half-typed field isn't reset.
+        if show == 0 && raw == settings.lastPages && note == settings.model.banner { return }
+        settings.lastPages = raw
         settings.model.pages = decoded
         settings.model.banner = note
         if show != 0 { settings.show(section: page) }
@@ -174,9 +179,10 @@ struct RowView: View {
         Group {
             switch row.type {
             case "toggle":
-                Toggle(isOn: Binding(get: { row.on ?? false }, set: { model.change(row.id, $0) })) { labels }
+                Toggle(isOn: Binding(get: { row.on ?? false }, set: { if $0 != (row.on ?? false) { model.change(row.id, $0) } })) { labels }
             case "choice":
-                Picker(selection: Binding(get: { row.text ?? "" }, set: { model.change(row.id, $0) })) {
+                // Only a real change is saved: opening the menu can set the same value again.
+                Picker(selection: Binding(get: { row.text ?? "" }, set: { if $0 != (row.text ?? "") { model.change(row.id, $0) } })) {
                     ForEach(row.choices ?? [], id: \.self) { choice in Text(choice.label).tag(choice.value) }
                 } label: { labels }
             case "number":

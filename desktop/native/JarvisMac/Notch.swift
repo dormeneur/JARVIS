@@ -114,6 +114,7 @@ struct NotchView: Decodable {
     var talk: Int?
     var shelf: NotchShelfView?
     var leaveCloses = false
+    var haptic = false
 
     init() {}
 
@@ -150,10 +151,11 @@ struct NotchView: Decodable {
         talk = try c.decodeIfPresent(Int.self, forKey: .talk)
         shelf = try c.decodeIfPresent(NotchShelfView.self, forKey: .shelf)
         leaveCloses = try c.decodeIfPresent(Bool.self, forKey: .leaveCloses) ?? false
+        haptic = try c.decodeIfPresent(Bool.self, forKey: .haptic) ?? false
     }
 
     private enum Key: String, CodingKey {
-        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk, shelf, leaveCloses
+        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk, shelf, leaveCloses, haptic
     }
 }
 
@@ -205,7 +207,7 @@ final class Notch: NSObject {
         float(panel, level: NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2))
         panel.ignoresMouseEvents = true
         panel.becomesKeyOnlyIfNeeded = true
-        let host = NSHostingView(rootView: NotchRoot(model: model))
+        let host = FirstClickHostingView(rootView: NotchRoot(model: model))
         host.frame = NSRect(origin: .zero, size: Notch.envelope)
         panel.contentView = host
         place()
@@ -299,6 +301,10 @@ final class Notch: NSObject {
 
     func show(_ view: NotchView) {
         let wasTyping = model.view.typing
+        // A light tap on the trackpad as it opens (felt only with a finger on it).
+        if view.haptic && model.view.sliver && !view.sliver {
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        }
         if view.kind != model.view.kind { model.edits = [:] }
         if view.typing && !wasTyping { model.draft = "" }
         model.view = view

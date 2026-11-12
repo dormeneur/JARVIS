@@ -32,6 +32,12 @@ internal static class SettingsFile
                 node = child;
             }
 
+            // Same value already there: no write, so no reload (which would close an open menu).
+            if (JsonNode.DeepEquals(node[key], value))
+            {
+                return;
+            }
+
             node[key] = value;
 
             // Write-then-rename so a crash mid-write never leaves a truncated settings file.

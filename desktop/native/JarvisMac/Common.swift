@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Foundation
 
 // The C ABI every export uses: UTF-8 strings in, malloc'd UTF-8 strings out (freed with jv_free),
@@ -82,6 +83,12 @@ private func editMenu() -> NSMenu {
     editItem.submenu = edit
     main.addItem(editItem)
     return main
+}
+
+/// A click on a window that isn't in front acts at once (opens the picker, flips the switch)
+/// instead of only bringing the window forward, as in System Settings.
+final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 @_cdecl("jv_app_run")
