@@ -32,6 +32,8 @@ TEMPERATURE = 0.3
 # malformed call or an invented path, not a more interesting answer.
 TOOL_TEMPERATURE = 0.1
 MAX_TOKENS = 1024
+# Ollama defaults to 4096, which tool schemas + RAG context + one read_file overflow.
+NUM_CTX = 16384
 OLLAMA_GENERATE_API_PATH = "/api/generate"
 OLLAMA_CHAT_API_PATH = "/api/chat"
 
@@ -68,7 +70,8 @@ class OllamaClient:
             "stream": True,
             "options": {
                 "temperature": TEMPERATURE,
-                "num_predict": MAX_TOKENS
+                "num_predict": MAX_TOKENS,
+                "num_ctx": NUM_CTX
             }
         }
         
@@ -134,6 +137,7 @@ class OllamaClient:
             "options": {
                 "temperature": TOOL_TEMPERATURE if tools else TEMPERATURE,
                 "num_predict": MAX_TOKENS,
+                "num_ctx": NUM_CTX,
             },
         }
         if tools:
@@ -204,7 +208,8 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": TEMPERATURE,
-                "num_predict": MAX_TOKENS
+                "num_predict": MAX_TOKENS,
+                "num_ctx": NUM_CTX
             }
         }
         

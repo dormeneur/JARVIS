@@ -25,7 +25,7 @@ cd mobile
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs   # REQUIRED after any Drift table change
 flutter test
-flutter analyze
+flutter analyze --no-fatal-infos                          # CI flags; CI also docker-builds ./server and ./brain
 flutter run
 ```
 
@@ -64,7 +64,7 @@ flutter run
 - **Job search (`jobs/`, jv-jobs, compose profile `jobs`):** runs the external ai-job-search
   workspace through headless Claude Code on the owner's subscription. Never edit that workspace's
   files from JARVIS; adapt via CLI flags and the headless contract in `jobs/app/runner.py`. It never
-  mounts the vault. Admin-only proxy at `/jobs/*`. Spec: `OFFICIAL-DOCS/12-Job-Search-Integration.md`.
+  mounts the vault. Admin-only proxy at `/jobs/*`. Spec: `DOCUMENTATION/OFFICIAL-DOCS/12-Job-Search-Integration.md`.
   Tests: `cd jobs && python -m pytest` (a fake `claude` replays stream-json; no tokens spent).
 - ChromaDB: use the v2 API and the thin `chromadb-client` package (never full `chromadb`); the
   container image has no curl, so compose uses `service_started`, not healthchecks.
