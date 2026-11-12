@@ -38,7 +38,22 @@ struct NotchCard: Decodable, Identifiable {
     let choices: [String]?
 }
 
+struct NotchStoredFile: Decodable, Identifiable {
+    var id: String { path }
+    let path: String
+    let name: String
+    let modified: String?
+}
+
+struct NotchFiles: Decodable {
+    let open: Int
+    let resumes: [NotchStoredFile]?
+    let context: [NotchStoredFile]?
+    let history: [NotchStoredFile]?
+}
+
 struct NotchForm: Decodable {
+    let files: NotchFiles?
     let title: String
     let status: String
     let cards: [NotchCard]
@@ -83,6 +98,7 @@ struct NotchView: Decodable {
     var clickable = false
     var typing = false
     var hidden = false
+    var talk: Int?
 
     init() {}
 
@@ -116,10 +132,11 @@ struct NotchView: Decodable {
         clickable = try c.decodeIfPresent(Bool.self, forKey: .clickable) ?? false
         typing = try c.decodeIfPresent(Bool.self, forKey: .typing) ?? false
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        talk = try c.decodeIfPresent(Int.self, forKey: .talk)
     }
 
     private enum Key: String, CodingKey {
-        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden
+        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk
     }
 }
 
@@ -447,6 +464,7 @@ struct ResponseView: View {
 struct ComposerView: View {
     @ObservedObject var model: NotchModel
     @FocusState var focused: Bool
+    @State private var talking = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -482,6 +500,18 @@ struct ComposerView: View {
                         model.draft = ""
                         model.send(text: 0, question)
                     }
+                if let talk = model.view.talk {
+                    // Hold to talk instead of typing; C# watches for the release.
+                    Image(systemName: "mic.fill").foregroundStyle(.white.opacity(0.7)).frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { _ in
+                            if !talking {
+                                talking = true
+                                model.send(talk)
+                            }
+                        }.onEnded { _ in talking = false })
+                        .help("Hold to talk")
+                }
                 Image(systemName: "return").foregroundStyle(.white.opacity(0.35))
             }
             .padding(.horizontal, 14).frame(height: 38)
@@ -573,6 +603,7 @@ struct HomeView: View {
 struct FormView: View {
     let form: NotchForm
     @ObservedObject var model: NotchModel
+    @State private var showingFiles = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -582,8 +613,30 @@ struct FormView: View {
                     Text(form.status).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
                 }
                 Spacer()
+                if let files = form.files {
+                    Picker("", selection: Binding(get: { showingFiles }, set: { files in
+                        showingFiles = files
+                        if files { model.send(form.files?.open ?? 0) }
+                    })) {
+                        Text("Answers").tag(false)
+                        Text("Files").tag(true)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+                    .onAppear { if showingFiles { model.send(files.open) } }
+                }
                 CloseButton(model: model)
             }
+            if showingFiles, let files = form.files {
+                FilesView(files: files, model: model)
+            } else {
+                answers
+            }
+        }
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder var answers: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if let progress = form.progress {
                 ProgressView(value: progress).progressViewStyle(.linear).tint(Color(red: 0.2, green: 0.5, blue: 1))
             }
@@ -632,7 +685,77 @@ struct FormView: View {
                 Spacer()
             }
         }
-        .padding(.vertical, 14)
+    }
+}
+
+/// The form's files: the resume that goes with every form, this form's context files, past forms.
+struct FilesView: View {
+    let files: NotchFiles
+    let model: NotchModel
+    @State private var deleting: String?
+
+    var body: some View {
+        if files.resumes == nil {
+            HStack { Spacer(); ProgressView().controlSize(.small); Spacer() }.frame(maxHeight: .infinity)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    section("Resume", files.resumes ?? [], add: ("Add resume…", "resume", false), note: "The newest is attached to every form.")
+                    section("This form's files", files.context ?? [], add: ("Add files…", "context", true), note: "Adding files answers the unknowns again.")
+                    section("Past forms", files.history ?? [], add: nil, note: nil)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder func section(_ title: String, _ list: [NotchStoredFile], add: (String, String, Bool)?, note: String?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                Spacer()
+                if let (label, kind, many) = add {
+                    Pill(label: label) { pick(kind, many: many) }
+                }
+            }
+            if let note { Text(note).font(.system(size: 10)).foregroundStyle(.white.opacity(0.4)) }
+            if list.isEmpty { Text("None yet").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4)) }
+            ForEach(list) { file in
+                HStack(spacing: 8) {
+                    Image(systemName: "doc").foregroundStyle(.white.opacity(0.6))
+                    Text(file.name).font(.system(size: 12)).foregroundStyle(.white).lineLimit(1)
+                    if let modified = file.modified { Text(modified).font(.system(size: 10)).foregroundStyle(.white.opacity(0.4)) }
+                    Spacer()
+                    if deleting == file.path {
+                        Pill(label: "Delete", primary: true) {
+                            deleting = nil
+                            send("delete", [file.path])
+                        }
+                        Pill(label: "Keep") { deleting = nil }
+                    } else {
+                        Button { deleting = file.path } label: { Image(systemName: "trash").font(.system(size: 11)) }
+                            .buttonStyle(.plain).foregroundStyle(.white.opacity(0.5)).help("Delete (asks once more)")
+                    }
+                }
+                .padding(.horizontal, 10).frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06)))
+            }
+        }
+    }
+
+    /// The file dialog needs Jarvis in front for a moment; the notch panel stays as it is.
+    func pick(_ kind: String, many: Bool) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = many
+        panel.canChooseDirectories = false
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 3)
+        NSApp.activate()
+        guard panel.runModal() == .OK else { return }
+        send(kind, panel.urls.map(\.path))
+    }
+
+    func send(_ kind: String, _ paths: [String]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["kind": kind, "paths": paths]), let json = String(data: data, encoding: .utf8) else { return }
+        model.send(text: 4, json)
     }
 }
 

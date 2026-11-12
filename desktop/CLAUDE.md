@@ -45,7 +45,7 @@ The same Core and Providers run on a Mac through `Jarvis.Platform.Mac` + `Jarvis
 - Permissions: Input Monitoring (shortcuts, relaunch after granting), Accessibility (dictation typing, driving, window titles), Screen Recording, Microphone. Settings → Permissions lists them. They are tied to the code signature, so ad-hoc builds may be asked again after a rebuild.
 - `claude` is looked up in the usual install folders (`MacAppHost.FindExecutable`): apps opened from Finder get launchd's bare PATH.
 - Package: `packaging/macos/make-app.sh [arm64|x64] [version]` builds a self-contained, hardened-runtime `artifacts/macos-<arch>/Jarvis.app`. It is ad-hoc signed unless `JARVIS_SIGN_IDENTITY` is set, and notarized when `JARVIS_NOTARY_PROFILE` is also set.
-- Not ported yet: the composer's mic button, the form panel's Files page, Settings → Routines and Connectors (edit `settings.json` for those).
+- Settings → Connectors on a Mac covers custom servers (API key or browser sign-in), Test, sign in again and remove; the Windows catalog (one-click GitHub, Google…) isn't there yet. The Windows and Mac pages share `ConnectorCheck.TestAsync`.
 
 ## Design notes (local only)
 - The look-and-feel spec (`DESIGN-FACTS.md`, cited in code comments as "DESIGN-FACTS.md §n"), the architecture and tech-stack notes and the research notes live **outside this repo**, on the owner's machine, and are never committed. Every spring, size, timing, colour and threshold comes from that spec; don't invent values. If it isn't available, keep the existing constants.

@@ -40,6 +40,14 @@ internal sealed class MacSettings
     private readonly string _startupSnapshot;
     private string? _vaultMessage;
     private string _invite = string.Empty;
+    private string _routineSchedule = "weekdays 09:00";
+    private string _routineBrief = string.Empty;
+    private string? _routineMessage;
+    private string _connectorName = string.Empty;
+    private string _connectorUrl = string.Empty;
+    private string _connectorKey = string.Empty;
+    private string? _connectorMessage;
+    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
     public MacSettings(IServiceProvider services, Action restart)
     {
@@ -76,6 +84,21 @@ internal sealed class MacSettings
                 break;
             case "app:invite":
                 _invite = value.GetString() ?? string.Empty;
+                break;
+            case "app:routine-schedule":
+                _routineSchedule = value.GetString() ?? string.Empty;
+                break;
+            case "app:routine-brief":
+                _routineBrief = value.GetString() ?? string.Empty;
+                break;
+            case "app:connector-name":
+                _connectorName = value.GetString() ?? string.Empty;
+                break;
+            case "app:connector-url":
+                _connectorUrl = value.GetString() ?? string.Empty;
+                break;
+            case "app:connector-key":
+                _connectorKey = value.GetString() ?? string.Empty;
                 break;
             default:
                 var split = key.LastIndexOf(':');
@@ -229,6 +252,8 @@ internal sealed class MacSettings
                 Number($"{AgentOptions.SectionName}:{nameof(AgentOptions.MaximumConcurrent)}", "Jobs at once", agents.MaximumConcurrent, 1, 5, 1, "Applies after restart."),
                 Toggle($"{AgentOptions.SectionName}:{nameof(AgentOptions.SpeakResults)}", "Say when a job finishes", agents.SpeakResults),
                 Action("Jobs folder", "Show in Finder", () => Native.OpenUrl(AppPaths.JobsDirectory))),
+            Page("Routines", "clock.arrow.circlepath", [.. RoutineRows()]),
+            Page("Connectors", "puzzlepiece.extension", [.. ConnectorRows()]),
             Page(
                 "Proactive",
                 "sun.max",
@@ -259,6 +284,140 @@ internal sealed class MacSettings
                     ? Action($"Extension {waiting} wants to connect", "Allow", () => SettingsFile.Set(BrowserOptions.SectionName, nameof(BrowserOptions.AllowedExtensions), new JsonArray([.. browser.AllowedExtensions.Append(waiting).Distinct().Select(id => (JsonNode)id)])))
                     : Note("Load the extension (browser-extension/ next to the app) unpacked, then allow it here.")),
         ];
+    }
+
+    /// <summary>Scheduled jobs, as Settings → Routines on Windows: each with its schedule in words and its next run.</summary>
+    private IEnumerable<object> RoutineRows()
+    {
+        var store = _services.GetRequiredService<IRoutineStore>();
+        var time = _services.GetRequiredService<TimeProvider>();
+        yield return Note("Background jobs on a schedule", "daily 08:00 · weekdays 09:00 · monday 18:30 · every 2 hours (15 minutes at least). Or just ask Jarvis: \"every morning, summarise my inbox\".");
+        foreach (var routine in store.All)
+        {
+            var next = RoutineSchedule.IsValid(routine.Schedule) ? RoutineSchedule.NextAfter(routine.Schedule, routine.LastRun ?? routine.Created, time.LocalTimeZone) : (DateTimeOffset?)null;
+            var status = $"{RoutineSchedule.Describe(routine.Schedule)}{(next is { } at ? $" · next {at.ToLocalTime():ddd HH:mm}" : string.Empty)}{(routine.LastRun is { } last ? $" · last ran {last.ToLocalTime():ddd HH:mm}" : string.Empty)}";
+            var id = routine.Id;
+            yield return Action(routine.Brief, "Remove", () => { store.Remove(id); Refresh(); }, status);
+        }
+
+        yield return Group("New routine");
+        yield return Text("app:routine-schedule", "When", _routineSchedule);
+        yield return Text("app:routine-brief", "What to do", _routineBrief, "What you'd tell Jarvis, e.g. \"collect today's AI news into a one-page brief\".");
+        yield return Action("Add the routine", "Add", AddRoutine, _routineMessage);
+    }
+
+    private void AddRoutine()
+    {
+        if (!RoutineSchedule.IsValid(_routineSchedule))
+        {
+            _routineMessage = "That schedule isn't one I know: try \"daily 08:00\", \"weekdays 09:00\", \"friday 17:00\" or \"every 2 hours\".";
+        }
+        else if (_routineBrief.Trim().Length == 0)
+        {
+            _routineMessage = "Say what the routine should do.";
+        }
+        else
+        {
+            _services.GetRequiredService<IRoutineStore>().Add(new Routine(Guid.NewGuid().ToString("N"), _routineSchedule.Trim(), _routineBrief.Trim(), _services.GetRequiredService<TimeProvider>().GetUtcNow(), null));
+            _routineMessage = $"Added: {RoutineSchedule.Describe(_routineSchedule)}.";
+            _routineBrief = string.Empty;
+        }
+
+        Refresh();
+    }
+
+    /// <summary>
+    /// Remote MCP servers background jobs may use: with no credentials, an API key (Keychain) or a
+    /// browser sign-in (MCP authorization, tokens in the Keychain). Test sends a real initialize.
+    /// </summary>
+    private IEnumerable<object> ConnectorRows()
+    {
+        var store = _services.GetRequiredService<IConnectorStore>();
+        yield return Note("Tools for background jobs", "Remote MCP servers (https, or http on this Mac). Jobs can use them; nothing else can.");
+        foreach (var connector in store.All)
+        {
+            var name = connector.Name;
+            var how = connector.Auth switch { ConnectorAuth.ApiKey => "API key", ConnectorAuth.SignIn => "signed in", _ => "no sign-in" };
+            yield return Action(name, "Test", () => _ = TestConnectorAsync(connector), $"{connector.Url} · {how}");
+            if (connector.Auth == ConnectorAuth.SignIn)
+            {
+                yield return Action($"{name}: sign in again", "Sign in", () => _ = SignInAsync(connector));
+            }
+
+            yield return Action($"{name}: remove", "Remove", () => { store.Remove(name); _connectorMessage = $"Removed {name}."; Refresh(); });
+        }
+
+        if (_connectorMessage is not null)
+        {
+            yield return Note(_connectorMessage);
+        }
+
+        yield return Group("Add a connector");
+        yield return Text("app:connector-name", "Name", _connectorName, "Letters, digits and dashes, e.g. linear.");
+        yield return Text("app:connector-url", "Server URL", _connectorUrl, "e.g. https://mcp.linear.app/mcp");
+        yield return Text("app:connector-key", "API key (optional)", _connectorKey, secret: true);
+        yield return Action("Add with the key (or none)", "Add", () => _ = AddConnectorAsync(signIn: false));
+        yield return Action("Add and sign in with the browser", "Sign in", () => _ = AddConnectorAsync(signIn: true));
+    }
+
+    private async Task AddConnectorAsync(bool signIn)
+    {
+        var name = _connectorName.Trim();
+        var url = _connectorUrl.Trim();
+        var key = _connectorKey.Trim().Length == 0 ? null : _connectorKey.Trim();
+        var store = _services.GetRequiredService<IConnectorStore>();
+        if (!Connector.IsValidName(name))
+        {
+            _connectorMessage = "Give it a short name: letters, digits and dashes.";
+        }
+        else if (store.All.Any(connector => connector.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+        {
+            _connectorMessage = $"There's already a connector called {name}.";
+        }
+        else if (!Connector.IsValidUrl(url))
+        {
+            _connectorMessage = "The URL must be https (or http on this Mac).";
+        }
+        else if (signIn)
+        {
+            _connectorMessage = "Finish signing in in your browser…";
+            MainThread.Post(() => Send(show: false, null));
+            _connectorMessage = await SignInAsync(new Connector(name, url, ConnectorAuth.SignIn)).ConfigureAwait(false) ?? $"Signed in: {name} is ready for jobs.";
+            ClearConnectorForm();
+        }
+        else
+        {
+            var check = await ConnectorCheck.TestAsync(_http, url, key).ConfigureAwait(false);
+            store.Save(new Connector(name, url, key is null ? ConnectorAuth.None : ConnectorAuth.ApiKey), key);
+            _connectorMessage = $"Added {name}. {check}";
+            ClearConnectorForm();
+        }
+
+        MainThread.Post(() => Send(show: false, null));
+    }
+
+    private void ClearConnectorForm() => (_connectorName, _connectorUrl, _connectorKey) = (string.Empty, string.Empty, string.Empty);
+
+    /// <summary>Runs the browser sign-in and saves the tokens; returns a message if it failed.</summary>
+    private async Task<string?> SignInAsync(Connector connector)
+    {
+        try
+        {
+            var tokens = await _services.GetRequiredService<McpOAuth>().SignInAsync(connector.Url, page => { Native.OpenUrl(page.AbsoluteUri); return ValueTask.CompletedTask; }, CancellationToken.None).ConfigureAwait(false);
+            _services.GetRequiredService<IConnectorStore>().SaveSignIn(connector, tokens);
+            return null;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or HttpRequestException or OperationCanceledException or JsonException)
+        {
+            return $"Sign-in didn't finish: {exception.Message}";
+        }
+    }
+
+    private async Task TestConnectorAsync(Connector connector)
+    {
+        var store = _services.GetRequiredService<IConnectorStore>();
+        _connectorMessage = $"{connector.Name}: {await ConnectorCheck.TestAsync(_http, connector.Url, await store.TokenAsync(connector.Name, CancellationToken.None).ConfigureAwait(false)).ConfigureAwait(false)}";
+        MainThread.Post(() => Send(show: false, null));
     }
 
     private async Task ConnectVaultAsync(IVault vault)

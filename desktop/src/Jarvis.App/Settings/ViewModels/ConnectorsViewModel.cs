@@ -386,40 +386,7 @@ public sealed partial class ConnectorsViewModel : ObservableObject
         return ValueTask.CompletedTask;
     }
 
-    /// <summary>Sends an MCP initialize request and turns the answer into a sentence for the user.</summary>
-    private static async Task<string> TestAsync(string url, string? token)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(
-                """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"Jarvis","version":"1.0"}}}""",
-                Encoding.UTF8,
-                "application/json"),
-        };
-        request.Headers.Accept.ParseAdd("application/json");
-        request.Headers.Accept.ParseAdd("text/event-stream");
-        if (token is not null)
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        }
-
-        try
-        {
-            using var response = await Http.SendAsync(request).ConfigureAwait(false);
-            return response.StatusCode switch
-            {
-                HttpStatusCode.OK or HttpStatusCode.Accepted => "Connected: jobs can use it.",
-                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => token is null
-                    ? "The server wants you to sign in. Remove it and add it again with Sign in with browser."
-                    : "The server turned the credentials down. Sign in again, or re-add it with a fresh key.",
-                var status => $"The server answered {(int)status} {status}. Check the URL.",
-            };
-        }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-        {
-            return $"Couldn't reach the server: {exception.Message}";
-        }
-    }
+    private static Task<string> TestAsync(string url, string? token) => ConnectorCheck.TestAsync(Http, url, token);
 
     private ConnectorRow? Row(string name) => Connectors.FirstOrDefault(row => row.Name == name);
 

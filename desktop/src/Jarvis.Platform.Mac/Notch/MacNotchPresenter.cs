@@ -25,6 +25,9 @@ public sealed class MacNotchPresenter : INotchPresenter
     private readonly IOptionsMonitor<CursorOptions> _cursorOptions;
     private readonly Dictionary<int, Action> _actions = [];
     private Dictionary<string, string> _typed = [];
+
+    /// <summary>The form's Files page, once opened: its library, and the form it belongs to.</summary>
+    private (FormActions Of, FormLibrary? Library)? _files;
     private PauseSwitch? _pause;
     private NotchState _state = NotchState.Idle;
     private NotchState _shown = NotchState.Idle;
@@ -104,6 +107,7 @@ public sealed class MacNotchPresenter : INotchPresenter
         if (show.GetType() != _state.GetType())
         {
             _typed = [];
+            _files = null;
         }
 
         _state = show;
@@ -202,6 +206,11 @@ public sealed class MacNotchPresenter : INotchPresenter
                 view["actions"] = new JsonArray((response.Actions ?? []).Select(action => (JsonNode)Button(action.Label, Later(action.Invoke))).ToArray());
                 break;
             case NotchState.Composing composing:
+                if (composing.Talk is { } talk)
+                {
+                    view["talk"] = Id(() => HoldToTalk(talk));
+                }
+
                 view["history"] = new JsonArray((composing.History ?? []).Select(turn => (JsonNode)new JsonObject
                 {
                     ["question"] = turn.Question,
@@ -285,8 +294,27 @@ public sealed class MacNotchPresenter : INotchPresenter
             buttons.Add(Button("Close", Later(actions.Dismiss)));
         }
 
+        JsonObject? files = null;
+        if (actions.Files is { } library)
+        {
+            files = new JsonObject { ["open"] = Id(() => _ = LoadFilesAsync(form.Actions, library)) };
+            if (_files is { Library: { } loaded } shown && ReferenceEquals(shown.Of, form.Actions))
+            {
+                static JsonArray List(IReadOnlyList<StoredFile> stored) => new(stored.Select(file => (JsonNode)new JsonObject
+                {
+                    ["path"] = file.Path,
+                    ["name"] = file.Name,
+                    ["modified"] = file.Modified?.ToLocalTime().ToString("d MMM", System.Globalization.CultureInfo.CurrentCulture),
+                }).ToArray());
+                files["resumes"] = List(loaded.Resumes);
+                files["context"] = List(loaded.Context);
+                files["history"] = List(loaded.History);
+            }
+        }
+
         return new JsonObject
         {
+            ["files"] = files,
             ["title"] = form.Title,
             ["status"] = form.Status,
             ["progress"] = form.FillProgress,
@@ -303,6 +331,63 @@ public sealed class MacNotchPresenter : INotchPresenter
                 ["choices"] = card.Choices is null ? null : new JsonArray(card.Choices.Select(choice => (JsonNode)choice).ToArray()),
             }).ToArray()),
         };
+    }
+
+    /// <summary>
+    /// The composer's mic: pressed, it starts listening (the notch turns into the listening pill, so
+    /// the button never sees the release); the left button coming up is watched instead, as on Windows.
+    /// </summary>
+    private static void HoldToTalk(Action<bool> talk) => Task.Run(async () =>
+    {
+        talk(true);
+        while ((Native.MouseButtons() & 1) != 0)
+        {
+            await Task.Delay(50).ConfigureAwait(false);
+        }
+
+        talk(false);
+    });
+
+    private async Task LoadFilesAsync(FormActions of, FormFiles files)
+    {
+        var library = await files.Load().ConfigureAwait(false);
+        MainThread.Post(() =>
+        {
+            _files = (of, library);
+            Send();
+        });
+    }
+
+    /// <summary>The Files page's picks and deletions; the answer goes in the panel's status line.</summary>
+    private async Task FilesAsync(JsonElement request)
+    {
+        if (_state is not NotchState.Form { Actions.Files: { } files } form)
+        {
+            return;
+        }
+
+        var paths = request.TryGetProperty("paths", out var list) ? list.EnumerateArray().Select(path => path.GetString()).OfType<string>().ToList() : [];
+        var said = request.GetProperty("kind").GetString() switch
+        {
+            "resume" when paths.Count > 0 => await files.AddResume(paths[0]).ConfigureAwait(false),
+            "context" when paths.Count > 0 => await files.AddContext(paths).ConfigureAwait(false),
+            "delete" when paths.Count > 0 => await files.Delete(paths[0]).ConfigureAwait(false),
+            _ => null,
+        };
+        if (said is null)
+        {
+            return;
+        }
+
+        var library = await files.Load().ConfigureAwait(false);
+        MainThread.Post(() =>
+        {
+            _files = (form.Actions, library);
+            if (_state is NotchState.Form current && ReferenceEquals(current.Actions, form.Actions))
+            {
+                Apply(current with { Status = said });
+            }
+        });
     }
 
     private void FillIn(NotchState.Form form)
@@ -441,6 +526,11 @@ public sealed class MacNotchPresenter : INotchPresenter
         if (kind == 0 && notch._state is NotchState.Composing composing)
         {
             Task.Run(() => composing.Submit(value)); // off the UI thread: a turn starts with a screen capture
+        }
+        else if (kind == 4)
+        {
+            var request = JsonDocument.Parse(value).RootElement.Clone();
+            _ = notch.FilesAsync(request);
         }
         else if (kind == 1 && JsonSerializer.Deserialize<Dictionary<string, string>>(value) is { } typed)
         {
