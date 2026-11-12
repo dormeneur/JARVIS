@@ -64,6 +64,9 @@ internal sealed class MacSettings
 
     public void Show(string? section) => MainThread.Post(() => Send(show: true, section));
 
+    /// <summary>Sends the pages without opening the window: the notch's Settings shows the same ones.</summary>
+    public void Prepare() => MainThread.Post(() => Send(show: false, null));
+
     private T Options<T>() where T : class => _services.GetRequiredService<IOptionsMonitor<T>>().CurrentValue;
 
     /// <summary>Brain and agent models and concurrency are read once at start-up.</summary>

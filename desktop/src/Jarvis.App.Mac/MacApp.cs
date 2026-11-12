@@ -7,6 +7,7 @@ using Jarvis.Core.Companion;
 using Jarvis.Core.Cursor;
 using Jarvis.Core.Dictation;
 using Jarvis.Core.Notch;
+using Jarvis.Core.Vault;
 using Jarvis.Platform.Mac;
 using Jarvis.Platform.Mac.Audio;
 using Jarvis.Platform.Mac.Capture;
@@ -67,9 +68,9 @@ internal sealed partial class MacApp
         presenter.Initialize(pause);
         presenter.Escape = () => Services.GetRequiredService<CompanionSession>().Cancel();
         _settings = new MacSettings(Services, Restart);
-        presenter.OpenSettings = ShowSettings;
         presenter.Shelf = new NotchShelf(Path.Combine(AppPaths.DataDirectory, "shelf.json"));
         presenter.FilesDragged += ShowHome;
+        presenter.VaultDropped += paths => _ = AddToVaultAsync(paths);
         _enginesReady = PrewarmEnginesAsync();
 
         // Nothing else depends on the announcer; resolve it so it starts listening for finished jobs.
@@ -228,6 +229,107 @@ internal sealed partial class MacApp
 
     private void ShowSettings(string? section) => _settings?.Show(section);
 
+    /// <summary>Settings inside the notch, as on Windows; Pop out moves to the Settings window on the same page.</summary>
+    private void ShowNotchSettings(string? section)
+    {
+        var notch = Services.GetRequiredService<INotchPresenter>();
+        _settings?.Prepare();
+        notch.Show(new NotchState.Settings(
+            section,
+            page =>
+            {
+                notch.Show(NotchState.Idle);
+                ShowSettings(page);
+            },
+            () => notch.Show(NotchState.Idle)));
+    }
+
+    /// <summary>
+    /// Files dropped on the notch's Vault target go to the vault through jv-api (local only), so the
+    /// brain learns them and forms can use them. Taken from the shelf, they leave it once saved.
+    /// </summary>
+    private async Task AddToVaultAsync(IReadOnlyList<string> paths)
+    {
+        var notch = Services.GetRequiredService<INotchPresenter>();
+        var vault = Services.GetRequiredService<Jarvis.Contracts.Vault.IVault>();
+        if (!vault.IsConnected)
+        {
+            notch.Show(new NotchState.Response(
+                "Your vault isn't connected yet, so I can't keep these there. Connect it in Settings → Vault, then drop them again.",
+                [new NotchAction("Connect", () => ShowNotchSettings("Vault")), new NotchAction("Later", () => notch.Show(NotchState.Idle))],
+                KeepOnClickAway: true));
+            return;
+        }
+
+        var plan = VaultDrop.For(paths);
+        if (plan.Uploads.Count == 0)
+        {
+            notch.Show(new NotchState.Response("Nothing there I can learn from. The vault takes PDF, Word, text, Markdown, CSV and JSON files."));
+            return;
+        }
+
+        notch.Show(new NotchState.Thinking($"Adding {Files(plan.Uploads.Count)} to your vault"));
+        var saved = new List<(string Local, string VaultPath)>();
+        string? problem = null;
+        foreach (var upload in plan.Uploads)
+        {
+            try
+            {
+                await vault.UploadAsync(upload.VaultPath, upload.Local, CancellationToken.None).ConfigureAwait(false);
+                saved.Add(upload);
+            }
+            catch (Exception exception) when (exception is Jarvis.Contracts.Vault.VaultException or IOException or UnauthorizedAccessException or HttpRequestException)
+            {
+                problem ??= exception.Message;
+            }
+        }
+
+        if (saved.Count > 0)
+        {
+            _ = vault.ReindexAsync(CancellationToken.None); // so the brain finds them right away
+        }
+
+        if (Services.GetRequiredService<MacNotchPresenter>().Shelf is { } shelf)
+        {
+            foreach (var path in paths.Where(path => saved.Any(upload => upload.Local == path)))
+            {
+                shelf.Remove(path);
+            }
+        }
+
+        var text = saved.Count == 0
+            ? $"Couldn't add them to your vault: {problem}"
+            : $"Saved {Files(saved.Count)} to your vault{(saved.Any(upload => upload.VaultPath.StartsWith(FormFiller.ResumeFolder + "/", StringComparison.Ordinal)) ? " (as your resume)" : string.Empty)}. Jarvis will use {(saved.Count == 1 ? "it" : "them")} to answer questions and fill forms."
+              + (plan.Skipped.Count > 0 ? $" Left out: {string.Join(", ", plan.Skipped.Take(3))}{(plan.Skipped.Count > 3 ? "…" : string.Empty)}." : string.Empty)
+              + (problem is not null && saved.Count > 0 ? $" Some didn't upload: {problem}" : string.Empty);
+
+        // One document that wasn't recognised as a resume: offer to make it the resume forms attach.
+        List<NotchAction> actions = [new("OK", () => notch.Show(NotchState.Idle))];
+        if (saved is [var only] && !only.VaultPath.StartsWith(FormFiller.ResumeFolder + "/", StringComparison.Ordinal) && Path.GetExtension(only.Local).ToUpperInvariant() is ".PDF" or ".DOCX")
+        {
+            actions.Insert(0, new NotchAction("This is my resume", () => _ = MakeResumeAsync(vault, notch, only.Local, only.VaultPath)));
+        }
+
+        notch.Show(new NotchState.Response(text, actions, KeepOnClickAway: true));
+
+        static string Files(int count) => count == 1 ? "1 file" : $"{count} files";
+    }
+
+    private static async Task MakeResumeAsync(Jarvis.Contracts.Vault.IVault vault, INotchPresenter notch, string local, string documentsPath)
+    {
+        try
+        {
+            await vault.UploadAsync($"{FormFiller.ResumeFolder}/{Path.GetFileName(local)}", local, CancellationToken.None).ConfigureAwait(false);
+            await vault.DeleteAsync(documentsPath, CancellationToken.None).ConfigureAwait(false);
+            _ = vault.ReindexAsync(CancellationToken.None);
+            notch.Show(new NotchState.Response($"{Path.GetFileName(local)} is now your resume: forms will attach it."));
+        }
+        catch (Exception exception) when (exception is Jarvis.Contracts.Vault.VaultException or IOException or HttpRequestException)
+        {
+            notch.Show(new NotchState.Response($"Couldn't make it your resume: {exception.Message}"));
+        }
+    }
+
     /// <summary>The notch's home, as on Windows: Ask, Fill a form, Private on/off, Settings, then recent jobs and the last form.</summary>
     private void ShowHome()
     {
@@ -249,7 +351,7 @@ internal sealed partial class MacApp
                 notch.Show(new NotchState.Response(on ? "Private mode is on: everything stays on this Mac." : "Private mode is off."));
                 _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => notch.Show(NotchState.Idle), TaskScheduler.Default);
             }),
-            new("settings", "Settings", null, () => ShowSettings(null)),
+            new("settings", "Settings", null, () => ShowNotchSettings(null)),
         ];
 
         var agents = Services.GetRequiredService<IAgentJobs>();

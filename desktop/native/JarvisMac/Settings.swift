@@ -160,13 +160,80 @@ struct SettingsRoot: View {
         }
     }
 
-    /// Rows split at each "group" row into titled sections.
-    func sections(_ rows: [SettingsRow]) -> [(String, [SettingsRow])] {
-        var result: [(String, [SettingsRow])] = [("", [])]
-        for row in rows {
-            if row.type == "group" { result.append((row.label, [])) } else { result[result.count - 1].1.append(row) }
+    func sections(_ rows: [SettingsRow]) -> [(String, [SettingsRow])] { settingsSections(rows) }
+}
+
+/// Rows split at each "group" row into titled sections (the window and the notch both use it).
+func settingsSections(_ rows: [SettingsRow]) -> [(String, [SettingsRow])] {
+    var result: [(String, [SettingsRow])] = [("", [])]
+    for row in rows {
+        if row.type == "group" { result.append((row.label, [])) } else { result[result.count - 1].1.append(row) }
+    }
+    return result.filter { !$0.1.isEmpty }
+}
+
+/// Settings inside the notch, as on Windows: the window's pages, a sidebar grouped JARVIS / WORK,
+/// Pop out to the window on the same page, × or Escape to close.
+struct NotchSettingsView: View {
+    @ObservedObject var model: SettingsModel
+    let notch: NotchModel
+    let section: String?
+
+    /// Where the sidebar's second group starts: the things Jarvis does for you.
+    static let firstWorkPage = "Agents"
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Settings").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white).padding(.leading, 8).padding(.bottom, 8)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        groupLabel("JARVIS")
+                        ForEach(model.pages) { page in
+                            if page.title == Self.firstWorkPage { groupLabel("WORK").padding(.top, 8) }
+                            Button { model.selected = page.title } label: {
+                                Label(page.title, systemImage: page.symbol)
+                                    .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 8).frame(height: 26)
+                                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(model.selected == page.title ? 0.14 : 0)))
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).foregroundStyle(.white.opacity(model.selected == page.title ? 1 : 0.75))
+                        }
+                    }
+                }
+            }
+            .frame(width: 170)
+            Divider().overlay(Color.white.opacity(0.1)).padding(.horizontal, 10)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(model.selected ?? "").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                    Spacer()
+                    Button { notch.send(text: 7, model.selected ?? "") } label: {
+                        Image(systemName: "arrow.up.forward.app").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).frame(width: 24, height: 20)
+                    }
+                    .buttonStyle(.plain).help("Pop out to the Settings window")
+                    CloseButton(model: notch)
+                }
+                if let banner = model.banner {
+                    Text(banner).font(.system(size: 11)).foregroundStyle(.white.opacity(0.7))
+                }
+                if let page = model.pages.first(where: { $0.title == model.selected }) {
+                    Form {
+                        ForEach(settingsSections(page.rows), id: \.0) { title, rows in
+                            Section(title) { ForEach(rows) { row in RowView(row: row, model: model) } }
+                        }
+                    }
+                    .formStyle(.grouped).scrollContentBackground(.hidden)
+                }
+            }
         }
-        return result.filter { !$0.1.isEmpty }
+        .padding(.vertical, 14)
+        .onAppear { model.selected = section ?? model.selected ?? model.pages.first?.title }
+    }
+
+    func groupLabel(_ text: String) -> some View {
+        Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.4)).padding(.leading, 8).padding(.vertical, 2)
     }
 }
 

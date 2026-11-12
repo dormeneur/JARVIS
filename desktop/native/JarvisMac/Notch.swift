@@ -43,10 +43,12 @@ struct NotchShelfItem: Decodable, Identifiable {
     let path: String
     let name: String
     let remove: Int
+    let toVault: Int?
 }
 
 struct NotchShelfView: Decodable {
     let dropping: Bool
+    let shelfOn: Bool?
     let clear: Int
     let items: [NotchShelfItem]
 }
@@ -115,6 +117,7 @@ struct NotchView: Decodable {
     var shelf: NotchShelfView?
     var leaveCloses = false
     var haptic = false
+    var section: String?
 
     init() {}
 
@@ -152,10 +155,11 @@ struct NotchView: Decodable {
         shelf = try c.decodeIfPresent(NotchShelfView.self, forKey: .shelf)
         leaveCloses = try c.decodeIfPresent(Bool.self, forKey: .leaveCloses) ?? false
         haptic = try c.decodeIfPresent(Bool.self, forKey: .haptic) ?? false
+        section = try c.decodeIfPresent(String.self, forKey: .section)
     }
 
     private enum Key: String, CodingKey {
-        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk, shelf, leaveCloses, haptic
+        case kind, width, height, radius, sliver, response, damping, glow, glowMoves, glowReach, glowStrength, sweep, caption, busy, text, actions, close, history, greeting, hint, homeActions, recent, form, event, clickable, typing, hidden, talk, shelf, leaveCloses, haptic, section
     }
 }
 
@@ -274,7 +278,8 @@ final class Notch: NSObject {
         case .leftMouseDragged:
             guard !dragNear, board.changeCount != dragStart, board.types?.contains(.fileURL) == true, let screen = NSScreen.screens.first else { return }
             let mouse = NSEvent.mouseLocation
-            if mouse.y >= screen.frame.maxY - 60 && abs(mouse.x - screen.frame.midX) <= 220 {
+            let depth = max(60, model.view.height + model.hardwareNotch.height + 20) // the open notch counts as near too
+            if mouse.y >= screen.frame.maxY - depth && abs(mouse.x - screen.frame.midX) <= max(220, model.view.width / 2 + 20) {
                 dragNear = true
                 model.send(-4)
             }
@@ -470,6 +475,8 @@ struct NotchRoot: View {
             if let form = view.form { FormView(form: form, model: model) }
         case "event":
             if let event = view.event { EventView(event: event, model: model) }
+        case "settings":
+            if let settings = SettingsWindow.shared { NotchSettingsView(model: settings.model, notch: model, section: view.section) }
         default:
             EmptyView()
         }
@@ -694,26 +701,9 @@ struct HomeView: View {
         }
     }
 
-    /// Dropped files go to C# as one JSON array of paths (text kind 5).
+    /// Dropped anywhere else on the home: onto the shelf (text kind 5).
     func drop(_ providers: [NSItemProvider]) {
-        var paths: [String] = []
-        let group = DispatchGroup()
-        let lock = NSLock()
-        for provider in providers {
-            group.enter()
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                if let url, url.isFileURL {
-                    lock.lock()
-                    paths.append(url.path)
-                    lock.unlock()
-                }
-                group.leave()
-            }
-        }
-        group.notify(queue: .main) {
-            guard let data = try? JSONSerialization.data(withJSONObject: paths), let json = String(data: data, encoding: .utf8) else { return }
-            model.send(text: 5, json)
-        }
+        loadPaths(providers) { json in model.send(text: 5, json) }
     }
 
     /// Segoe Fluent glyph names (or a literal character) as SF Symbols.
@@ -822,6 +812,21 @@ struct ShelfStrip: View {
     let model: NotchModel
 
     var body: some View {
+        if shelf.dropping {
+            // While files are being dragged: hold them, or let Jarvis learn from them.
+            HStack(spacing: 10) {
+                if shelf.shelfOn ?? true {
+                    DropTarget(title: "Shelf", detail: "Just hold it here", symbol: "tray", kind: 5, model: model)
+                }
+                DropTarget(title: "Vault", detail: "Jarvis learns from it · fills forms with it", symbol: "brain.head.profile", kind: 6, model: model)
+            }
+            .frame(height: 16 + 8 + 70)
+        } else {
+            strip
+        }
+    }
+
+    var strip: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Shelf").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
@@ -854,6 +859,53 @@ struct ShelfStrip: View {
     }
 }
 
+/// One of the two places a drag can land: kind 5 = shelf, 6 = vault (the paths go to C# as JSON).
+struct DropTarget: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let kind: Int32
+    let model: NotchModel
+    @State private var targeted = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(.white.opacity(targeted ? 1 : 0.7))
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            Text(detail).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(targeted ? 0.16 : 0.05)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(targeted ? 0.7 : 0.3), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])))
+        .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
+            loadPaths(providers) { json in model.send(text: kind, json) }
+            return true
+        }
+    }
+}
+
+/// Dropped items as one JSON array of file paths, delivered on the main thread.
+func loadPaths(_ providers: [NSItemProvider], _ done: @escaping (String) -> Void) {
+    var paths: [String] = []
+    let group = DispatchGroup()
+    let lock = NSLock()
+    for provider in providers {
+        group.enter()
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            if let url, url.isFileURL {
+                lock.lock()
+                paths.append(url.path)
+                lock.unlock()
+            }
+            group.leave()
+        }
+    }
+    group.notify(queue: .main) {
+        guard let data = try? JSONSerialization.data(withJSONObject: paths), let json = String(data: data, encoding: .utf8) else { return }
+        done(json)
+    }
+}
+
 struct ShelfTile: View {
     /// The file itself (its URL, as Finder drags it), not a copy of its bytes: given bytes, apps
     /// save them under a temporary name like ".com.apple.Foundation.NSItemProvider.X.pdf".
@@ -880,6 +932,14 @@ struct ShelfTile: View {
                     Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
                 }
                 .buttonStyle(.plain).padding(3).help("Take off the shelf")
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if hovering, let toVault = item.toVault {
+                Button { model.send(toVault) } label: {
+                    Image(systemName: "brain.head.profile").font(.system(size: 11)).foregroundStyle(.white.opacity(0.8))
+                }
+                .buttonStyle(.plain).padding(4).help("Add to your vault: Jarvis learns from it")
             }
         }
         .contentShape(Rectangle())
