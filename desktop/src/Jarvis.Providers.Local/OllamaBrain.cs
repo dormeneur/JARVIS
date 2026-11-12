@@ -146,7 +146,9 @@ public sealed class OllamaBrain : IAssistantBrain
         {
             var detail = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             response.Dispose();
-            throw new InvalidOperationException($"The local model ({options.Model}) failed: {detail}");
+            throw new InvalidOperationException(response.StatusCode == System.Net.HttpStatusCode.NotFound
+                ? $"The local model {options.Model} isn't installed. Run \"ollama pull {options.Model}\" in Terminal, or pick a model you have in Settings → Vault → Local model."
+                : $"The local model ({options.Model}) failed: {detail}");
         }
 
         return response;

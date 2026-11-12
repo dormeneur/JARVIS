@@ -90,6 +90,7 @@ public static partial class TurnRouter
     [GeneratedRegex(@"\b(schedule|book|create|add|set up|move|reschedule|cancel|invite)\s+(a|an|the|my|this)?\s*(meeting|event|call|appointment|invite)", RegexOptions.IgnoreCase)]
     private static partial Regex CalendarChange();
 
-    [GeneratedRegex(@"\bvault\b|\b(my|from my|in my)\s+(notes?|profile|journal|diary|resume|cv)\b|\bstandard answers?\b|\bI\s+(wrote|saved|noted|stored)\b", RegexOptions.IgnoreCase)]
+    // Also what the user has or studies ("how many modules do I have in cog"), but not "do I have to…".
+    [GeneratedRegex(@"\bvault\b|\b(my|from my|in my)\s+(notes?|profile|journal|diary|resume|cv|modules?|courses?|subjects?|lectures?|assignments?|documents?|exams?|grades?)\b|\bstandard answers?\b|\bI\s+(wrote|saved|noted|stored)\b|\b(do|did)\s+I\s+(have(?!\s+to\b)|take|study|own)\b", RegexOptions.IgnoreCase)]
     private static partial Regex VaultRequest();
 }
