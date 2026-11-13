@@ -60,7 +60,8 @@ public sealed partial class App : Application
         var overlay = _host.Services.GetRequiredService<Jarvis.Platform.Overlay.OverlayService>();
         var notch = _host.Services.GetRequiredService<INotchPresenter>();
         var pause = _host.Services.GetRequiredService<PauseSwitch>();
-        overlay.DwellAllowed = () => notch.Current is NotchState.IdleState or NotchState.Working or NotchState.Parked && !pause.IsPaused;
+        overlay.DwellAllowed = () => !pause.IsPaused
+            && (notch.Current is NotchState.IdleState or NotchState.Working or NotchState.Parked);
         // Hovering the notch brings back what was put aside (Settings on its page, the chat), else the home.
         overlay.NotchDwelled += () => _host.Services.GetRequiredService<DispatcherQueue>().TryEnqueue(() =>
         {

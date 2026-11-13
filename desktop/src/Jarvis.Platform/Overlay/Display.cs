@@ -6,7 +6,7 @@ using Windows.Win32.UI.HiDpi;
 namespace Jarvis.Platform.Overlay;
 
 /// <summary>A monitor in physical pixels on the virtual desktop, with its display scale.</summary>
-internal sealed record Display(int Left, int Top, int Width, int Height, double Scale)
+internal sealed record Display(int Left, int Top, int Width, int Height, double Scale, bool IsPrimary)
 {
     public bool Contains(int x, int y) => x >= Left && x < Left + Width && y >= Top && y < Top + Height;
 
@@ -22,7 +22,14 @@ internal sealed record Display(int Left, int Top, int Width, int Height, double 
                 var dpiX = 96u;
                 _ = PInvoke.GetDpiForMonitor(monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out dpiX, out _);
                 var bounds = info.rcMonitor;
-                displays.Add(new Display(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, dpiX / 96.0));
+                const uint monitorInfoPrimary = 1;
+                displays.Add(new Display(
+                    bounds.left,
+                    bounds.top,
+                    bounds.right - bounds.left,
+                    bounds.bottom - bounds.top,
+                    dpiX / 96.0,
+                    (info.dwFlags & monitorInfoPrimary) != 0));
             }
 
             return true;

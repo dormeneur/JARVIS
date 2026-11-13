@@ -154,7 +154,7 @@ public sealed partial class OverlayService : ICursorOverlay, IScreenDrawing, IHo
                               && !(options.HideInFullscreen && layers.Cursor.IsIdle && Fullscreen.IsActive);
 
                 // Resting on the sleeping notch fills a ring beside the cursor, then opens the notch's home.
-                var primary = windows.Find(window => window.Display.Contains(0, 0))?.Display;
+                var primary = windows.Find(window => window.Display.IsPrimary)?.Display;
                 var onSliver = primary is not null && Jarvis.Core.Notch.NotchDwell.OnSliver(mouse.X, mouse.Y, primary.Left, primary.Top, primary.Width, primary.Scale);
                 var mayOpen = visible && !layers.Cursor.IsListening && (PInvoke.GetAsyncKeyState(0x01) & 0x8000) == 0 && DwellAllowed?.Invoke() == true;
                 var (ring, opened) = dwell.Update(now, onSliver, mayOpen);
