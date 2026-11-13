@@ -35,7 +35,7 @@ class FormMemory private constructor(private val fields: Map<String, List<Entry>
     private fun values(key: String, nowMillis: Long): List<String> =
         (find(key) ?: emptyList())
             // ponytail: paragraphs ("why us?") belong to one form; phone autofill offers one-liners only.
-            .filter { '\n' !in it.value && it.value.length <= 120 }
+            .filter { '\n' !in it.value && it.value.length <= 120 && fits(key, it.value) }
             .sortedByDescending { score(it, nowMillis) }
             .map { it.value }
             .distinctBy { it.lowercase() }
@@ -119,6 +119,23 @@ class FormMemory private constructor(private val fields: Map<String, List<Entry>
             return found.filter { (label, value) -> label.isNotEmpty() && value.isNotEmpty() }
         }
 
+        private val DATE = Regex("^\\d{1,4}[/.-]\\d{1,2}[/.-]\\d{1,4}$")
+
+        /**
+         * Whether [value] can be what a field called [label] holds. Apps give a date box a phone keypad,
+         * so the input type alone says "phone" for a birthday; a value that can't be that field's
+         * (no @ in an email, a date in a phone) isn't learned under it or offered for it.
+         */
+        fun fits(label: String, value: String): Boolean {
+            val v = value.trim()
+            return when (keyOf(label)) {
+                "phone" -> v.count(Char::isDigit) in 7..15 && !DATE.matches(v) && v.none { it.isLetter() }
+                "email" -> '@' in v && ' ' !in v
+                "birth date" -> DATE.matches(v) || (v.any(Char::isLetter) && v.any(Char::isDigit))
+                else -> true
+            }
+        }
+
         private val FACT = Regex("^[-*+]\\s+(?:\\*\\*)?([^:*]{1,40}?)(?:\\*\\*)?\\s*:\\s*(.+)$")
         private val LINK = Regex("\\[([^\\]]*)]\\(([^)]+)\\)")
 
@@ -155,7 +172,7 @@ class FormMemory private constructor(private val fields: Map<String, List<Entry>
             val nowMillis = now.toInstant().toEpochMilli()
             for ((question, raw) in answers) {
                 val value = raw.trim()
-                if (value.isEmpty()) continue
+                if (value.isEmpty() || !fits(question, value)) continue
                 val key = keyOf(question)
                 val field = fields.optJSONObject(findKey(fields.keys().asSequence().toList(), key) ?: key)
                     ?: JSONObject().put("questions", JSONArray()).put("values", JSONArray()).also { fields.put(key, it) }

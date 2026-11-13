@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:jarvis_mobile/features/autofill/autofill_repository.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
 import 'package:jarvis_mobile/features/auth/data/auth_repository.dart';
 import 'package:jarvis_mobile/core/storage/secure_storage.dart';
@@ -11,7 +12,9 @@ class ServerConnectionNotifier extends StateNotifier<ServerConnectionState> {
   final SecureStorage _secureStorage;
   Timer? _timer;
 
-  ServerConnectionNotifier(this._authRepo, this._secureStorage)
+  final Future<void> Function()? _onOnline;
+
+  ServerConnectionNotifier(this._authRepo, this._secureStorage, [this._onOnline])
       : super(ServerConnectionState.checking) {
     _startPolling();
   }
@@ -40,6 +43,8 @@ class ServerConnectionNotifier extends StateNotifier<ServerConnectionState> {
       if (mounted) {
         state = isHealthy ? ServerConnectionState.online : ServerConnectionState.offline;
       }
+      // Whatever the phone queued while the PC was away goes now; a failure just waits for the next poll.
+      if (isHealthy) await _onOnline?.call().catchError((_) {});
     } catch (_) {
       if (mounted) {
         state = ServerConnectionState.offline;
@@ -58,5 +63,6 @@ final serverConnectionProvider = StateNotifierProvider<ServerConnectionNotifier,
   return ServerConnectionNotifier(
     ref.watch(authRepositoryProvider),
     ref.watch(secureStorageProvider),
+    () => ref.read(autofillRepositoryProvider).flushPending(),
   );
 });

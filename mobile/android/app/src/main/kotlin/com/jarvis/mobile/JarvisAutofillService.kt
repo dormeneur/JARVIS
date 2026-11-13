@@ -33,7 +33,9 @@ import java.io.File
 @RequiresApi(Build.VERSION_CODES.O)
 class JarvisAutofillService : AutofillService() {
     /** A text field on the other app's screen: what it's called, what Jarvis remembers for it, what's in it. */
-    class Field(val id: AutofillId, val label: String, val suggestions: List<String>, val value: String?)
+    class Field(val id: AutofillId, val labels: List<String>, val suggestions: List<String>, val value: String?) {
+        val label get() = labels.first()
+    }
 
     override fun onFillRequest(request: FillRequest, cancellationSignal: CancellationSignal, callback: FillCallback) {
         val response = try {
@@ -58,7 +60,11 @@ class JarvisAutofillService : AutofillService() {
         val sheet = try {
             val structure = request.fillContexts.last().structure
             val answers = fieldsOf(structure, FormMemory.parse(null))
-                .mapNotNull { field -> field.value?.trim()?.takeIf { it.isNotEmpty() && '\n' !in it && it.length <= 120 }?.let { field.label to it } }
+                .mapNotNull { field ->
+                    val value = field.value?.trim()?.takeIf { it.isNotEmpty() && '\n' !in it && it.length <= 120 } ?: return@mapNotNull null
+                    // The first name this value can be a value of: a birthday in a phone-keypad box isn't a "phone".
+                    field.labels.firstOrNull { FormMemory.fits(it, value) }?.let { it to value }
+                }
             if (answers.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) null
             else AutofillSheetActivity.save(this, titleOf(structure), answers)
         } catch (e: Exception) {
@@ -80,7 +86,7 @@ class JarvisAutofillService : AutofillService() {
             if (id != null && node.autofillType == View.AUTOFILL_TYPE_TEXT && !isSecret(node)) {
                 val labels = labelsOf(node)
                 val found = labels.firstNotNullOfOrNull { label -> memory.suggestions(label).takeIf { it.isNotEmpty() } }.orEmpty()
-                if (labels.isNotEmpty()) fields[id] = Field(id, labels.first(), found, node.autofillValue?.takeIf { it.isText }?.textValue?.toString())
+                if (labels.isNotEmpty()) fields[id] = Field(id, labels, found, node.autofillValue?.takeIf { it.isText }?.textValue?.toString())
                 // Debug builds: what each field is called and whether memory knew it (never the values).
                 if (debug) Log.i(TAG, "field labels=$labels html=${node.htmlInfo?.attributes?.filter { it.first != "value" }?.map { "${it.first}=${it.second}" }} suggestions=${found.size}")
             }
@@ -155,7 +161,8 @@ class JarvisAutofillService : AutofillService() {
         fun memory(context: Context): FormMemory {
             val profile = profileDir(context)
             val notes = profile.listFiles { file -> file.isFile && file.extension == "md" }.orEmpty().sortedBy { it.name }
-            return FormMemory.parse(File(profile, "form-memory.json").takeIf { it.isFile }?.readText())
+            // Overlay what was learned while the PC was away, so the phone offers it right now.
+            return FormMemory.parse(FormOutbox.fold(context, File(profile, "form-memory.json").takeIf { it.isFile }?.readText()).first)
                 .withFacts(notes.flatMap { FormMemory.facts(it.readText()) })
         }
 
@@ -203,10 +210,11 @@ class JarvisAutofillService : AutofillService() {
             val html = node.htmlInfo?.attributes.orEmpty().associate { it.first.lowercase() to it.second.orEmpty() }
             val hints = node.autofillHints.orEmpty().toList() +
                 listOfNotNull(html["autocomplete"], html["ua-autofill-hints"], html["computed-autofill-hints"]).flatMap { it.split(' ', ',') }
+            // The field's own words beat the keyboard kind: apps give any numeric box (a birthday) a phone keypad.
             return (hints.mapNotNull { HINTS[it] } +
                 listOfNotNull(html["label"], html["aria-label"], html["placeholder"], html["name"], html["id"]) +
-                listOfNotNull(KINDS[html["type"]?.lowercase()], kindOf(node.inputType)) +
-                listOfNotNull(node.hint, node.idEntry, node.contentDescription?.toString()))
+                listOfNotNull(node.hint, node.idEntry, node.contentDescription?.toString()) +
+                listOfNotNull(KINDS[html["type"]?.lowercase()], kindOf(node.inputType)))
                 .map { it.replace(CAMEL, "$1 $2").trim() }
                 .filter { it.isNotBlank() && it.lowercase() !in SAYS_NOTHING }
                 .distinct()

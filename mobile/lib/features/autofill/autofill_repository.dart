@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/core/network/api_client.dart';
 import 'package:jarvis_mobile/core/storage/secure_storage.dart';
@@ -55,6 +56,25 @@ class AutofillRepository {
       if (event['id'] is String) yield MapEntry(event['id'] as String, event['answer'] as String?);
     }
   }
+
+  /// Learned answers wait on the phone (android: FormOutbox) until the PC has them.
+  static const _outbox = MethodChannel('jarvis/form-outbox');
+
+  /// Keeps what was learned from a form on the phone first, so nothing depends on the PC being up.
+  Future<void> queueLearned(String title, List<String> labels, List<String?> values) =>
+      _outbox.invokeMethod<void>('queue', {'title': title, 'labels': labels, 'values': values});
+
+  /// Pushes everything waiting to the PC's form memory; a no-op when nothing waits, throws when the
+  /// PC can't be reached (the answers stay queued, so a later call retries).
+  Future<void> flushPending() async {
+    if ((await _outbox.invokeMethod<int>('count') ?? 0) == 0) return;
+    final merged = await _outbox.invokeMapMethod<String, dynamic>('merge', {'json': await readMemory()});
+    await writeMemory(merged!['json'] as String);
+    await _outbox.invokeMethod<void>('ack', {'count': merged['count']}); // only after the PC has them
+  }
+
+  /// A reason a person can read, not Dio's stack-flavoured dump.
+  static String reason(Object e) => e is DioException && e.response == null ? 'your PC is not reachable' : '$e';
 
   /// The form memory file as it is on the PC now (null: there isn't one yet).
   Future<String?> readMemory() async {

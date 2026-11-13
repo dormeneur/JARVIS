@@ -14,8 +14,6 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.android.FlutterActivityLaunchConfigs
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import java.time.OffsetDateTime
-import java.time.ZoneOffset
 
 /**
  * The Jarvis sheet over another app's form (lib/features/autofill/autofill_sheet.dart):
@@ -38,6 +36,7 @@ open class AutofillSheetActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        FormOutbox.register(flutterEngine.dartExecutor.binaryMessenger, this)
         // Anyone can open the selection menu's entry, so then nothing but the selected words is read.
         val selected = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()?.trim().orEmpty()
         val mode = if (fromSelection) "text" else intent.getStringExtra(EXTRA_MODE)
@@ -58,11 +57,6 @@ open class AutofillSheetActivity : FlutterActivity() {
                         "readOnly" to intent.getBooleanExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false),
                     )
                 )
-                "merge" -> if (mode == "save") {
-                    result.success(FormMemory.remember(call.argument<String>("json"), labels.zip(values), title, OffsetDateTime.now(ZoneOffset.UTC)))
-                } else {
-                    result.error("mode", "only a save learns", null)
-                }
                 "finish" -> {
                     finishWith(call.argument<List<String?>>("values").orEmpty())
                     result.success(null)

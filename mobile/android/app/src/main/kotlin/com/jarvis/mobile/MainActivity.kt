@@ -27,6 +27,8 @@ class MainActivity : FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
+        // Forms learned while the PC was away, flushed from Dart once it's back (autofill_repository.dart).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) FormOutbox.register(flutterEngine.dartExecutor.binaryMessenger, this)
         // JARVIS as the phone's autofill service (Android 8+): "on", "off" or "unsupported".
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "jarvis/autofill").setMethodCallHandler { call, result ->
             val manager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getSystemService(AutofillManager::class.java) else null

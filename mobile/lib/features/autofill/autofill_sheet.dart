@@ -103,7 +103,10 @@ class _AutofillSheetState extends ConsumerState<AutofillSheet> {
       setState(() {
         _working = false;
         _rows = [for (final row in _rows) row == _Row.asking ? _Row.unknown : row];
-        _status = "Couldn't reach Jarvis on your PC ($e).";
+        final ready = _values.where((value) => value != null).length;
+        _status = ready > 0
+            ? 'Jarvis on your PC is unreachable (${AutofillRepository.reason(e)}). Fill the $ready your phone remembers?'
+            : "Couldn't reach Jarvis on your PC (${AutofillRepository.reason(e)}), and your phone doesn't remember these yet.";
       });
     }
   }
@@ -130,7 +133,7 @@ class _AutofillSheetState extends ConsumerState<AutofillSheet> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _status = _choices.isEmpty ? "Couldn't reach Jarvis on your PC ($e)." : "Couldn't reach your PC; these are from forms you filled before.");
+      setState(() => _status = _choices.isEmpty ? "Couldn't reach Jarvis on your PC (${AutofillRepository.reason(e)})." : "Couldn't reach your PC; these are from forms you filled before.");
     }
     if (mounted) setState(() => _working = false);
   }
@@ -158,24 +161,31 @@ class _AutofillSheetState extends ConsumerState<AutofillSheet> {
 
   Future<void> _save() async {
     setState(() => _status = 'Remembering ${_labels.length} answers${_title.isEmpty ? '' : ' from $_title'}…');
+    final repository = ref.read(autofillRepositoryProvider);
     try {
-      final repository = ref.read(autofillRepositoryProvider);
-      final merged = await AutofillSheet.channel.invokeMethod<String>('merge', {'json': await repository.readMemory()});
-      await repository.writeMemory(merged!);
-      if (!mounted) return;
-      setState(() {
-        _working = false;
-        _status = 'Remembered. Your phone and PC will offer these next time.';
-      });
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-      await _close(const []);
+      // On the phone first: from here the answers are safe, whatever the PC is doing.
+      await repository.queueLearned(_title, _labels, _values);
     } catch (e) {
       if (!mounted) return;
-      setState(() {
+      return setState(() {
         _working = false;
-        _status = "Couldn't reach Jarvis on your PC, so nothing was saved ($e).";
+        _status = "Couldn't save this on your phone ($e).";
       });
     }
+    var synced = false;
+    try {
+      await repository.flushPending();
+      synced = true;
+    } catch (_) {} // stays queued; the app retries whenever the PC is reachable
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _status = synced
+          ? 'Remembered. Your phone and PC will offer these next time.'
+          : 'Remembered on your phone. It will reach your PC when it is back online.';
+    });
+    await Future<void>.delayed(Duration(milliseconds: synced ? 1200 : 2200));
+    await _close(const []);
   }
 
   Future<void> _close(List<String?> values) async {

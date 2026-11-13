@@ -4,6 +4,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class FormMemoryTest {
+    @Test
+    fun aValueMustFitTheFieldItIsLearnedUnder() {
+        assertEquals(false, FormMemory.fits("phone", "14/03/2004"))
+        assertEquals(true, FormMemory.fits("phone", "+91 88405 38333"))
+        assertEquals(false, FormMemory.fits("email", "Aditya"))
+        assertEquals(true, FormMemory.fits("Date of Birth", "14/03/2004"))
+        assertEquals(false, FormMemory.fits("Date of Birth", "8840538333"))
+        assertEquals(true, FormMemory.fits("Student ID", "23BRS1199"))
+    }
+
     private val now = java.time.OffsetDateTime.parse("2026-11-04T10:00:00Z").toInstant().toEpochMilli()
 
     // The PC's file format (desktop FormMemory.ToJson), with made-up values.
