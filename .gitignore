@@ -51,3 +51,6 @@ DOCUMENTATION/SECRETS/
 
 # macOS app bundles (desktop/packaging/macos/make-app.sh)
 desktop/artifacts/
+
+SECRETS
+REFERENCE
