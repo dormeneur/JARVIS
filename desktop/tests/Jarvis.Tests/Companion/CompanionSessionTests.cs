@@ -342,7 +342,7 @@ public sealed class CompanionSessionTests
 
         var shown = Assert.IsType<NotchState.Response>(fakes.Notch.Shown[^1]);
         Assert.Equal(MicrophoneBlockedException.Advice, shown.Text);
-        Assert.Contains("Microphone", shown.Text, StringComparison.Ordinal);
+        Assert.Contains("microphone", shown.Text, StringComparison.OrdinalIgnoreCase); // the advice is per-OS wording
         Assert.Equal(MicrophoneBlockedException.SettingsLabel, shown.Actions![0].Label);
         Assert.Null(fakes.Brain.LastTurn);
     }
