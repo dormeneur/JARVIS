@@ -20,11 +20,19 @@ class _Vault implements AutofillRepository {
     }
   }
 
-  @override
-  Future<String?> readMemory() async => '{"version":1}';
+  /// What the sheet queued on the phone, and whether the PC took it.
+  final queued = <String>[];
+  bool pcUp = true;
+  bool flushed = false;
 
   @override
-  Future<void> writeMemory(String content) async => written = content;
+  Future<void> queueLearned(String title, List<String> labels, List<String?> values) async => queued.add('$title|${labels.join(',')}|${values.join(',')}');
+
+  @override
+  Future<void> flushPending() async {
+    if (!pcUp) throw Exception('PC down');
+    flushed = true;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -88,17 +96,20 @@ void main() {
     expect(calls.last.arguments['values'], ['Z1234567']);
   });
 
-  testWidgets('Save: what was sent is merged into the memory file and written back', (tester) async {
+  testWidgets('Save: what was sent is queued on the phone, then pushed to the PC', (tester) async {
     final vault = _Vault({});
-    final calls = await run(tester, {
-      'mode': 'save',
-      'title': 'example.test',
-      'labels': ['Given Name'],
-      'values': ['Asha'],
-    }, vault);
+    await run(tester, {'mode': 'save', 'title': 'example.test', 'labels': ['Given Name'], 'values': ['Asha']}, vault);
 
-    expect(calls.firstWhere((call) => call.method == 'merge').arguments['json'], '{"version":1}');
-    expect(vault.written, '{"merged":true}');
+    expect(vault.queued, ['example.test|Given Name|Asha']);
+    expect(vault.flushed, isTrue);
     expect(find.textContaining('Remembered'), findsOneWidget);
+  });
+
+  testWidgets('Save: with the PC down it is still kept on the phone, to sync later', (tester) async {
+    final vault = _Vault({})..pcUp = false;
+    await run(tester, {'mode': 'save', 'title': 'example.test', 'labels': ['Given Name'], 'values': ['Asha']}, vault);
+
+    expect(vault.queued, hasLength(1));
+    expect(find.textContaining('on your phone'), findsOneWidget);
   });
 }
