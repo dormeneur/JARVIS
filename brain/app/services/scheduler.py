@@ -95,12 +95,19 @@ async def _proposal_expire(app) -> None:
     await asyncio.to_thread(proposals.expire_old)
 
 
+async def _hunches(app) -> None:
+    from app.services import hunches
+
+    await hunches.generate()
+
+
 def jobs() -> List[Tuple[str, Spec, Callable[[Any], Awaitable[None]]]]:
     return [
         ("reindex", ("interval", 30), _reindex),
         ("digest", ("daily", settings.digest_time), _digest),
         ("trash_prune", ("daily", "03:00"), _trash_prune),
         ("proposal_expire", ("daily", "03:05"), _proposal_expire),
+        ("hunches", ("interval", 120), _hunches),
     ]
 
 

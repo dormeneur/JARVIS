@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 
 from app.config import settings
-from app.routers import ask, career, generate, chat, agent, forms, proposals, digest
+from app.routers import ask, career, generate, chat, agent, forms, proposals, digest, hunches
 from app.services.history_db import init_db
 from app.services.document_loader import DocumentLoader
 from app.services.text_chunker import TextChunker
@@ -111,6 +111,7 @@ app.include_router(forms.router)
 app.include_router(proposals.router)
 app.include_router(digest.router)
 app.include_router(career.router)
+app.include_router(hunches.router)
 
 
 @app.get("/brain/status")

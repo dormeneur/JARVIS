@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from app.models.ask_models import IndexStatus, AskRequest, AskResponse, AskOptions, Source, ExtractPdfRequest, ExtractPdfResponse
+from app.models.ask_models import IndexStatus, SearchRequest, AskRequest, AskResponse, AskOptions, Source, ExtractPdfRequest, ExtractPdfResponse
 import logging
 import json
 
@@ -130,6 +130,27 @@ async def ask_brain(req: AskRequest, request: Request):
             model=LLM_MODEL,
             tokens_used=tokens
         )
+
+
+@router.post("/brain/ai/search")
+async def search_brain(req: SearchRequest, request: Request):
+    """Ranked passages from the hybrid index (vectors + keywords), with no LLM call.
+
+    For clients and agents that do their own answering. Secrets is never indexed, so it can't appear.
+    """
+    state = request.app.state
+    retriever = Retriever(state.embedding_pipeline, state.vector_store, getattr(state, "keyword_index", None))
+    try:
+        found = await retriever.retrieve(query=req.query, top_k=req.top_k)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("search failed: %s", exc)
+        raise HTTPException(status_code=503, detail="search unavailable") from exc
+    return {
+        "results": [
+            {"path": s.path, "score": s.score, "content": (getattr(s, "content", "") or "")[:1200]}
+            for s in found
+        ]
+    }
 
 
 @router.post("/brain/reindex", response_model=dict)

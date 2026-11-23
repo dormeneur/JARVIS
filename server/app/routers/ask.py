@@ -84,6 +84,53 @@ async def ask_jarvis_agent(
     )
 
 
+@router.post("/ask/search")
+async def ask_search(request: Request, device=Depends(get_current_device)):
+    """Ranked vault passages from the brain's hybrid index (no LLM call, not streamed)."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(f"{settings.brain_url.rstrip('/')}/brain/ai/search", json=payload)
+    except httpx.RequestError as e:
+        logger.error(f"Failed to reach jv-brain for search: {e}")
+        raise HTTPException(status_code=503, detail="AI service unavailable")
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail="search failed")
+    return response.json()
+
+
+HUNCH_ROUTES = {("POST", "observe"), ("POST", "next"), ("POST", "generate"), ("GET", "status")}
+
+
+@router.api_route("/ask/hunches/{rest:path}", methods=["GET", "POST"])
+async def ask_hunches(rest: str, request: Request, device=Depends(get_current_device)):
+    """Hunches (the brain learning about the user by guessing and asking): JSON in, JSON out."""
+    parts = rest.strip("/").split("/")
+    allowed = (request.method, rest.strip("/")) in HUNCH_ROUTES or (
+        request.method == "POST" and len(parts) == 2 and parts[1] in ("answer", "skip") and parts[0].isalnum()
+    )
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        payload = await request.json() if request.method == "POST" else None
+    except Exception:
+        payload = {}
+    try:
+        async with httpx.AsyncClient(timeout=200.0) as client:  # generate waits for the local model
+            response = await client.request(
+                request.method, f"{settings.brain_url.rstrip('/')}/brain/hunches/{rest.strip('/')}", json=payload
+            )
+    except httpx.RequestError as e:
+        logger.error(f"Failed to reach jv-brain for hunches: {e}")
+        raise HTTPException(status_code=503, detail="AI service unavailable")
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail="hunches request failed")
+    return response.json()
+
+
 @router.post("/ask/ai/form-answers")
 async def ask_form_answers(
     request: Request,

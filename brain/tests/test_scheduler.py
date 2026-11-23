@@ -80,7 +80,7 @@ def test_unknown_timezone_falls_back_to_utc(vault, monkeypatch):
 
 
 def test_default_job_list_has_the_four_jobs(vault):
-    assert [name for name, _, _ in scheduler.jobs()] == ["reindex", "digest", "trash_prune", "proposal_expire"]
+    assert [name for name, _, _ in scheduler.jobs()] == ["reindex", "digest", "trash_prune", "proposal_expire", "hunches"]
 
 
 def test_reindex_job_does_not_start_a_second_pass(vault):
