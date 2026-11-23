@@ -82,6 +82,16 @@ flutter run
   `keyword_index.py`). Re-embedding is driven by `INDEX_VERSION` in `incremental_indexer.py`: bump it when
   what gets embedded changes. Measure changes with `python -m app.evals.retrieval` (golden set stays in the
   vault, never in git) and `python -m app.evals.traces`.
+- **Raw search:** `POST /ask/search` (jv-api) → `/brain/ai/search` returns ranked hybrid-index passages with no LLM call, for
+  clients/agents that answer themselves. The desktop's "add a task: …" is `TurnRoute.TaskAdd` (`TaskInbox`: a pattern, not a
+  model; confirmed in the notch, appended to `Agent/tasks.md` through the files API). The standalone Strands vault agent
+  (`B:\DEV\strands-agent`, outside this repo) is a registered device that uses the same two endpoints and the same file.
+- **Hunches (learning the user):** `brain/app/services/hunches.py`. The desktop sends app + window-title runs
+  (`/ask/hunches/observe`); every 2 h the local model turns a week of them plus recently changed notes into
+  guesses with evidence and 3 tap answers (agree/partly/disagree), dropping sensitive topics and repeats. The
+  notch asks one at a time (`/next`, served once per session, 6 unprompted a day, unlimited on demand); Skip
+  stacks it for the next session. Answers go to `Profile/traits.md` / `Profile/not-me.md`; `Profile/hunches.md`
+  shows what it still suspects. Raw observations stay in `.system/brain/hunches.db` (30 days). Local model only.
 - **Background AI work goes through the Inbox:** the memory extractor (user's words only) and later
   features file *proposals* (`services/proposals.py`, `/ask/proposals`); nothing is written until the user
   approves on the phone. The scheduler (`services/scheduler.py`) runs reindex, the daily digest, trash
