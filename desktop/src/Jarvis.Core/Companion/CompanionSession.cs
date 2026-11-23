@@ -604,8 +604,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
             }
             LogAnswered(_time.GetElapsedTime(started).TotalMilliseconds);
 
+            var answered = _services.Notch.Current;
             await Task.Delay(TimeSpan.FromSeconds(_options.CurrentValue.CaptionSeconds), _time, cancellationToken).ConfigureAwait(false);
-            _services.Notch.Show(NotchState.Idle);
+            _services.Notch.RestIfShowing(answered); // not a job's result or the home that came up meanwhile
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -653,8 +654,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
             }
             else
             {
+                var shown = _services.Notch.Current;
                 await Task.Delay(TimeSpan.FromSeconds(2), _time, cancellationToken).ConfigureAwait(false);
-                _services.Notch.Show(NotchState.Idle);
+                _services.Notch.RestIfShowing(shown);
             }
 
             return true;
@@ -695,6 +697,14 @@ public sealed partial class CompanionSession : IAsyncDisposable
 
             case TurnRoute.CalendarAdd:
                 await AddEventAsync(local, request, cancellationToken).ConfigureAwait(false);
+                return true;
+
+            case TurnRoute.TaskAdd when !local.Vault.IsConnected:
+                _services.Notch.Show(new NotchState.Response("Adding tasks needs your vault, and Jarvis isn't connected to it yet. Connect it in Settings → Vault."));
+                return true;
+
+            case TurnRoute.TaskAdd:
+                await AddTaskAsync(local, request, cancellationToken).ConfigureAwait(false);
                 return true;
 
             case TurnRoute.Vault when !local.Vault.IsConnected:
@@ -738,8 +748,9 @@ public sealed partial class CompanionSession : IAsyncDisposable
             return true;
         }
 
+        var answered = _services.Notch.Current;
         await Task.Delay(TimeSpan.FromSeconds(_options.CurrentValue.CaptionSeconds), _time, cancellationToken).ConfigureAwait(false);
-        _services.Notch.Show(NotchState.Idle);
+        _services.Notch.RestIfShowing(answered);
         return true;
     }
 
@@ -825,6 +836,48 @@ public sealed partial class CompanionSession : IAsyncDisposable
         var said = $"{(problem is null ? string.Empty : $"Google Calendar didn't take it directly ({problem}). ")}Opened {web.Name} with {Jarvis.Core.Proactive.CalendarDraft.Describe(chosen)} filled in. Press Save there to add it.";
         _services.History.Add(request, said);
         _services.Notch.Show(new NotchState.Response(said, [new NotchAction("Open it again", () => OpenLink(link))]));
+    }
+
+    /// <summary>
+    /// "Add a task: renew passport": read by a pattern, confirmed in the notch, then appended to the
+    /// vault's task list through jv-api (versioned, so phones sync it). No model sees the text.
+    /// </summary>
+    private async Task AddTaskAsync(LocalTurns local, string request, CancellationToken cancellationToken)
+    {
+        if (Jarvis.Core.Vault.TaskInbox.Parse(request) is not { } task)
+        {
+            _services.Notch.Show(new NotchState.Response("I didn't catch the task. Try: add a task, renew my passport."));
+            return;
+        }
+
+        if (!await ApproveAsync($"Add to your vault tasks: {task}", "Add", "Cancel", cancellationToken).ConfigureAwait(false))
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                _services.Notch.Show(new NotchState.Response("Okay, I didn't add it."));
+            }
+
+            return;
+        }
+
+        try
+        {
+            _services.Notch.Show(new NotchState.Thinking("Adding the task"));
+            var existing = await local.Vault.ReadFileAsync(Jarvis.Core.Vault.TaskInbox.Path, cancellationToken).ConfigureAwait(false);
+            var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(_time.GetUtcNow(), _time.LocalTimeZone).DateTime);
+            await local.Vault.WriteFileAsync(Jarvis.Core.Vault.TaskInbox.Path, Jarvis.Core.Vault.TaskInbox.Append(existing, task, today), cancellationToken).ConfigureAwait(false);
+            await local.Vault.ReindexAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is Jarvis.Contracts.Vault.VaultException or HttpRequestException)
+        {
+            _services.Notch.Show(new NotchState.Response($"I couldn't add it: {exception.Message}"));
+            return;
+        }
+
+        _services.Privacy.Record(0, "Added a task to your vault on this PC");
+        var said = $"Added to your tasks: {task}";
+        _services.History.Add(request, said);
+        _services.Notch.Show(new NotchState.Response(said));
     }
 
     /// <summary>Learns a workflow: the brain (local in private mode) writes its steps once, and they're kept.</summary>

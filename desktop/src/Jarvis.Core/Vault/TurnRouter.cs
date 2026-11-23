@@ -22,6 +22,9 @@ public enum TurnRoute
 
     /// <summary>A new event for the user's calendar, shown to them to check before it goes in.</summary>
     CalendarAdd,
+
+    /// <summary>A task for the vault's task list, shown to the user to confirm before it is written (never a model, never Claude).</summary>
+    TaskAdd,
 }
 
 /// <summary>
@@ -40,6 +43,7 @@ public static partial class TurnRouter
         ArgumentNullException.ThrowIfNull(request);
         return !AsksAdvice(request) && (FormRequest().IsMatch(request) || (browserInFront && FillThis().IsMatch(request))) ? TurnRoute.Form
             : CalendarAdd().IsMatch(request) ? TurnRoute.CalendarAdd
+            : TaskInbox.Parse(request) is not null ? TurnRoute.TaskAdd
             : CalendarRequest().IsMatch(request) && !CalendarChange().IsMatch(request) ? TurnRoute.Calendar
             : VaultRequest().IsMatch(request) ? TurnRoute.Vault
             : privateMode ? TurnRoute.Local

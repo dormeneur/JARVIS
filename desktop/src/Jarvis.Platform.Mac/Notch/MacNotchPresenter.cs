@@ -86,6 +86,8 @@ public sealed class MacNotchPresenter : INotchPresenter
     public void Show(NotchState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        // Current says what was asked for at once; Apply corrects it to what really shows.
+        Volatile.Write(ref _shown, state);
         MainThread.Post(() => Apply(state));
     }
 
@@ -113,6 +115,7 @@ public sealed class MacNotchPresenter : INotchPresenter
         _parked = keep;
         if (show is null)
         {
+            Volatile.Write(ref _shown, _state); // kept what's showing
             return;
         }
 

@@ -218,11 +218,15 @@ public sealed partial class DictationSession : IAsyncDisposable
 
         if (outcome == InsertOutcome.CopiedToClipboard)
         {
-            _services.Notch.Show(new NotchState.Response($"Copied, press Ctrl+V to paste: {text}"));
+            var copied = new NotchState.Response($"Copied, press Ctrl+V to paste: {text}");
+            _services.Notch.Show(copied);
             await Task.Delay(TimeSpan.FromSeconds(options.NoticeSeconds), _time, cancellationToken).ConfigureAwait(false);
+            _services.Notch.RestIfShowing(copied);
         }
-
-        _services.Notch.Show(NotchState.Idle);
+        else
+        {
+            _services.Notch.Show(NotchState.Idle);
+        }
         if (outcome == InsertOutcome.Inserted && field is not null)
         {
             _ = WatchForCorrectionAsync(field, text, cancellationToken);
@@ -275,9 +279,15 @@ public sealed partial class DictationSession : IAsyncDisposable
                 {
                     WordLearned?.Invoke(correction);
                     LogLearned(correction.Corrected.Length);
-                    _services.Notch.Show(new NotchState.Response($"Learned “{correction.Corrected}” for next time."));
-                    await Task.Delay(TimeSpan.FromSeconds(_options.CurrentValue.NoticeSeconds), _time, cancellationToken).ConfigureAwait(false);
-                    _services.Notch.Show(NotchState.Idle);
+                    // This runs up to 20 s after the dictation: only say so if the notch is free,
+                    // never over a turn the user started meanwhile (the word is learned either way).
+                    if (_services.Notch.Current is NotchState.IdleState or NotchState.Working)
+                    {
+                        var learned = new NotchState.Response($"Learned “{correction.Corrected}” for next time.");
+                        _services.Notch.Show(learned);
+                        await Task.Delay(TimeSpan.FromSeconds(_options.CurrentValue.NoticeSeconds), _time, cancellationToken).ConfigureAwait(false);
+                        _services.Notch.RestIfShowing(learned);
+                    }
                 }
 
                 return;

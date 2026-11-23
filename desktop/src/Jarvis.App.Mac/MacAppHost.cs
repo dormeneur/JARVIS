@@ -354,6 +354,7 @@ internal static class MacAppHost
             provider.GetRequiredService<TimeProvider>(),
             provider.GetRequiredService<ILogger<ProactiveCoach>>(),
             Path.Combine(AppPaths.DataDirectory, "morning.txt")));
+        HunchHosting.Add(services, configuration);
         services.AddHostedService<ProactiveTimer>();
     }
 }

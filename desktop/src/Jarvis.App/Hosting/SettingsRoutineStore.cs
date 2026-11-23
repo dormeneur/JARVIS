@@ -1,7 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jarvis.Core.Agents;
+using Jarvis.Core.Proactive;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace Jarvis.App.Hosting;
 
@@ -53,21 +57,43 @@ internal sealed class SettingsRoutineStore : IRoutineStore
     }
 }
 
+/// <summary>Hunches (Core/Proactive/HunchCoach): the same wiring on Windows and the Mac, which links this file.</summary>
+internal static class HunchHosting
+{
+    public static void Add(IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<HunchOptions>(configuration.GetSection(HunchOptions.SectionName));
+        services.AddSingleton(provider => new HunchCoach(
+            provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>(),
+            provider.GetRequiredService<Jarvis.Contracts.Activity.IActivityWatch>(),
+            provider.GetRequiredService<Jarvis.Contracts.Notch.INotchPresenter>(),
+            provider.GetRequiredService<Jarvis.Core.PauseSwitch>(),
+            provider.GetRequiredService<IOptionsMonitor<HunchOptions>>(),
+            provider.GetRequiredService<TimeProvider>(),
+            provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HunchCoach>>()));
+    }
+}
+
 /// <summary>Lets the proactive layer look around every 30 seconds; a failed tick is logged, not fatal.</summary>
-internal sealed partial class ProactiveTimer(Jarvis.Core.Proactive.ProactiveCoach coach, TimeProvider time, Microsoft.Extensions.Logging.ILogger<ProactiveTimer> logger) : BackgroundService
+internal sealed partial class ProactiveTimer(ProactiveCoach coach, HunchCoach hunches, TimeProvider time, Microsoft.Extensions.Logging.ILogger<ProactiveTimer> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            try
+            // Each on its own: a failing one never stops the other. The coach goes first, so a
+            // meeting heads-up or the morning brief wins the notch over a hunch.
+            foreach (var tick in (Func<CancellationToken, Task>[])[coach.TickAsync, hunches.TickAsync])
             {
-                await coach.TickAsync(stoppingToken).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                LogTickFailed(exception);
+                try
+                {
+                    await tick(stoppingToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    LogTickFailed(exception);
+                }
             }
         }
     }

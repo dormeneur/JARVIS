@@ -236,6 +236,56 @@ public sealed partial class JvApiVault : IVault
         EnsureOk(created);
     }
 
+    public async Task ObserveAsync(IReadOnlyList<ActivityObservation> samples, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(samples);
+        var body = new JsonObject
+        {
+            ["samples"] = new JsonArray([.. samples.Select(sample => (JsonNode)new JsonObject
+            {
+                ["at"] = sample.At.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                ["app"] = sample.App,
+                ["title"] = sample.Title,
+                ["seconds"] = sample.Seconds,
+            })]),
+        };
+        using var response = await SendAsync(HttpMethod.Post, "/ask/hunches/observe", body, cancellationToken).ConfigureAwait(false);
+        EnsureOk(response);
+    }
+
+    public async Task<HunchBatch?> NextHunchAsync(string session, bool onDemand, CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(HttpMethod.Post, "/ask/hunches/next", new JsonObject { ["session"] = session, ["on_demand"] = onDemand }, cancellationToken).ConfigureAwait(false);
+        EnsureOk(response);
+        var reply = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false);
+        return reply is null ? null : ParseHunches(reply);
+    }
+
+    internal static HunchBatch ParseHunches(JsonObject reply)
+    {
+        static IReadOnlyList<string> Strings(JsonNode? node) => node is JsonArray array ? [.. array.Select(item => item?.GetValue<string>() ?? string.Empty).Where(text => text.Length > 0)] : [];
+        var hunch = reply["hunch"] is JsonObject h && h["id"]?.GetValue<string>() is { } id && h["question"]?.GetValue<string>() is { } question
+            && Strings(h["options"]) is { Count: 3 } options
+            ? new Hunch(id, question, options, Strings(h["evidence"]))
+            : null; // anything malformed is just "nothing to ask"
+        return new HunchBatch(hunch, reply["stacked"]?.GetValue<int>() ?? 0, reply["left_today"]?.GetValue<int>() ?? 0);
+    }
+
+    public async Task<string?> AnswerHunchAsync(string id, int? choice, string? text, CancellationToken cancellationToken)
+    {
+        var body = new JsonObject { ["choice"] = choice, ["text"] = text };
+        using var response = await SendAsync(HttpMethod.Post, $"/ask/hunches/{Uri.EscapeDataString(id)}/answer", body, cancellationToken).ConfigureAwait(false);
+        EnsureOk(response);
+        var reply = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false);
+        return reply?["saved_to"]?.GetValue<string>();
+    }
+
+    public async Task SkipHunchAsync(string id, string session, CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(HttpMethod.Post, $"/ask/hunches/{Uri.EscapeDataString(id)}/skip", new JsonObject { ["session"] = session }, cancellationToken).ConfigureAwait(false);
+        EnsureOk(response);
+    }
+
     /// <summary>NDJSON lines (buffered to newlines, as the stream may split a line).</summary>
     private async IAsyncEnumerable<JsonObject> StreamAsync(string path, JsonObject body, [EnumeratorCancellation] CancellationToken cancellationToken)
     {

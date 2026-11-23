@@ -135,21 +135,28 @@ public sealed class AmbientNotch : INotchPresenter, IDisposable
 
     public void Show(NotchState state)
     {
+        // Under the lock, so a job event can't slip its "working" in between and win over this state.
+        // (The inner Show only queues to the UI thread, so holding the lock costs nothing.)
         lock (_gate)
         {
             _requested = state;
+            _inner.Show(Resolve(state));
         }
-
-        _inner.Show(Resolve(state));
     }
 
+    /// <summary>
+    /// What the inner notch shows, which knows when the user rested it (click outside, Esc, a button);
+    /// a "last asked for" copy here went stale then, and kept the home and the proactive coach locked
+    /// out. Only the working light is ours: it stands for the idle that was asked for.
+    /// </summary>
     public NotchState Current
     {
         get
         {
+            var shown = _inner.Current;
             lock (_gate)
             {
-                return _requested;
+                return shown is NotchState.Working && _requested is NotchState.IdleState ? _requested : shown;
             }
         }
     }
@@ -164,15 +171,14 @@ public sealed class AmbientNotch : INotchPresenter, IDisposable
     /// <summary>A job started or ended while the notch was resting: switch between idle and working.</summary>
     private void OnJobChanged(AgentJobInfo job)
     {
-        NotchState requested;
         lock (_gate)
         {
-            requested = _requested;
-        }
-
-        if (requested is NotchState.IdleState)
-        {
-            _inner.Show(Resolve(requested));
+            // Resting, as asked or because the user closed what was there: switch idle and working.
+            if (_requested is NotchState.IdleState || _inner.Current is NotchState.IdleState or NotchState.Working)
+            {
+                _requested = NotchState.Idle;
+                _inner.Show(Resolve(NotchState.Idle));
+            }
         }
     }
 }
