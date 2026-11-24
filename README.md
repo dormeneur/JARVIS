@@ -1,7 +1,6 @@
 <div align="center">
 
-<!-- For inline playback, drag .github/media/jarvis.mp4 into the GitHub README editor and replace this block with the URL it gives you. -->
-<a href=".github/media/jarvis.mp4"><img src=".github/media/jarvis.jpg" alt="JARVIS: your AI second brain, zero bytes to the cloud" width="100%"></a>
+https://github.com/user-attachments/assets/ffe818b3-33d3-46c4-a597-5376f1a2aa3e
 
 # JARVIS
 
