@@ -67,3 +67,35 @@ async def generate():
 @router.get("/brain/hunches/status")
 async def status():
     return hunches.status()
+
+
+class PlaceRequest(BaseModel):
+    fact: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/brain/profile/place")
+async def place_fact(req: PlaceRequest):
+    """Which Profile file a new fact about the user belongs in (local model; may name a new file or folder)."""
+    from app.services import profile_place
+
+    try:
+        return {"path": await profile_place.place(req.fact)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+class IngestRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=40000)
+    source: str = Field(default="", max_length=300)
+    url: Optional[str] = Field(default=None, max_length=2000)
+
+
+@router.post("/brain/ingest/plan")
+async def ingest_plan(req: IngestRequest):
+    """Where outside text belongs in the vault (a note, plus facts about the owner). Writes nothing."""
+    from app.services import ingest
+
+    try:
+        return await ingest.plan(req.text, req.source, req.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))

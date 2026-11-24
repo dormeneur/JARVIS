@@ -102,7 +102,53 @@ async def ask_search(request: Request, device=Depends(get_current_device)):
     return response.json()
 
 
+@router.get("/ask/vault-folder")
+async def ask_vault_folder(device=Depends(get_current_device)):
+    """Where the vault folder is on the host (JARVIS_HOST_PATH), so an app on the same PC can open it in its file browser."""
+    import os
+
+    return {"path": os.environ.get("JARVIS_HOST_PATH") or None}
+
+
 HUNCH_ROUTES = {("POST", "observe"), ("POST", "next"), ("POST", "generate"), ("GET", "status")}
+
+
+@router.post("/ask/ingest/plan")
+async def ask_ingest_plan(request: Request, device=Depends(get_current_device)):
+    """Where outside text belongs in the vault: a note and facts about the owner (the local model decides; nothing is written)."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    try:
+        async with httpx.AsyncClient(timeout=200.0) as client:
+            response = await client.post(f"{settings.brain_url.rstrip('/')}/brain/ingest/plan", json=payload)
+    except httpx.RequestError as e:
+        logger.error(f"Failed to reach jv-brain for ingest: {e}")
+        raise HTTPException(status_code=503, detail="AI service unavailable")
+    if response.status_code != 200:
+        detail = response.json().get("detail", "ingest failed") if response.headers.get("content-type", "").startswith("application/json") else "ingest failed"
+        raise HTTPException(status_code=response.status_code, detail=detail)
+    return response.json()
+
+
+@router.post("/ask/profile/place")
+async def ask_profile_place(request: Request, device=Depends(get_current_device)):
+    """Which Profile file a new fact about the user belongs in (decided by the local model)."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.post(f"{settings.brain_url.rstrip('/')}/brain/profile/place", json=payload)
+    except httpx.RequestError as e:
+        logger.error(f"Failed to reach jv-brain for profile placement: {e}")
+        raise HTTPException(status_code=503, detail="AI service unavailable")
+    if response.status_code != 200:
+        detail = response.json().get("detail", "placement failed") if response.headers.get("content-type", "").startswith("application/json") else "placement failed"
+        raise HTTPException(status_code=response.status_code, detail=detail)
+    return response.json()
 
 
 @router.api_route("/ask/hunches/{rest:path}", methods=["GET", "POST"])
