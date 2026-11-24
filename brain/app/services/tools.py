@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
+import re
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -133,8 +135,31 @@ def _tool_list_directory(path: str = ".", **_: Any) -> str:
     return f"{label} contains:\n" + "\n".join(entries)
 
 
+def _suggest_files(raw: str, limit: int = 5) -> List[str]:
+    """Existing files whose name holds every word of what the model typed ("favourite game" finds
+    my_favourite_game.md). Only a hint: the model must call read_file again with a full path.
+    Skips hidden and excluded folders, so it can never name a Secrets file."""
+    words = re.findall(r"[a-z0-9]+", Path(str(raw).replace("\\", "/")).stem.casefold())
+    if not words:
+        return []
+    root, found = _vault_root(), []
+    for folder, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d.casefold() not in _EXCLUDED_CASEFOLDED]
+        for name in names:
+            if all(w in " ".join(re.findall(r"[a-z0-9]+", name.casefold())) for w in words):
+                found.append(_rel(Path(folder) / name))
+    return sorted(found)[:limit]
+
+
 def _tool_read_file(path: str, **_: Any) -> str:
-    target = safe_path(path, must_exist=True)
+    target = safe_path(path)
+    if not target.exists():
+        hint = _suggest_files(path)
+        raise ToolError(
+            f"no such file: {_rel(target)}."
+            + (f" Did you mean: {', '.join(hint)}? Call read_file again with the full path." if hint
+               else " Use search_vault or list_directory to find it.")
+        )
     if target.is_dir():
         raise ToolError(f"'{_rel(target)}' is a directory; use list_directory")
 

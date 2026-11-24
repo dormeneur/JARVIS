@@ -644,6 +644,17 @@ internal sealed class RecordingNotch : INotchPresenter
         }
     }
 
+    public NotchState Current
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _shown.Count == 0 ? NotchState.Idle : _shown[^1];
+            }
+        }
+    }
+
     public void Show(NotchState state)
     {
         lock (_gate)

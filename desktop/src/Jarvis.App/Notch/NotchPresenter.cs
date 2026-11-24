@@ -185,6 +185,9 @@ internal sealed class NotchPresenter : INotchPresenter
     public void Show(NotchState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        // Current says what was asked for at once (a caller may check it straight after), and Apply
+        // corrects it to what really shows once the UI thread gets there.
+        Volatile.Write(ref _shown, state);
         _dispatcher.TryEnqueue(() => Apply(state));
     }
 
@@ -229,6 +232,7 @@ internal sealed class NotchPresenter : INotchPresenter
         _parked = keep;
         if (show is null)
         {
+            Volatile.Write(ref _shown, _current); // kept what's showing
             return;
         }
 

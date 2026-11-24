@@ -401,6 +401,10 @@ public sealed partial class App : Application
     }
 #endif
 
+    /// <summary>The home's tile for Jarvis's guesses about the user: the stack first, asked on demand.</summary>
+    internal static HomeItem Hunches(Jarvis.Core.Proactive.HunchCoach hunches, string glyph)
+        => new(glyph, "Hunches", hunches.Stacked > 0 ? $"{hunches.Stacked} waiting on your stack" : "Let me guess something about you", () => _ = hunches.AskNowAsync());
+
     /// <summary>The notch's home: things to start, then the latest jobs and form.</summary>
     internal void ShowHome()
     {
@@ -421,9 +425,11 @@ public sealed partial class App : Application
             {
                 var on = !privacy.PrivateMode;
                 SettingsFile.Set(PrivacyOptions.SectionName, nameof(PrivacyOptions.PrivateMode), on);
-                notch.Show(new NotchState.Response(on ? "Private mode is on: everything stays on this PC." : "Private mode is off."));
-                _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => notch.Show(NotchState.Idle), TaskScheduler.Default);
+                var said = new NotchState.Response(on ? "Private mode is on: everything stays on this PC." : "Private mode is off.");
+                notch.Show(said);
+                _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => notch.RestIfShowing(said), TaskScheduler.Default);
             }),
+            Hunches(_host.Services.GetRequiredService<Jarvis.Core.Proactive.HunchCoach>(), "\uE82F"),
             new("\uE713", "Settings", null, () => dispatcher.TryEnqueue(() => ShowNotchSettings(null))),
         ];
 

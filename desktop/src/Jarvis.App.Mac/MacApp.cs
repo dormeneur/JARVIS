@@ -331,6 +331,10 @@ internal sealed partial class MacApp
     }
 
     /// <summary>The notch's home, as on Windows: Ask, Fill a form, Private on/off, Settings, then recent jobs and the last form.</summary>
+    /// <summary>The home's tile for Jarvis's guesses about the user (the sparkle icon): the stack first, asked on demand.</summary>
+    private static HomeItem HunchTile(Jarvis.Core.Proactive.HunchCoach hunches)
+        => new("hunch", "Hunches", hunches.Stacked > 0 ? $"{hunches.Stacked} waiting on your stack" : "Let me guess something about you", () => _ = hunches.AskNowAsync());
+
     private void ShowHome()
     {
         var notch = Services.GetRequiredService<INotchPresenter>();
@@ -348,9 +352,11 @@ internal sealed partial class MacApp
             {
                 var on = !privacy.PrivateMode;
                 SettingsFile.Set(PrivacyOptions.SectionName, nameof(PrivacyOptions.PrivateMode), on);
-                notch.Show(new NotchState.Response(on ? "Private mode is on: everything stays on this Mac." : "Private mode is off."));
-                _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => notch.Show(NotchState.Idle), TaskScheduler.Default);
+                var said = new NotchState.Response(on ? "Private mode is on: everything stays on this Mac." : "Private mode is off.");
+                notch.Show(said);
+                _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => notch.RestIfShowing(said), TaskScheduler.Default);
             }),
+            HunchTile(Services.GetRequiredService<Jarvis.Core.Proactive.HunchCoach>()),
             new("settings", "Settings", null, () => ShowNotchSettings(null)),
         ];
 

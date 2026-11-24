@@ -254,3 +254,19 @@ def test_new_tools_refuse_secrets(vault, tool, args):
     with pytest.raises(toolkit.ToolError):
         _call(tool, **args)
     assert (vault / "Secrets" / "keys.jvs").read_text() == "TOPSECRET"
+
+
+# --- "did you mean" on a missing file ---------------------------------------
+
+def test_missing_file_suggests_matches_by_name_words(vault):
+    (vault / "Notes" / "my_favourite_game.md").write_text("chess", encoding="utf-8")
+    with pytest.raises(toolkit.ToolError) as err:
+        run(toolkit.execute("read_file", {"path": "favourite game"}))
+    assert "Notes/my_favourite_game.md" in str(err.value)
+
+
+def test_suggestions_never_name_secrets_files(vault):
+    (vault / "Secrets" / "my_keys.md").write_text("x", encoding="utf-8")
+    with pytest.raises(toolkit.ToolError) as err:
+        run(toolkit.execute("read_file", {"path": "my keys"}))
+    assert "Secrets" not in str(err.value) and "off-limits" not in str(err.value)

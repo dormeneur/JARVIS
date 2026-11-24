@@ -104,6 +104,39 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public void AmbientNotch_Current_FollowsTheUserClosingThePanel()
+    {
+        using var manager = Manager(new ScriptedRuntime(Task.CompletedTask, new AgentEvent.Finished("ok")));
+        var inner = new RecordingNotch();
+        using var notch = new AmbientNotch(inner, manager);
+        var reply = new NotchState.Response("Open your calendar?", [new NotchAction("Open", () => { })]);
+
+        notch.Show(reply);
+        Assert.Same(reply, notch.Current);
+        inner.RestByUser(); // clicked "Open": the panel closed itself
+        // Before: Current stayed the reply, so hover-to-home and the proactive coach stayed locked out.
+        Assert.IsType<NotchState.IdleState>(notch.Current);
+    }
+
+    [Fact]
+    public void RestIfShowing_LeavesWhatCameAfterAlone()
+    {
+        using var manager = Manager(new ScriptedRuntime(Task.CompletedTask, new AgentEvent.Finished("ok")));
+        var inner = new RecordingNotch();
+        INotchPresenter notch = new AmbientNotch(inner, manager);
+        var answer = new NotchState.Response("Here's your answer");
+        var result = new NotchState.Response("Your job finished");
+
+        notch.Show(answer);
+        notch.Show(result); // a job's result arrives while the answer's caption timer runs
+        notch.RestIfShowing(answer);
+        Assert.Same(result, inner.Last);
+        notch.RestIfShowing(result);
+        Assert.IsType<NotchState.IdleState>(inner.Last);
+        ((IDisposable)notch).Dispose();
+    }
+
+    [Fact]
     public void FilesSavedBesideTheBrief_AreMovedIntoOutput()
     {
         var folder = Path.Combine(_jobs, "stray");
@@ -192,6 +225,17 @@ public sealed class AgentTests : IDisposable
                 {
                     return _last;
                 }
+            }
+        }
+
+        public NotchState Current => Last;
+
+        /// <summary>A click outside, Esc or a button: the real notch rests itself without a Show.</summary>
+        public void RestByUser()
+        {
+            lock (_gate)
+            {
+                _last = NotchState.Idle;
             }
         }
 

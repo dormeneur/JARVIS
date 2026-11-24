@@ -28,6 +28,13 @@ class AskRequest(BaseModel):
     options: Optional[AskOptions] = Field(default_factory=AskOptions)
 
 
+class SearchRequest(BaseModel):
+    """Raw hybrid-search request: ranked passages, no model call."""
+
+    query: str = Field(..., min_length=1, description="Keywords or a question")
+    top_k: int = Field(default=5, ge=1, le=10, description="How many passages to return")
+
+
 class ToolTranscriptEntry(BaseModel):
     """A tool call the user has already ruled on, replayed to resume the loop."""
 

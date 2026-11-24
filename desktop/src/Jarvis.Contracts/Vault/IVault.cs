@@ -47,7 +47,32 @@ public interface IVault
 
     /// <summary>Creates or replaces a vault file; the server versions it, so phones sync it as usual.</summary>
     Task WriteFileAsync(string path, string content, CancellationToken cancellationToken);
+
+    /// <summary>What was in front (app, window title, how long), for the vault's brain to learn from. Local only.</summary>
+    Task ObserveAsync(IReadOnlyList<ActivityObservation> samples, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>
+    /// The next hunch to ask in this session (the stack first), or none. Unprompted asks are capped per
+    /// day by the brain; <paramref name="onDemand"/> (the user asked for one) is not.
+    /// </summary>
+    Task<HunchBatch?> NextHunchAsync(string session, bool onDemand, CancellationToken cancellationToken) => Task.FromResult<HunchBatch?>(null);
+
+    /// <summary>Answers a hunch: <paramref name="choice"/> 0/1/2 = agree/partly/disagree, or the user's own words. Returns the file it went to.</summary>
+    Task<string?> AnswerHunchAsync(string id, int? choice, string? text, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+    /// <summary>Puts a hunch on the stack: not asked again this session, first in the next.</summary>
+    Task SkipHunchAsync(string id, string session, CancellationToken cancellationToken) => Task.CompletedTask;
 }
+
+/// <summary>A run of time with one window in front.</summary>
+public sealed record ActivityObservation(DateTimeOffset At, string App, string Title, int Seconds);
+
+/// <summary>A guess about the user and a one-tap question to test it (three answers: agree, partly, disagree).</summary>
+/// <param name="Evidence">What it noticed, for "Why?".</param>
+public sealed record Hunch(string Id, string Question, IReadOnlyList<string> Options, IReadOnlyList<string> Evidence);
+
+/// <param name="Stacked">Hunches the user put aside for later.</param>
+public sealed record HunchBatch(Hunch? Hunch, int Stacked, int LeftToday);
 
 /// <param name="Answer">What to put in the form, or <see langword="null"/> when the vault doesn't say.</param>
 /// <param name="Source">The vault file the answer came from.</param>

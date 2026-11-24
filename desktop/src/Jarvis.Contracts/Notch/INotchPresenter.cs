@@ -8,8 +8,23 @@ public interface INotchPresenter
 {
     void Show(NotchState state);
 
-    /// <summary>What was last asked to show (so unprompted news can wait until the notch is at rest).</summary>
+    /// <summary>
+    /// What the notch shows: the last state asked for, until the notch rests itself (a click outside,
+    /// Esc, a button), and then idle. Unprompted news waits for idle; a timed "back to rest" checks it.
+    /// </summary>
     NotchState Current => NotchState.Idle;
+
+    /// <summary>
+    /// Rests the notch if it still shows <paramref name="shown"/>: a timed "back to rest" must never close
+    /// what came after it (a job's result, the home, another question).
+    /// </summary>
+    void RestIfShowing(NotchState shown)
+    {
+        if (ReferenceEquals(Current, shown))
+        {
+            Show(NotchState.Idle);
+        }
+    }
 
     /// <summary>
     /// Brings back the panel the user last put aside (Esc or a click outside), exactly as it was;
