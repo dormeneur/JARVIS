@@ -31,6 +31,11 @@ internal sealed class NotchPresenter : INotchPresenter
     private NotchWindow? _window;
     private NotchSurface? _surface;
     private TextBlock? _responseText;
+
+    /// <summary>A card's label (above the text) and footnote (below it); collapsed for a plain reply.</summary>
+    private TextBlock? _cardLabel;
+    private TextBlock? _cardNote;
+    private StackPanel? _responseBody;
     private Grid? _responseView;
     private TextBox? _composer;
 
@@ -68,6 +73,21 @@ internal sealed class NotchPresenter : INotchPresenter
     private Button? _chatMode;
     private NotchState _current = NotchState.Idle;
     private Button? _close;
+
+    /// <summary>Top left of a panel opened from the home: back to the home (mirrors the × top right).</summary>
+    private Button? _back;
+
+    /// <summary>The home's switch at the top right (private mode), flipped in place.</summary>
+    private Button? _toggle;
+    private bool _toggleOn;
+    private HomeToggle? _shownToggle;
+
+    /// <summary>The panel on screen was opened from the home (directly, or one after another from it).</summary>
+    private bool _backToHome;
+
+    /// <summary>A button closes its panel a moment before its action opens the next: the way back survives that gap.</summary>
+    private DateTimeOffset _backHeldUntil;
+    private static readonly TimeSpan BackHold = TimeSpan.FromSeconds(2);
     private DispatcherQueueTimer? _clickAway;
     private bool _wasDown;
 
@@ -105,6 +125,7 @@ internal sealed class NotchPresenter : INotchPresenter
         BuildPillButton(_window.ContentArea);
         BuildClose(_window.ContentArea);
         BuildModes(_window.ContentArea);
+        BuildBackAndToggle(_window.ContentArea);
         _caption = new TextBlock
         {
             FontSize = 12,
@@ -259,7 +280,7 @@ internal sealed class NotchPresenter : INotchPresenter
         }
 
         var actions = (state as NotchState.Response)?.Actions ?? [];
-        ShowActions(actions);
+        ShowActions(actions, frame.Width);
         // Every open panel takes clicks: it has a close button.
         (double, double)? clickable = state is NotchState.Response or NotchState.Form or NotchState.Home or NotchState.EventDraft or NotchState.Settings ? (frame.Width, frame.Height) : null;
         if (clickable != _clickable)
@@ -345,6 +366,7 @@ internal sealed class NotchPresenter : INotchPresenter
             if (state is NotchState.Response response)
             {
                 _responseText.Text = response.Text;
+                ShowCard(response.Card);
             }
 
             area.Width = frame.Width - (2 * NotchLayout.ShoulderRadius);
@@ -374,6 +396,7 @@ internal sealed class NotchPresenter : INotchPresenter
             area.Opacity = 0;
         }
 
+        TrackBack(state);
         _current = state;
         Volatile.Write(ref _shown, state);
         ShowModes(state);
@@ -382,6 +405,37 @@ internal sealed class NotchPresenter : INotchPresenter
         {
             // The form panel has its own, in its header; the composer and every other open panel get this one.
             _close.Visibility = state is NotchState.Response or NotchState.Home or NotchState.Composing or NotchState.EventDraft or NotchState.Settings ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        var back = _backToHome && state is NotchState.Response or NotchState.Settings or NotchState.EventDraft;
+        if (_back is not null)
+        {
+            _back.Visibility = back ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // The text steps aside for the back arrow as it does for the ×.
+        if (_responseBody is not null)
+        {
+            _responseBody.Margin = new Thickness(NotchLayout.ContentHorizontalPadding + (back ? 22 : 0), ContentTopPadding, NotchLayout.ContentHorizontalPadding + 22, 15);
+        }
+        _settingsView?.ShowBack(back && state is NotchState.Settings);
+        if (_toggle is not null)
+        {
+            if (state is NotchState.Home { Toggle: { } toggle })
+            {
+                if (!ReferenceEquals(toggle, _shownToggle))
+                {
+                    _shownToggle = toggle; // a refresh of the same home keeps what the user just flipped
+                    _toggleOn = toggle.On;
+                }
+
+                ShowToggle(toggle);
+                _toggle.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                _toggle.Visibility = Visibility.Collapsed;
+            }
         }
 
         if (_pillButton is not null)
@@ -526,6 +580,108 @@ internal sealed class NotchPresenter : INotchPresenter
         ToolTipService.SetToolTip(_close, "Close (Esc)");
         _close.Click += (_, _) => CloseNow();
         area.Children.Add(_close);
+    }
+
+    private void BuildBackAndToggle(Grid area)
+    {
+        var icons = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets");
+        _back = new Button
+        {
+            Content = new FontIcon { Glyph = "", FontFamily = icons, FontSize = 10 },
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(11),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(8, 6, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_back, "Back");
+        ToolTipService.SetToolTip(_back, "Back");
+        _back.Click += (_, _) =>
+        {
+            if (_current is NotchState.Settings)
+            {
+                _settingsView?.Hide();
+                _window?.EndTyping();
+            }
+
+            ((App)Application.Current).ShowHome();
+        };
+        area.Children.Add(_back);
+
+        _toggle = new Button
+        {
+            Height = 24,
+            Padding = new Thickness(10, 0, 10, 0),
+            CornerRadius = new CornerRadius(12),
+            BorderThickness = new Thickness(1),
+            BorderBrush = NotchFormView.GlassEdge,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 8, 36, 0), // left of the ×
+            Visibility = Visibility.Collapsed,
+        };
+        _toggle.Click += (_, _) =>
+        {
+            if (_current is NotchState.Home { Toggle: { } toggle })
+            {
+                _toggleOn = !_toggleOn;
+                ShowToggle(toggle);
+                toggle.Flip(_toggleOn);
+            }
+        };
+        area.Children.Add(_toggle);
+    }
+
+    /// <summary>The switch as it is now: lit with the reply blue while on.</summary>
+    private void ShowToggle(HomeToggle toggle)
+    {
+        if (_toggle is null)
+        {
+            return;
+        }
+
+        _toggle.Background = _toggleOn ? new SolidColorBrush(Windows.UI.Color.FromArgb(0x77, 0x33, 0x80, 0xFF)) : NotchFormView.Glass;
+        _toggle.Content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Children =
+            {
+                new FontIcon { Glyph = _toggleOn ? toggle.Glyph : "", FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"), FontSize = 11, Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"] },
+                new TextBlock { Text = $"{toggle.Label}: {(_toggleOn ? "on" : "off")}", FontSize = 11, FontFamily = (FontFamily)Application.Current.Resources["FontText"], Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"], VerticalAlignment = VerticalAlignment.Center },
+            },
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_toggle, $"{toggle.Label} {(_toggleOn ? "on" : "off")}");
+        ToolTipService.SetToolTip(_toggle, toggle.Detail);
+    }
+
+    /// <summary>Whether the panel coming up was opened from the home, so it gets a way back there.</summary>
+    private void TrackBack(NotchState state)
+    {
+        var now = DateTimeOffset.UtcNow;
+        switch (state)
+        {
+            case NotchState.Home or NotchState.Composing or NotchState.Listening or NotchState.Dictating or NotchState.Form:
+                _backToHome = false; // the home itself, the chat (it has its own switch), a new turn, the form (its own header)
+                _backHeldUntil = default;
+                break;
+            case NotchState.IdleState or NotchState.Working or NotchState.Parked:
+                if (_backToHome)
+                {
+                    _backHeldUntil = now + BackHold;
+                }
+
+                _backToHome = false;
+                break;
+            default: // a reply, Settings, an event, or Thinking on the way to one
+                _backToHome = _current is NotchState.Home || _backToHome || now < _backHeldUntil;
+                break;
+        }
     }
 
     /// <summary>Two round buttons in a glass pill, top left: the home, and the chat.</summary>
@@ -814,8 +970,11 @@ internal sealed class NotchPresenter : INotchPresenter
         }
     }
 
-    /// <summary>Rebuilds the button row: 24 DIP pills, the first one filled. A click runs it and closes the panel.</summary>
-    private void ShowActions(IReadOnlyList<NotchAction> actions)
+    /// <summary>
+    /// Rebuilds the buttons: 24 DIP pills, the first one filled. A click runs it and closes the panel.
+    /// The panel is as wide as they need (NotchLayout); what still doesn't fit wraps onto more rows.
+    /// </summary>
+    private void ShowActions(IReadOnlyList<NotchAction> actions, double panelWidth)
     {
         if (_actions is null)
         {
@@ -824,8 +983,20 @@ internal sealed class NotchPresenter : INotchPresenter
 
         _actions.Children.Clear();
         _actions.Visibility = actions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var rows = NotchLayout.Rows([.. actions.Select(action => NotchLayout.ActionWidth(action.Label))], NotchLayout.ActionSpacing, panelWidth - NotchLayout.PanelChrome);
+        StackPanel? row = null;
+        var left = 0;
+        var next = 0;
         for (var i = 0; i < actions.Count; i++)
         {
+            if (left == 0)
+            {
+                left = rows[next++];
+                row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = NotchLayout.ActionSpacing };
+                _actions.Children.Add(row);
+            }
+
+            left--;
             var action = actions[i];
             var button = new Button
             {
@@ -847,7 +1018,7 @@ internal sealed class NotchPresenter : INotchPresenter
                 Apply(NotchState.Idle);
                 _ = Task.Run(action.Invoke);
             };
-            _actions.Children.Add(button);
+            row!.Children.Add(button);
         }
     }
 
@@ -933,6 +1104,23 @@ internal sealed class NotchPresenter : INotchPresenter
         _ = Task.Run(submit ? () => composing.Submit(text) : composing.Dismiss);
     }
 
+    /// <summary>A card (a hunch): label, larger text, footnote. A plain reply: the text as always.</summary>
+    private void ShowCard(ResponseCard? card)
+    {
+        if (_responseText is null || _cardLabel is null || _cardNote is null)
+        {
+            return;
+        }
+
+        _responseText.FontSize = card is null ? 13 : 15;
+        _responseText.LineHeight = card is null ? 18 : 21;
+        _responseText.FontWeight = card is null ? Microsoft.UI.Text.FontWeights.Normal : Microsoft.UI.Text.FontWeights.SemiBold;
+        _cardLabel.Text = card?.Label.ToUpperInvariant() ?? string.Empty;
+        _cardLabel.Visibility = card is null ? Visibility.Collapsed : Visibility.Visible;
+        _cardNote.Text = card?.Footnote ?? string.Empty;
+        _cardNote.Visibility = card?.Footnote is { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void BuildResponseContent(Grid area)
     {
         _responseText = new TextBlock
@@ -942,13 +1130,39 @@ internal sealed class NotchPresenter : INotchPresenter
             LineHeight = 18,
             FontFamily = (FontFamily)Application.Current.Resources["FontText"],
             Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"],
+        };
+        _cardLabel = new TextBlock
+        {
+            FontSize = 10.5,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            CharacterSpacing = 80,
+            FontFamily = (FontFamily)Application.Current.Resources["FontText"],
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x7F, 0xB2, 0xFF)),
+            Margin = new Thickness(0, 4, 0, 6),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Visibility = Visibility.Collapsed,
+        };
+        _cardNote = new TextBlock
+        {
+            FontSize = 11.5,
+            LineHeight = 16,
+            FontStyle = Windows.UI.Text.FontStyle.Italic,
+            TextWrapping = TextWrapping.Wrap,
+            FontFamily = (FontFamily)Application.Current.Resources["FontText"],
+            Foreground = (Brush)Application.Current.Resources["TextSecondaryBrush"],
+            Margin = new Thickness(0, 6, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        _responseBody = new StackPanel
+        {
             Margin = new Thickness(NotchLayout.ContentHorizontalPadding, ContentTopPadding, NotchLayout.ContentHorizontalPadding + 22, 15),
+            Children = { _cardLabel, _responseText, _cardNote },
         };
 
         area.Opacity = 0;
         area.OpacityTransition = new ScalarTransition { Duration = ContentTransition };
         area.ScaleTransition = new Vector3Transition { Duration = ContentTransition };
-        var scroller = new ScrollViewer { Content = _responseText, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden };
+        var scroller = new ScrollViewer { Content = _responseBody, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden };
         var fade = NotchTopFade.Create();
         fade.Opacity = 0;
 
@@ -957,11 +1171,11 @@ internal sealed class NotchPresenter : INotchPresenter
         _responseView = new Grid();
         _responseView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         _responseView.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        _actions = new StackPanel
+        _actions = new StackPanel // rows of buttons (ShowActions)
         {
-            Orientation = Orientation.Horizontal,
+            Orientation = Orientation.Vertical,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8,
+            Spacing = NotchLayout.ActionBarHeight - 24,
             Margin = new Thickness(NotchLayout.ContentHorizontalPadding, 0, NotchLayout.ContentHorizontalPadding, 14),
         };
         Grid.SetRow(_actions, 1);

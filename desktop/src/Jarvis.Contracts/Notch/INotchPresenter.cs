@@ -79,7 +79,8 @@ public abstract record NotchState
     /// are buttons under it; clicking one runs it and closes the panel.
     /// </summary>
     /// <param name="KeepOnClickAway">A question waiting for an answer (approve a step): a click elsewhere doesn't close it.</param>
-    public sealed record Response(string Text, IReadOnlyList<NotchAction>? Actions = null, bool KeepOnClickAway = false) : NotchState;
+    /// <param name="Card">Shown as a card (a hunch): a small label above, the text larger, a quiet footnote below.</param>
+    public sealed record Response(string Text, IReadOnlyList<NotchAction>? Actions = null, bool KeepOnClickAway = false, ResponseCard? Card = null) : NotchState;
 
     /// <summary>
     /// Answers for a web form, one card per question, each with Copy. The panel takes clicks (and
@@ -97,7 +98,8 @@ public abstract record NotchState
     /// what Jarvis did lately. It closes when the mouse leaves it, or with Escape.
     /// </summary>
     /// <param name="Hint">One line under the greeting: how to talk to Jarvis ("Hold Ctrl + Alt and tell me…").</param>
-    public sealed record Home(string Greeting, string Hint, IReadOnlyList<HomeItem> Actions, IReadOnlyList<HomeItem> Recent, Action Dismiss) : NotchState;
+    /// <param name="Toggle">A small switch at the top (private mode), flipped in place.</param>
+    public sealed record Home(string Greeting, string Hint, IReadOnlyList<HomeItem> Actions, IReadOnlyList<HomeItem> Recent, Action Dismiss, HomeToggle? Toggle = null) : NotchState;
 
     /// <summary>
     /// Settings, inside the notch: the sections down the side and the chosen page beside them.
@@ -115,9 +117,16 @@ public abstract record NotchState
     public sealed record EventDraft(Jarvis.Contracts.Calendar.CalendarEvent Event, string Destination, Action<Jarvis.Contracts.Calendar.CalendarEvent> Add, Action Cancel) : NotchState;
 }
 
+/// <summary>A reply drawn as a card: <paramref name="Label"/> above (e.g. "A HUNCH"), <paramref name="Footnote"/> below in small print.</summary>
+public sealed record ResponseCard(string Label, string? Footnote = null);
+
+/// <summary>A switch at the top of the home: shown lit while on; <paramref name="Flip"/> gets the new value.</summary>
+public sealed record HomeToggle(string Glyph, string Label, string Detail, bool On, Action<bool> Flip);
+
 /// <summary>A tile or row on the notch's home. <paramref name="Glyph"/> is a Segoe Fluent Icons character.</summary>
 /// <param name="Second">A second thing to do with it, as a small button on its card (Retry a job that didn't finish).</param>
-public sealed record HomeItem(string Glyph, string Title, string? Detail, Action Invoke, NotchAction? Second = null);
+/// <param name="Remove">The card's ×: takes it off the home for good (its files stay).</param>
+public sealed record HomeItem(string Glyph, string Title, string? Detail, Action Invoke, NotchAction? Second = null, Action? Remove = null);
 
 /// <summary>What the form panel's buttons do.</summary>
 /// <param name="Save">After the user confirms: keep the answers they typed or changed; returns what to say.</param>

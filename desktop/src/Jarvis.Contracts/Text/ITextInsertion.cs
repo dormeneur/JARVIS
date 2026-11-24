@@ -20,6 +20,27 @@ public interface ITextInsertion
     /// app without UI Automation). Used to notice the user correcting dictated words.
     /// </summary>
     Task<string?> ReadAsync(IFocusedField field, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The text selected in the app in front, or null when nothing is (or it can't be read). Never
+    /// from a password field; the clipboard, if borrowed to copy it, is given back.
+    /// </summary>
+    Task<TextSelection?> ReadSelectionAsync(CancellationToken cancellationToken) => Task.FromResult<TextSelection?>(null);
+}
+
+/// <summary>Text the user selected, and where: the app (or page title) and, in a browser, the page's address.</summary>
+public sealed record TextSelection(string Text, string Source, string? Url = null);
+
+/// <summary>What the user asked Jarvis to do with a selection.</summary>
+public enum SelectionAction
+{
+    /// <summary>Show the choices (double-tap Ctrl with text selected).</summary>
+    Menu,
+    Explain,
+    Summarise,
+
+    /// <summary>Keep it in the vault, filed where it belongs.</summary>
+    Save,
 }
 
 /// <summary>A text field captured by <see cref="ITextInsertion.CaptureFocusAsync"/>.</summary>

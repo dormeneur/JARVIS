@@ -584,6 +584,63 @@ public sealed class CompanionSessionTests
         Assert.Contains(fakes.Notch.Shown, state => state is NotchState.Response { Text: var text } && text.StartsWith("Okay, I kept it on this PC", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task DoubleTapCtrl_WithTextSelected_OffersWhatToDoWithIt()
+    {
+        var fakes = new Fakes("unused", "unused") { Selection = new("Rust ownership means each value has one owner.", "Rust Book - Chrome") };
+        await using var session = fakes.CreateSession();
+
+        session.Compose();
+        await WaitForAsync(() => fakes.Notch.Shown.OfType<NotchState.Response>().Any());
+
+        var menu = fakes.Notch.Shown.OfType<NotchState.Response>().Last();
+        Assert.Equal(["Explain", "Summarise", "Save to Jarvis", "Ask about it"], menu.Actions!.Select(a => a.Label));
+        Assert.Equal("✦  Selected in Rust Book - Chrome", menu.Card!.Label);
+        Assert.DoesNotContain(fakes.Notch.Shown, s => s is NotchState.Composing);
+    }
+
+    [Fact]
+    public async Task DoubleTapCtrl_WithNothingSelected_OpensTheTextBox()
+    {
+        var fakes = new Fakes("unused", "unused");
+        await using var session = fakes.CreateSession();
+
+        session.Compose();
+        await WaitForAsync(() => fakes.Notch.Shown.OfType<NotchState.Composing>().Any());
+    }
+
+    [Fact]
+    public async Task ExplainingASelection_SendsTheTextAndNoScreenshot()
+    {
+        var fakes = new Fakes("unused", "It means one owner.");
+        await using var session = fakes.CreateSession();
+
+        session.Selected(new("each value has one owner", "Notepad"), Jarvis.Contracts.Text.SelectionAction.Explain);
+        await fakes.Player.Finished.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Empty(fakes.Brain.LastTurn!.Images); // screen access is on, but a selection needs only its text
+        Assert.Contains("selected in Notepad", fakes.Brain.LastTurn.UserText, StringComparison.Ordinal);
+        Assert.Contains("each value has one owner", fakes.Brain.LastTurn.UserText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ALongSelection_IsTrimmedForTheQuestion()
+    {
+        var request = CompanionSession.SelectionRequest("Explain this", new(new string('x', 10_000), "Word"));
+        Assert.True(request.Length < 6200);
+        Assert.EndsWith(" …\n\"\"\"", request, StringComparison.Ordinal);
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition)
+    {
+        for (var i = 0; i < 300 && !condition(); i++)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        Assert.True(condition());
+    }
+
     private sealed class Fakes(string transcript, string reply)
     {
         public LocalTurns? Local { get; private set; }
@@ -632,11 +689,14 @@ public sealed class CompanionSessionTests
 
         public FakeAgents Agents { get; } = new();
 
+        /// <summary>What's selected in the app in front (double-tap Ctrl reads it); null: nothing.</summary>
+        public Jarvis.Contracts.Text.TextSelection? Selection { get; set; }
+
         public CompanionSession CreateSession(TimeSpan? maxRecording = null)
         {
             Brain.Delay = BrainDelay;
             var options = new OptionsMonitor(new CompanionOptions { CaptionSeconds = 0 });
-            var services = new CompanionServices(Microphone, new FakeStt(transcript), new FakeCapture(), Brain, Speech, Player, Cursor, Drawing, Notch, Agents, Sounds, Routines, Privacy, History, Control, Browser, new BrowserMonitor(BrowserOptions), Local);
+            var services = new CompanionServices(Microphone, new FakeStt(transcript), new FakeCapture(), Brain, Speech, Player, Cursor, Drawing, Notch, Agents, Sounds, Routines, Privacy, History, Control, Browser, new BrowserMonitor(BrowserOptions), Local, _ => Task.FromResult(Selection));
             return new CompanionSession(services, options, new CursorMonitor(), TimeProvider.System, NullLogger<CompanionSession>.Instance)
             {
                 MaxRecording = maxRecording ?? TimeSpan.FromSeconds(120),

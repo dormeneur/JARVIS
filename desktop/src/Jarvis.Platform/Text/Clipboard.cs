@@ -71,6 +71,34 @@ internal static class Clipboard
         }
     }
 
+    /// <summary>The clipboard's text (Unicode), or null when it holds none.</summary>
+    public static unsafe string? GetText()
+    {
+        const uint UnicodeText = 13; // CF_UNICODETEXT
+        using var _ = Open();
+        var handle = PInvoke.GetClipboardData(UnicodeText);
+        if (handle.IsNull)
+        {
+            return null;
+        }
+
+        var memory = new HGLOBAL(handle.Value);
+        var pointer = PInvoke.GlobalLock(memory);
+        if (pointer is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return new string((char*)pointer);
+        }
+        finally
+        {
+            PInvoke.GlobalUnlock(memory);
+        }
+    }
+
     /// <summary>Replaces the clipboard with <paramref name="text"/>, hidden from clipboard history.</summary>
     public static void SetText(string text)
     {

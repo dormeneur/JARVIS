@@ -56,6 +56,10 @@ public sealed partial class App : Application
 
         _host.Services.GetRequiredService<Notch.NotchPresenter>().Escape = () => _host.Services.GetRequiredService<CompanionSession>().Cancel();
 
+        // The browser's right-click "Jarvis" menu on selected text: explain, summarise, save.
+        _host.Services.GetRequiredService<Jarvis.Contracts.Browser.IBrowserLink>().SelectionPicked +=
+            (selection, action) => _host.Services.GetRequiredService<CompanionSession>().Selected(selection, action);
+
         // Resting the mouse on the sleeping notch opens its home.
         var overlay = _host.Services.GetRequiredService<Jarvis.Platform.Overlay.OverlayService>();
         var notch = _host.Services.GetRequiredService<INotchPresenter>();
@@ -401,6 +405,9 @@ public sealed partial class App : Application
     }
 #endif
 
+    /// <summary>The Settings section (and home tile) for what Jarvis has learned about the user.</summary>
+    internal const string AboutMe = "About me";
+
     /// <summary>The home's tile for Jarvis's guesses about the user: the stack first, asked on demand.</summary>
     internal static HomeItem Hunches(Jarvis.Core.Proactive.HunchCoach hunches, string glyph)
         => new(glyph, "Hunches", hunches.Stacked > 0 ? $"{hunches.Stacked} waiting on your stack" : "Let me guess something about you", () => _ = hunches.AskNowAsync());
@@ -417,41 +424,41 @@ public sealed partial class App : Application
         var greeting = $"{(hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening")}{(name is null ? string.Empty : $", {name}")}.";
         var talk = _host.Services.GetRequiredService<IOptionsMonitor<Jarvis.Core.Input.ShortcutOptions>>().CurrentValue.Talk;
         var hint = $"Hold {talk} and tell me what to take off your plate.";
+        // Chat is the switch at the top left, private mode the one at the top right: tiles are for going places.
         HomeItem[] actions =
         [
-            new("\uE8BD", "Ask Jarvis", "Type a question (or double-tap Ctrl)", companion.Compose),
             new("\uE70F", "Fill a form", "Fill the form in your browser from your vault", companion.FillForm),
-            new(privacy.PrivateMode ? "\uE72E" : "\uE785", privacy.PrivateMode ? "Private: on" : "Private: off", "Keep everything on this PC", () =>
-            {
-                var on = !privacy.PrivateMode;
-                SettingsFile.Set(PrivacyOptions.SectionName, nameof(PrivacyOptions.PrivateMode), on);
-                var said = new NotchState.Response(on ? "Private mode is on: everything stays on this PC." : "Private mode is off.");
-                notch.Show(said);
-                _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => notch.RestIfShowing(said), TaskScheduler.Default);
-            }),
             Hunches(_host.Services.GetRequiredService<Jarvis.Core.Proactive.HunchCoach>(), "\uE82F"),
+            new("\uE77B", AboutMe, "What Jarvis has learned about you: read and edit it", () => dispatcher.TryEnqueue(() => ShowNotchSettings(AboutMe))),
             new("\uE713", "Settings", null, () => dispatcher.TryEnqueue(() => ShowNotchSettings(null))),
         ];
+        var privateMode = new HomeToggle("\uE72E", "Private", "Keep everything on this PC: nothing goes to Claude", privacy.PrivateMode,
+            on => SettingsFile.Set(PrivacyOptions.SectionName, nameof(PrivacyOptions.PrivateMode), on));
 
         var agents = _host.Services.GetRequiredService<IAgentJobs>();
         List<HomeItem> Recent()
         {
             var recent = new List<HomeItem>();
-            var lastForm = _host.Services.GetRequiredService<Jarvis.Core.Vault.FormFiller>().LastTitle;
-            if (lastForm is { Length: > 0 })
+            var forms = _host.Services.GetRequiredService<Jarvis.Core.Vault.FormFiller>();
+            if (forms.LastTitle is { Length: > 0 } lastForm)
             {
-                recent.Add(new("\uE70F", lastForm, "Fill again", companion.FillForm));
+                recent.Add(new("\uE70F", lastForm, "Fill again", companion.FillForm, Remove: () =>
+                {
+                    forms.ForgetLast();
+                    Refresh();
+                }));
             }
 
-            foreach (var job in agents.Jobs.Take(9)) // the carousel scrolls through them
+            foreach (var job in agents.Jobs.Take(12)) // the carousel scrolls through them
             {
                 var retry = job.Brief is { } brief ? new NotchAction("Retry", () => agents.Start(brief)) : null;
+                var remove = () => agents.Dismiss(job.Id); // its Changed refreshes the home
                 recent.Add(job.Status switch
                 {
-                    AgentJobStatus.Running or AgentJobStatus.Queued => new HomeItem("\uE916", job.Title, job.Activity ?? "Working…", () => notch.Show(NotchState.Idle)),
-                    AgentJobStatus.Finished => new HomeItem("\uE73E", job.Title, "Ready to view", () => OpenFolder(Path.Combine(job.Folder, "output"))),
-                    AgentJobStatus.Cancelled => new HomeItem("\uE7BA", job.Title, "Stopped before it finished", () => OpenFolder(job.Folder), retry),
-                    _ => new HomeItem("\uE7BA", job.Title, "Didn't finish", () => OpenFolder(job.Folder), retry),
+                    AgentJobStatus.Running or AgentJobStatus.Queued => new HomeItem("\uE916", job.Title, job.Activity ?? "Working…", () => notch.Show(NotchState.Idle), Remove: remove),
+                    AgentJobStatus.Finished => new HomeItem("\uE73E", job.Title, "Ready to view", () => OpenFolder(Path.Combine(job.Folder, "output")), Remove: remove),
+                    AgentJobStatus.Cancelled => new HomeItem("\uE7BA", job.Title, "Stopped before it finished", () => OpenFolder(job.Folder), retry, remove),
+                    _ => new HomeItem("\uE7BA", job.Title, "Didn't finish", () => OpenFolder(job.Folder), retry, remove),
                 });
             }
 
@@ -460,14 +467,21 @@ public sealed partial class App : Application
 
         // The cards follow the jobs while the home is open: a running one ticks on, a finished one turns ready.
         NotchState.Home? shown = null;
+        bool Refresh()
+        {
+            if (shown is null || !ReferenceEquals(notch.Current, shown))
+            {
+                return false;
+            }
+
+            shown = shown with { Recent = Recent() };
+            notch.Show(shown);
+            return true;
+        }
+
         void Changed(AgentJobInfo _)
         {
-            if (shown is not null && ReferenceEquals(notch.Current, shown))
-            {
-                shown = shown with { Recent = Recent() };
-                notch.Show(shown);
-            }
-            else
+            if (!Refresh())
             {
                 agents.Changed -= Changed;
             }
@@ -477,7 +491,7 @@ public sealed partial class App : Application
         {
             agents.Changed -= Changed;
             notch.Show(NotchState.Idle);
-        });
+        }, privateMode);
         agents.Changed += Changed;
         notch.Show(shown);
     }
@@ -596,7 +610,7 @@ public sealed partial class App : Application
         {
             if (_chatWindow is null)
             {
-                _chatWindow = new Notch.ChatWindow(_host.Services.GetRequiredService<ConversationLog>(), _host.Services.GetRequiredService<CompanionSession>().Ask);
+                _chatWindow = new Notch.ChatWindow(_host.Services.GetRequiredService<ConversationLog>(), text => _host.Services.GetRequiredService<CompanionSession>().Ask(text));
                 _chatWindow.Closed += (_, _) => _chatWindow = null;
             }
 

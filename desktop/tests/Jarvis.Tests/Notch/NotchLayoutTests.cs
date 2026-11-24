@@ -73,5 +73,46 @@ public sealed class NotchLayoutTests
         var withButtons = NotchLayout.FrameFor(new NotchState.Response("Done.", [new("Open", () => { })]));
 
         Assert.Equal(plain.Height + NotchLayout.ActionBarHeight, withButtons.Height);
+        Assert.Equal(NotchLayout.ExpandedWidth, withButtons.Width); // a few buttons: the usual width
+    }
+
+    [Fact]
+    public void HomeWithFiveTiles_WidensSoAllFitInOneRow()
+    {
+        string[] titles = ["Ask Jarvis", "Fill a form", "Private: off", "Hunches", "Settings"];
+        var home = new NotchState.Home("Evening.", "Hold Ctrl + Alt…", [.. titles.Select(t => new HomeItem("x", t, null, () => { }))], [], () => { });
+        var frame = NotchLayout.FrameFor(home);
+
+        var needed = titles.Sum(NotchLayout.HomePillWidth) + (NotchLayout.HomePillSpacing * 4) + NotchLayout.PanelChrome;
+        Assert.True(frame.Width >= needed, $"{frame.Width} < {needed}: the first and last tiles would be cut off");
+        Assert.Equal(NotchLayout.HomeHeight, frame.Height); // still one row
+    }
+
+    [Fact]
+    public void HunchCard_FitsEveryButton_WrappingWhatTheWidestPanelCannotHold()
+    {
+        string[] labels = ["Yes, JARVIS is my sidekick.", "Sort of, but mostly for fun", "No, I'm just learning", "In my words", "Why?", "Skip"];
+        var card = new NotchState.Response("I have a hunch… you code late to avoid distractions?", [.. labels.Select(l => new NotchAction(l, () => { }))]);
+        var frame = NotchLayout.FrameFor(card);
+
+        var widths = labels.Select(NotchLayout.ActionWidth).ToList();
+        var rows = NotchLayout.Rows(widths, NotchLayout.ActionSpacing, frame.Width - NotchLayout.PanelChrome);
+        Assert.Equal(NotchLayout.MaxPanelWidth, frame.Width);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(labels.Length, rows.Sum());
+        var at = 0;
+        foreach (var count in rows) // no row is wider than the panel's room
+        {
+            Assert.True(widths.Skip(at).Take(count).Sum() + (NotchLayout.ActionSpacing * (count - 1)) <= frame.Width - NotchLayout.PanelChrome);
+            at += count;
+        }
+    }
+
+    [Fact]
+    public void Rows_FillEachRowFirst_AndGiveAnOversizedItemItsOwn()
+    {
+        Assert.Equal([2, 1], NotchLayout.Rows([40, 40, 40], 10, 100));
+        Assert.Equal([1, 1], NotchLayout.Rows([500, 20], 10, 100));
+        Assert.Empty(NotchLayout.Rows([], 10, 100));
     }
 }

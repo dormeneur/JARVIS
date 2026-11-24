@@ -14,6 +14,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public IReadOnlyList<SettingsSection> Sections { get; } =
     [
         new("General", "", typeof(GeneralPage)),
+        new(App.AboutMe, "", typeof(AboutMePage)),
         new("Privacy & memory", "", typeof(PrivacyPage)),
         new("Voice", "", typeof(VoicePage)),
         new("Microphone", "", typeof(MicrophonePage)),

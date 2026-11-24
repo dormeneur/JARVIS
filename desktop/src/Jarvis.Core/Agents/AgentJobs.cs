@@ -20,6 +20,11 @@ public interface IAgentJobs
     AgentJobInfo Start(string brief);
 
     void Cancel(Guid id);
+
+    /// <summary>Takes a job off the list for good (stopping it if it runs); its folder and files stay.</summary>
+    void Dismiss(Guid id)
+    {
+    }
 }
 
 /// <param name="Brief">What the job was asked to do, so it can be run again.</param>
@@ -74,6 +79,7 @@ public sealed partial class AgentJobManager : IAgentJobs, IDisposable
     private readonly SemaphoreSlim _slots;
     private readonly ConcurrentDictionary<Guid, AgentJobInfo> _jobs = new();
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _running = new();
+    private readonly ConcurrentDictionary<Guid, byte> _dismissed = new();
 
     private readonly IConnectorStore? _connectors;
 
@@ -86,6 +92,54 @@ public sealed partial class AgentJobManager : IAgentJobs, IDisposable
         _time = time;
         _logger = logger;
         _slots = new SemaphoreSlim(Math.Max(1, _options.MaximumConcurrent));
+        foreach (var job in Past(_options.JobsDirectory, PastKept))
+        {
+            _jobs[job.Id] = job;
+        }
+    }
+
+    /// <summary>Jobs from earlier runs shown again after a restart.</summary>
+    private const int PastKept = 12;
+
+    /// <summary>
+    /// The newest job folders from earlier runs, so the home's cards survive a restart: finished ones
+    /// (they have result.md) can be opened; the rest stopped when Jarvis quit, and can be retried.
+    /// </summary>
+    internal static IReadOnlyList<AgentJobInfo> Past(string jobsDirectory, int count)
+    {
+        if (!Directory.Exists(jobsDirectory))
+        {
+            return [];
+        }
+
+        var past = new List<AgentJobInfo>();
+        foreach (var folder in Directory.EnumerateDirectories(jobsDirectory).OrderByDescending(Path.GetFileName, StringComparer.Ordinal).Take(count))
+        {
+            var briefFile = Path.Combine(folder, "brief.md");
+            if (!File.Exists(briefFile) || File.Exists(Path.Combine(folder, DismissedMarker)))
+            {
+                continue;
+            }
+
+            try
+            {
+                var brief = File.ReadAllText(briefFile);
+                var resultFile = Path.Combine(folder, "result.md");
+                var name = Path.GetFileName(folder);
+                var started = name.Length >= 15 && DateTime.TryParseExact(name[..15], "yyyyMMdd-HHmmss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var at)
+                    ? new DateTimeOffset(at)
+                    : new DateTimeOffset(Directory.GetCreationTime(folder));
+                past.Add(File.Exists(resultFile)
+                    ? new AgentJobInfo(Guid.NewGuid(), Title(brief), folder, AgentJobStatus.Finished, started, Result: File.ReadAllText(resultFile), Brief: brief)
+                    : new AgentJobInfo(Guid.NewGuid(), Title(brief), folder, AgentJobStatus.Cancelled, started, Brief: brief));
+            }
+            catch (IOException)
+            {
+                // A folder being written or removed right now: skip it.
+            }
+        }
+
+        return past;
     }
 
     public event Action<AgentJobInfo>? Changed;
@@ -117,6 +171,33 @@ public sealed partial class AgentJobManager : IAgentJobs, IDisposable
         {
             cancellation.Cancel();
         }
+    }
+
+    /// <summary>A marker in the job's folder: <see cref="Past"/> skips it, so the card stays gone after a restart.</summary>
+    internal const string DismissedMarker = ".dismissed";
+
+    public void Dismiss(Guid id)
+    {
+        _dismissed[id] = 0;
+        Cancel(id);
+        if (!_jobs.TryRemove(id, out var job))
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(Path.Combine(job.Folder, DismissedMarker), string.Empty);
+        }
+        catch (IOException)
+        {
+            // The card is gone for now; it may come back after a restart.
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        Changed?.Invoke(job with { Status = AgentJobStatus.Cancelled });
     }
 
     public void Dispose()
@@ -221,6 +302,11 @@ public sealed partial class AgentJobManager : IAgentJobs, IDisposable
 
     private AgentJobInfo Update(AgentJobInfo job)
     {
+        if (_dismissed.ContainsKey(job.Id))
+        {
+            return job; // a running job the user closed: its last word (cancelled) mustn't bring the card back
+        }
+
         _jobs[job.Id] = job;
         Changed?.Invoke(job);
         return job;

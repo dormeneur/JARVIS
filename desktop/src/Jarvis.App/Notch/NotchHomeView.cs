@@ -29,13 +29,26 @@ internal sealed class NotchHomeView
     private readonly List<Button> _shownCards = [];
     private int _focus;
 
+    /// <summary>Where the carousel is, in cards: the focused one while at rest, in between mid-swipe.</summary>
+    private double _position;
+    private readonly DispatcherQueueTimer _settle;
+    private readonly Button _previous;
+    private readonly Button _next;
+
+    /// <summary>One click of a mouse wheel (WHEEL_DELTA).</summary>
+    private const int WheelClick = 120;
+
+    /// <summary>How far past either end a swipe may pull, in cards, before it springs back.</summary>
+    private const double Overscroll = 0.35;
+
     private const double CardWidth = 216;
     private const double CardHeight = 84;
 
     /// <summary>How far apart neighbouring cards sit: the focused one whole, the others peeking out from behind.</summary>
     private const double CardStep = 172;
     private const float SideScale = 0.8f;
-    private readonly StackPanel _pills = new() { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
+    /// <summary>Rows of pills: the notch widens to fit them (NotchLayout), and what still doesn't fit wraps.</summary>
+    private readonly StackPanel _pills = new() { Orientation = Orientation.Vertical, Spacing = NotchLayout.HomePillSpacing, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly DispatcherQueueTimer _leave;
     private NotchState.Home? _home;
     private bool _entered;
@@ -55,13 +68,28 @@ internal sealed class NotchHomeView
         };
         _cards.Margin = new Thickness(0, 10, 0, 2);
         _cards.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent); // the wheel works over the gaps too
-        // Scroll to bring another card to the middle.
+        // A mouse wheel's click moves one card; a touchpad swipe follows the fingers, then settles on the nearest.
         _cards.PointerWheelChanged += (_, e) =>
         {
-            var delta = e.GetCurrentPoint(_cards).Properties.MouseWheelDelta;
-            Focus(_focus + (delta > 0 ? -1 : 1));
+            var properties = e.GetCurrentPoint(_cards).Properties;
+            var delta = properties.MouseWheelDelta;
             e.Handled = true;
+            if (Math.Abs(delta) >= WheelClick && !properties.IsHorizontalMouseWheel)
+            {
+                Focus(_focus + (delta > 0 ? -1 : 1));
+                return;
+            }
+
+            // Fingers to the left (a positive horizontal delta) bring the next card in, as on a phone.
+            var cards = (properties.IsHorizontalMouseWheel ? delta : -delta) / (double)WheelClick;
+            Track(_position + cards);
         };
+        _settle = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        _settle.IsRepeating = false;
+        _settle.Interval = TimeSpan.FromMilliseconds(140);
+        _settle.Tick += (_, _) => Focus((int)Math.Round(_position));
+        _previous = Arrow("", "Previous", HorizontalAlignment.Left, -1);
+        _next = Arrow("", "Next", HorizontalAlignment.Right, 1);
         _pills.Margin = new Thickness(0, 10, 0, 0);
         area.Children.Add(View);
 
@@ -101,6 +129,8 @@ internal sealed class NotchHomeView
         var items = home.Recent.Reverse().ToList();
         var keep = refresh && _focus < _shownCards.Count ? _focus : int.MaxValue;
         _cards.Children.Clear();
+        _cards.Children.Add(_previous);
+        _cards.Children.Add(_next);
         _shownCards.Clear();
         for (var i = 0; i < items.Count; i++)
         {
@@ -120,9 +150,19 @@ internal sealed class NotchHomeView
         _cards.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         Focus(Math.Min(keep, items.Count - 1), animate: false);
         _pills.Children.Clear();
-        foreach (var item in home.Actions)
+        var width = NotchLayout.FrameFor(home).Width;
+        var rows = NotchLayout.Rows([.. home.Actions.Select(item => NotchLayout.HomePillWidth(item.Title))], NotchLayout.HomePillSpacing, width - NotchLayout.PanelChrome);
+        var placed = 0;
+        foreach (var count in rows)
         {
-            _pills.Children.Add(Pill(item));
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = NotchLayout.HomePillSpacing, HorizontalAlignment = HorizontalAlignment.Center };
+            foreach (var item in home.Actions.Skip(placed).Take(count))
+            {
+                row.Children.Add(Pill(item));
+            }
+
+            placed += count;
+            _pills.Children.Add(row);
         }
 
         View.Visibility = Visibility.Visible;
@@ -135,43 +175,105 @@ internal sealed class NotchHomeView
     /// <summary>Brings a card to the middle: it grows to full size and comes forward; the rest shrink and fade by distance.</summary>
     private void Focus(int index, bool animate = true)
     {
+        _settle.Stop();
+        if (_shownCards.Count == 0)
+        {
+            UpdateArrows();
+            return;
+        }
+
+        _focus = Math.Clamp(index, 0, _shownCards.Count - 1);
+        _position = _focus;
+        Layout(animate);
+        UpdateArrows();
+    }
+
+    /// <summary>Mid-swipe: the cards follow the fingers exactly (no transitions), a little past the ends at most.</summary>
+    private void Track(double position)
+    {
         if (_shownCards.Count == 0)
         {
             return;
         }
 
-        _focus = Math.Clamp(index, 0, _shownCards.Count - 1);
-        for (var i = 0; i < _shownCards.Count; i++)
+        _position = Math.Clamp(position, -Overscroll, _shownCards.Count - 1 + Overscroll);
+        Layout(animate: false);
+        _settle.Stop();
+        _settle.Start(); // fingers lifted (no more events for a moment): settle on the nearest card, animated
+    }
+
+    private void Layout(bool animate)
+    {
+        foreach (var (card, i) in _shownCards.Select((card, i) => (card, i)))
         {
-            var card = _shownCards[i];
-            var away = i - _focus;
-            var distance = Math.Abs(away);
             if (animate)
             {
-                Place(card, away, distance);
+                Place(card, i - _position);
                 continue;
             }
 
-            // Straight into place (first showing): no slide in from the middle.
             var (slide, grow, fade) = (card.TranslationTransition, card.ScaleTransition, card.OpacityTransition);
             card.TranslationTransition = null;
             card.ScaleTransition = null;
             card.OpacityTransition = null;
-            Place(card, away, distance);
+            Place(card, i - _position);
             card.TranslationTransition = slide;
             card.ScaleTransition = grow;
             card.OpacityTransition = fade;
         }
     }
 
-    private static void Place(Button card, int away, int distance)
+    /// <summary>A card <paramref name="away"/> cards from the middle (in between while swiping): size and fade follow smoothly.</summary>
+    private static void Place(Button card, double away)
     {
-        var scale = distance == 0 ? 1f : SideScale;
+        var distance = Math.Abs(away);
+        var scale = (float)(1 - ((1 - SideScale) * Math.Min(1, distance)));
         card.Translation = new System.Numerics.Vector3((float)(away * CardStep), 0, 0);
         card.Scale = new System.Numerics.Vector3(scale, scale, 1);
-        card.Opacity = distance switch { 0 => 1, 1 => 0.6, 2 => 0.25, _ => 0 };
-        card.IsHitTestVisible = distance <= 1;
-        Canvas.SetZIndex(card, 10 - distance);
+        card.Opacity = distance switch
+        {
+            <= 1 => 1 - (0.4 * distance),
+            <= 2 => 0.6 - (0.35 * (distance - 1)),
+            <= 3 => 0.25 * (3 - distance),
+            _ => 0,
+        };
+        card.IsHitTestVisible = distance <= 1.5;
+        Canvas.SetZIndex(card, 10 - (int)Math.Round(distance));
+    }
+
+    /// <summary>‹ and › at the carousel's edges: shown with more than one card, dimmed at either end.</summary>
+    private Button Arrow(string glyph, string name, HorizontalAlignment side, int step)
+    {
+        var arrow = new Button
+        {
+            Width = 26,
+            Height = 26,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(13),
+            Background = Glass,
+            BorderBrush = GlassEdge,
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = side,
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = new FontIcon { Glyph = glyph, FontFamily = new FontFamily(IconFont), FontSize = 10, Foreground = Brush("TextPrimaryBrush") },
+            Visibility = Visibility.Collapsed,
+        };
+        AutomationProperties.SetName(arrow, name);
+        ToolTipService.SetToolTip(arrow, name);
+        Hover(arrow);
+        Canvas.SetZIndex(arrow, 100); // above every card
+        arrow.Click += (_, _) => Focus(_focus + step);
+        _cards.Children.Add(arrow);
+        return arrow;
+    }
+
+    private void UpdateArrows()
+    {
+        var shown = _shownCards.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        _previous.Visibility = shown;
+        _next.Visibility = shown;
+        _previous.IsEnabled = _focus > 0;
+        _next.IsEnabled = _focus < _shownCards.Count - 1;
     }
 
     public void Hide()
@@ -213,6 +315,32 @@ internal sealed class NotchHomeView
             },
         };
         body.Children.Add(text);
+        if (item.Remove is { } remove)
+        {
+            // The card's ×, top right: off the home for good (its files stay where they are).
+            var close = new Button
+            {
+                Content = new FontIcon { Glyph = "", FontFamily = new FontFamily(IconFont), FontSize = 8, Foreground = Brush("TextSecondaryBrush") },
+                Width = 18,
+                Height = 18,
+                Padding = new Thickness(0),
+                CornerRadius = new CornerRadius(9),
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -4, -6, 0),
+            };
+            AutomationProperties.SetName(close, $"Remove {item.Title}");
+            ToolTipService.SetToolTip(close, "Remove from here");
+            close.Click += (_, _) =>
+            {
+                _leave.Stop();
+                _ = Task.Run(remove);
+            };
+            body.Children.Add(close);
+        }
+
         if (item.Second is { } second)
         {
             // A small pill in the card's top corner (Retry), separate from opening the card.
@@ -226,7 +354,7 @@ internal sealed class NotchHomeView
                 FontFamily = Font,
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, -3, -4, 0), // beside the state line, clear of the title
+                Margin = new Thickness(0, -3, item.Remove is null ? -4 : 16, 0), // beside the state line, clear of the title (and the ×)
                 Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             };
             extra.Click += (_, _) =>

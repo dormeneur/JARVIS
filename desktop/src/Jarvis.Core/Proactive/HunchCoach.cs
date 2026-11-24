@@ -237,9 +237,8 @@ public sealed partial class HunchCoach
     private void Show(Card card, bool withEvidence, string? lead)
     {
         var hunch = card.Hunch;
-        var text = (lead is null ? string.Empty : lead + " ")
-                   + (withEvidence ? $"What I noticed: {string.Join("; ", hunch.Evidence)}. " : "I have a hunch… ")
-                   + hunch.Question;
+        var label = lead is null ? "✦  I have a hunch" : $"✓  {lead}  ·  next hunch";
+        var footnote = withEvidence && hunch.Evidence.Count > 0 ? $"What I noticed: {string.Join(" · ", hunch.Evidence)}" : null;
         List<NotchAction> actions = [.. hunch.Options.Select((option, choice) => new NotchAction(option, () => _ = AnswerAsync(card, choice, null)))];
         actions.Add(new NotchAction("In my words", () => Type(card)));
         if (!withEvidence && hunch.Evidence.Count > 0)
@@ -248,7 +247,7 @@ public sealed partial class HunchCoach
         }
 
         actions.Add(new NotchAction("Skip", () => _ = SkipAsync(card)));
-        Present(card, new NotchState.Response(text, actions));
+        Present(card, new NotchState.Response(hunch.Question, actions, Card: new ResponseCard(label, footnote)));
     }
 
     private void Type(Card card)

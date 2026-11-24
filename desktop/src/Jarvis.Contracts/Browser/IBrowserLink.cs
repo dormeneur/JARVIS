@@ -65,4 +65,16 @@ public interface IBrowserLink
 
     /// <summary>Opens a link in the user's browser; false if the extension couldn't.</summary>
     Task<bool> OpenAsync(string url, CancellationToken cancellationToken);
+
+    /// <summary>The user picked a Jarvis item on the browser's right-click menu for selected text.</summary>
+    event Action<Jarvis.Contracts.Text.TextSelection, Jarvis.Contracts.Text.SelectionAction>? SelectionPicked
+    {
+        add
+        {
+        }
+
+        remove
+        {
+        }
+    }
 }

@@ -17,6 +17,9 @@ public sealed class VaultOptions
 
     /// <summary>The vault server (jv-api). It listens on this PC only.</summary>
     public string Address { get; set; } = "http://127.0.0.1:8000";
+
+    /// <summary>The vault folder on this PC, for "Show in Explorer". Empty: ask the server where it is.</summary>
+    public string Folder { get; set; } = string.Empty;
 }
 
 /// <summary>Where this PC's device secret is kept (Windows Credential Manager in the app).</summary>
@@ -278,6 +281,61 @@ public sealed partial class JvApiVault : IVault
         EnsureOk(response);
         var reply = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false);
         return reply?["saved_to"]?.GetValue<string>();
+    }
+
+    private string? _folder;
+
+    public async Task<string?> LocalFolderAsync(CancellationToken cancellationToken)
+    {
+        var configured = _options.CurrentValue.Folder;
+        if (configured.Length == 0 && _folder is null)
+        {
+            using var response = await SendAsync(HttpMethod.Get, "/ask/vault-folder", null, cancellationToken).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode && (await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false))?["path"] is { } path)
+            {
+                _folder = path.GetValue<string>();
+            }
+        }
+
+        var folder = configured.Length > 0 ? configured : _folder;
+        // Only a folder that's really on this PC: the server may be on another machine.
+        return folder is { Length: > 0 } && Directory.Exists(folder) ? Path.GetFullPath(folder) : null;
+    }
+
+    public async Task<IngestPlan?> PlanIngestAsync(string text, string source, string? url, CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(HttpMethod.Post, "/ask/ingest/plan", new JsonObject { ["text"] = text, ["source"] = source, ["url"] = url }, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.UnprocessableEntity)
+        {
+            var refused = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false);
+            throw new VaultException($"Not saved: {refused?["detail"]?.ToString() ?? "the vault won't keep that"}.");
+        }
+
+        EnsureOk(response);
+        var reply = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false);
+        if (reply?["note"] is not JsonObject note || note["path"]?.GetValue<string>() is not { } path || note["content"]?.GetValue<string>() is not { } content)
+        {
+            return null;
+        }
+
+        var facts = reply["facts"] is JsonArray list
+            ? list.OfType<JsonObject>().Select(item => new PlacedFact(item["path"]?.GetValue<string>() ?? string.Empty, item["fact"]?.GetValue<string>() ?? string.Empty)).Where(fact => fact.Path.Length > 0 && fact.Fact.Length > 0).ToList()
+            : [];
+        return new IngestPlan(path, content, facts);
+    }
+
+    public async Task<string?> PlaceFactAsync(string fact, CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(HttpMethod.Post, "/ask/profile/place", new JsonObject { ["fact"] = fact }, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.UnprocessableEntity)
+        {
+            var refused = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false);
+            throw new VaultException($"Not saved: {refused?["detail"]?.ToString() ?? "the vault won't file that"}.");
+        }
+
+        EnsureOk(response);
+        var reply = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false);
+        return reply?["path"]?.GetValue<string>();
     }
 
     public async Task SkipHunchAsync(string id, string session, CancellationToken cancellationToken)

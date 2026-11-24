@@ -23,7 +23,8 @@ public sealed class HunchCoachTests
         await coach.TickAsync(CancellationToken.None);
 
         var card = Assert.IsType<NotchState.Response>(f.Notch.Current);
-        Assert.StartsWith("I have a hunch… You do your real work", card.Text, StringComparison.Ordinal);
+        Assert.StartsWith("You do your real work", card.Text, StringComparison.Ordinal);
+        Assert.Equal("✦  I have a hunch", card.Card!.Label);
         Assert.Equal(["Spot on", "Only on deadlines", "Morning person", "In my words", "Why?", "Skip"], card.Actions!.Select(a => a.Label));
         Assert.Equal([false], f.Vault.Asks); // unprompted
     }
@@ -85,7 +86,7 @@ public sealed class HunchCoachTests
         Press(f.Notch, "Only on deadlines");
         await WaitUntil(() => f.Notch.Current is NotchState.Response r && r.Text.Contains("videos", StringComparison.Ordinal));
         Assert.Equal([("h1", (int?)1, (string?)null)], f.Vault.Answers);
-        Assert.StartsWith("Noted in Profile/traits.md. I have a hunch…", ((NotchState.Response)f.Notch.Current).Text, StringComparison.Ordinal);
+        Assert.Equal("✓  Noted in Profile/traits.md.  ·  next hunch", ((NotchState.Response)f.Notch.Current).Card!.Label);
     }
 
     [Fact]
@@ -97,7 +98,7 @@ public sealed class HunchCoachTests
 
         Press(f.Notch, "Why?");
         var why = Assert.IsType<NotchState.Response>(f.Notch.Current);
-        Assert.Contains("What I noticed: VS Code at 23:00 most nights.", why.Text, StringComparison.Ordinal);
+        Assert.Equal("What I noticed: VS Code at 23:00 most nights", why.Card!.Footnote);
         Assert.DoesNotContain(why.Actions!, a => a.Label == "Why?");
 
         f.Clock.Now += TimeSpan.FromSeconds(30);

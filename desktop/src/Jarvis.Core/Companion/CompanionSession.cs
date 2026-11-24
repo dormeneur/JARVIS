@@ -455,8 +455,22 @@ public sealed partial class CompanionSession : IAsyncDisposable
         return new TranscriptionRequest(string.IsNullOrWhiteSpace(language) ? null : language, []);
     }
 
-    /// <summary>Double-tap Ctrl: stop whatever is running and open the notch's text box.</summary>
+    /// <summary>
+    /// Double-tap Ctrl: with text selected in the app in front, Jarvis's actions for it (explain,
+    /// summarise, save, ask); otherwise stop whatever is running and open the notch's text box.
+    /// </summary>
     public void Compose()
+    {
+        if (_services.ReadSelection is { } read)
+        {
+            _ = ComposeOrSelectionAsync(read);
+            return;
+        }
+
+        OpenComposer();
+    }
+
+    private void OpenComposer()
     {
         lock (_gate)
         {
@@ -492,7 +506,8 @@ public sealed partial class CompanionSession : IAsyncDisposable
     }
 
     /// <summary>A typed request: the same turn as a spoken one, without the microphone.</summary>
-    public void Ask(string request)
+    /// <param name="withScreen">False: the request alone (a selection to explain): no screenshot, no page read.</param>
+    public void Ask(string request, bool withScreen = true)
     {
         CancellationToken token;
         lock (_gate)
@@ -502,7 +517,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
             token = _turn.Token;
         }
 
-        _ = RespondAsync(request.Trim(), typed: true, token);
+        _ = RespondAsync(request.Trim(), typed: true, token, withScreen);
     }
 
     /// <summary>Fills the browser's form from the vault (tray menu): the same as asking to.</summary>
@@ -533,7 +548,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
     }
 
     /// <param name="typed">A typed question (it gets a chime when the answer starts) rather than a spoken one.</param>
-    private async Task RespondAsync(string request, bool typed, CancellationToken cancellationToken)
+    private async Task RespondAsync(string request, bool typed, CancellationToken cancellationToken, bool withScreen = true)
     {
         var reason = typed ? "You typed a question" : "You asked by voice";
         var question = request;
@@ -551,11 +566,11 @@ public sealed partial class CompanionSession : IAsyncDisposable
                 return;
             }
 
-            _services.Notch.Show(new NotchState.Thinking(privacy.ScreenAccess && privacy.ShowWhenLooking ? "Looking at your screen" : null));
+            _services.Notch.Show(new NotchState.Thinking(privacy.ScreenAccess && privacy.ShowWhenLooking && withScreen ? "Looking at your screen" : null));
             _services.Cursor.SetThinking(true);
             var started = _time.GetTimestamp();
             IReadOnlyList<CapturedScreen> screens = [];
-            if (privacy.ScreenAccess)
+            if (privacy.ScreenAccess && withScreen)
             {
                 screens = await _services.ScreenCapture.CaptureAsync(cancellationToken).ConfigureAwait(false);
                 privacy.Record(screens.Count, reason);
@@ -572,7 +587,7 @@ public sealed partial class CompanionSession : IAsyncDisposable
             }
 
             // A browser in front and the extension paired: read that tab too (logged like a screenshot).
-            if (privacy.ScreenAccess && _services.BrowserOptions.CurrentValue.ReadPage && _services.Browser.IsConnected && _services.Browser.IsBrowserInFront
+            if (withScreen && privacy.ScreenAccess && _services.BrowserOptions.CurrentValue.ReadPage && _services.Browser.IsConnected && _services.Browser.IsBrowserInFront
                 && await _services.Browser.ReadPageAsync(cancellationToken).ConfigureAwait(false) is { } page)
             {
                 privacy.Record(0, "Read the page open in your browser");
@@ -1129,7 +1144,8 @@ public sealed record CompanionServices(
     IComputerControl Control,
     Jarvis.Contracts.Browser.IBrowserLink Browser,
     IOptionsMonitor<BrowserOptions> BrowserOptions,
-    LocalTurns? Local = null);
+    LocalTurns? Local = null,
+    Func<CancellationToken, Task<Jarvis.Contracts.Text.TextSelection?>>? ReadSelection = null);
 
 /// <summary>What answers on this PC: the vault (its brain and form filling) and the local model for private mode.</summary>
 /// <param name="Calendar">Answers calendar questions from the iCal feed (<see cref="Jarvis.Core.Proactive.CalendarBrain"/>).</param>

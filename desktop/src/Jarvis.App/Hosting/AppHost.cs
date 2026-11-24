@@ -86,6 +86,7 @@ internal static class AppHost
         services.AddTransient<Jarvis.App.Settings.ViewModels.ConnectorsViewModel>();
         services.AddTransient<Jarvis.App.Settings.ViewModels.ProactiveViewModel>();
         services.AddTransient<Jarvis.App.Settings.ViewModels.VaultViewModel>();
+        services.AddTransient<Jarvis.App.Settings.ViewModels.AboutMeViewModel>();
 
         return builder.Build();
     }
@@ -168,7 +169,8 @@ internal static class AppHost
                 provider.GetRequiredService<IVocabularyStore>(),
                 Jarvis.Platform.Text.EnglishWords.IsKnown),
             provider.GetRequiredService<TimeProvider>(),
-            provider.GetRequiredService<ILogger<Jarvis.Core.Vault.FormFiller>>()));
+            provider.GetRequiredService<ILogger<Jarvis.Core.Vault.FormFiller>>(),
+            Path.Combine(AppPaths.DataDirectory, "last-form.txt")));
         services.AddSingleton(provider => new LocalTurns(
             provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>(),
             new Jarvis.Core.Vault.VaultBrain(provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>()),
@@ -233,8 +235,9 @@ internal static class AppHost
             provider.GetRequiredService<Jarvis.Contracts.Control.IComputerControl>(),
             provider.GetRequiredService<Jarvis.Contracts.Browser.IBrowserLink>(),
             provider.GetRequiredService<IOptionsMonitor<BrowserOptions>>(),
-            provider.GetRequiredService<LocalTurns>()));
-        services.AddSingleton<ConversationLog>();
+            provider.GetRequiredService<LocalTurns>(),
+            provider.GetRequiredService<ITextInsertion>().ReadSelectionAsync));
+        services.AddSingleton(_ => new ConversationLog(Path.Combine(AppPaths.DataDirectory, "chat.json"))); // the chat survives a restart
         services.AddSingleton(provider => new ScreenPrivacy(
             provider.GetRequiredService<IOptionsMonitor<PrivacyOptions>>(),
             Path.Combine(AppPaths.DataDirectory, "screen-looks.log"),

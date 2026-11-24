@@ -60,9 +60,31 @@ public interface IVault
     /// <summary>Answers a hunch: <paramref name="choice"/> 0/1/2 = agree/partly/disagree, or the user's own words. Returns the file it went to.</summary>
     Task<string?> AnswerHunchAsync(string id, int? choice, string? text, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
 
+    /// <summary>
+    /// The Profile file a new fact about the user belongs in (an existing one, or a new topic or
+    /// folder), decided by the local brain. Throws <see cref="VaultException"/> for text it won't file (a password).
+    /// </summary>
+    Task<string?> PlaceFactAsync(string fact, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+    /// <summary>The vault folder on this PC (for "Show in Explorer"), or null when the vault lives on another machine.</summary>
+    Task<string?> LocalFolderAsync(CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+    /// <summary>
+    /// Where outside text belongs in the vault (the local brain decides): a note keeping the text word
+    /// for word, plus any facts about the user for Profile. Nothing is written; the caller shows the
+    /// plan and writes it if the user agrees. Throws <see cref="VaultException"/> for text it won't keep.
+    /// </summary>
+    Task<IngestPlan?> PlanIngestAsync(string text, string source, string? url, CancellationToken cancellationToken) => Task.FromResult<IngestPlan?>(null);
+
     /// <summary>Puts a hunch on the stack: not asked again this session, first in the next.</summary>
     Task SkipHunchAsync(string id, string session, CancellationToken cancellationToken) => Task.CompletedTask;
 }
+
+/// <summary>What saving outside text would write: a note (path and full content) and facts for Profile files.</summary>
+public sealed record IngestPlan(string NotePath, string NoteContent, IReadOnlyList<PlacedFact> Facts);
+
+/// <summary>A fact about the user and the Profile file it belongs in.</summary>
+public sealed record PlacedFact(string Path, string Fact);
 
 /// <summary>A run of time with one window in front.</summary>
 public sealed record ActivityObservation(DateTimeOffset At, string App, string Title, int Seconds);

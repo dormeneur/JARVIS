@@ -37,7 +37,8 @@ internal sealed class NotchSettingsView
         _services = services;
         _collapse = collapse;
         var font = Font;
-        _menu.Children.Add(new TextBlock { Text = "Settings", FontFamily = font, FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimaryBrush"), Margin = new Thickness(10, 0, 0, 10) });
+        _title = new TextBlock { Text = "Settings", FontFamily = font, FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Brush("TextPrimaryBrush"), Margin = new Thickness(10, 0, 0, 10) };
+        _menu.Children.Add(_title);
         _menu.Children.Add(GroupLabel("JARVIS"));
         foreach (var section in _sections)
         {
@@ -99,6 +100,11 @@ internal sealed class NotchSettingsView
     }
 
     public Grid View { get; }
+
+    private readonly TextBlock _title;
+
+    /// <summary>Opened from the home: the title moves over for the back arrow in the corner.</summary>
+    public void ShowBack(bool shown) => _title.Margin = new Thickness(shown ? 24 : 10, 0, 0, 10);
 
     private static FontFamily Font => (FontFamily)Application.Current.Resources["FontText"];
 

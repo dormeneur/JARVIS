@@ -655,3 +655,37 @@ setInterval(() => {
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
 connect();
+
+// Right-click on selected text: Jarvis's own menu. The text goes only to Jarvis on this PC, and only
+// when you pick one of these.
+const SELECTION_MENU = [
+  ["explain", "Ask Jarvis to explain"],
+  ["summarise", "Summarise with Jarvis"],
+  ["save", "Add to Jarvis knowledge base"],
+];
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: "jarvis", title: "Jarvis", contexts: ["selection"] });
+    for (const [id, title] of SELECTION_MENU) {
+      chrome.contextMenus.create({ id: "jarvis-" + id, parentId: "jarvis", title, contexts: ["selection"] });
+    }
+  });
+});
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const id = String(info.menuItemId || "");
+  if (!id.startsWith("jarvis-") || !info.selectionText) return;
+  // The page's own selection keeps its line breaks (the menu's copy flattens them).
+  let text = info.selectionText;
+  try {
+    const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [info.frameId || 0] }, func: () => String(window.getSelection() || "") });
+    if (result && result.result && result.result.trim()) text = result.result;
+  } catch { /* a page scripts can't run in: the menu's copy will do */ }
+  const message = { type: "selection", action: id.slice("jarvis-".length), text: text.slice(0, 20000), title: (tab && tab.title) || "", url: (tab && tab.url) || "" };
+  await connect();
+  for (let waited = 0; waited < 2000 && !(socket && socket.readyState === WebSocket.OPEN); waited += 100) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+});

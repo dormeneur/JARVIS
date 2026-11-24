@@ -57,17 +57,88 @@ public static class NotchLayout
         NotchState.Listening or NotchState.Dictating => new NotchFrame(ActivityWidth, ActivityHeight, 18, IsSliver: false, Spring: null),
         NotchState.Thinking or NotchState.Speaking or NotchState.Parked => new NotchFrame(ActivityWidth, ActivityHeight, 18, IsSliver: false, Springs.NotchOpen),
         NotchState.Composing composing => new NotchFrame(ExpandedWidth, ComposerFrameHeight(composing.History ?? []), 22, IsSliver: false, Springs.TextInputOpen),
-        NotchState.Response response => new NotchFrame(
-            ExpandedWidth,
-            Math.Min(MaxExpandedHeight, ResponseHeight(response.Text) + (response.Actions is { Count: > 0 } ? ActionBarHeight : 0)),
-            22,
-            IsSliver: false,
-            Springs.NotchOpen),
+        NotchState.Response response => ResponseFrame(response),
         NotchState.Form or NotchState.EventDraft => new NotchFrame(ExpandedWidth, MaxExpandedHeight, 22, IsSliver: false, Springs.NotchOpen),
         NotchState.Settings => new NotchFrame(SettingsWidth, SettingsHeight, 22, IsSliver: false, Springs.NotchOpen),
-        NotchState.Home home => new NotchFrame(ExpandedWidth, HomeHeight + (home.Recent.Count > 0 ? HomeCardsHeight : 0), 22, IsSliver: false, Springs.NotchOpen),
+        NotchState.Home home => HomeFrame(home),
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown notch state."),
     };
+
+    /// <summary>The widest a panel grows to fit its buttons: as wide as Settings in the notch.</summary>
+    public const double MaxPanelWidth = SettingsWidth;
+
+    /// <summary>Shoulders and side padding: what a panel's width holds besides its content.</summary>
+    public const double PanelChrome = (2 * ShoulderRadius) + (2 * ContentHorizontalPadding);
+
+    public const double ActionSpacing = 8;
+    public const double HomePillSpacing = 6;
+
+    /// <summary>A home pill is 34 high; wrapped rows sit this far apart.</summary>
+    public const double HomePillRowHeight = 34 + HomePillSpacing;
+
+    /// <summary>
+    /// A 12-pt label's width, estimated generously (most Segoe UI letters are narrower), so a row
+    /// laid out by it always fits on screen.
+    /// </summary>
+    /// <remarks>ponytail: an estimate keeps Core free of the UI; measure the real buttons if labels ever clip.</remarks>
+    private static double LabelWidth(string label) => label.Length * 7.5;
+
+    /// <summary>A reply's button: 12 DIP padding each side, at least 64 wide (DESIGN-FACTS.md §2.1).</summary>
+    public static double ActionWidth(string label) => Math.Max(64, LabelWidth(label) + 24 + 2);
+
+    /// <summary>A home pill: 14 DIP padding each side, the 13-pt icon and an 8 DIP gap before the title.</summary>
+    public static double HomePillWidth(string title) => 14 + 13 + 8 + LabelWidth(title) + 14 + 2;
+
+    /// <summary>
+    /// Wide enough for every item in one row (never narrower than the usual panel, never wider than
+    /// <see cref="MaxPanelWidth"/>); what still doesn't fit wraps onto more rows (<see cref="Rows"/>).
+    /// </summary>
+    public static double WidthToFit(IReadOnlyList<double> items, double spacing)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        var row = items.Sum() + (spacing * Math.Max(0, items.Count - 1)) + PanelChrome;
+        return Math.Clamp(row, ExpandedWidth, MaxPanelWidth);
+    }
+
+    /// <summary>How many items go on each row, filling a row before starting the next. An item wider than the room gets a row of its own.</summary>
+    public static IReadOnlyList<int> Rows(IReadOnlyList<double> items, double spacing, double available)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        var rows = new List<int>();
+        double used = 0;
+        foreach (var width in items)
+        {
+            if (rows.Count > 0 && used + spacing + width <= available)
+            {
+                rows[^1]++;
+                used += spacing + width;
+            }
+            else
+            {
+                rows.Add(1);
+                used = width;
+            }
+        }
+
+        return rows;
+    }
+
+    private static NotchFrame ResponseFrame(NotchState.Response response)
+    {
+        var buttons = (response.Actions ?? []).Select(action => ActionWidth(action.Label)).ToList();
+        var width = WidthToFit(buttons, ActionSpacing);
+        var bar = Rows(buttons, ActionSpacing, width - PanelChrome).Count * ActionBarHeight;
+        var body = response.Card is { } card ? CardHeight(response.Text, card, width) : ResponseHeight(response.Text, width);
+        return new NotchFrame(width, Math.Min(MaxExpandedHeight, body + bar), 22, IsSliver: false, Springs.NotchOpen);
+    }
+
+    private static NotchFrame HomeFrame(NotchState.Home home)
+    {
+        var pills = home.Actions.Select(item => HomePillWidth(item.Title)).ToList();
+        var width = WidthToFit(pills, HomePillSpacing);
+        var extraRows = Math.Max(0, Rows(pills, HomePillSpacing, width - PanelChrome).Count - 1);
+        return new NotchFrame(width, HomeHeight + (extraRows * HomePillRowHeight) + (home.Recent.Count > 0 ? HomeCardsHeight : 0), 22, IsSliver: false, Springs.NotchOpen);
+    }
 
     /// <summary>The corner radius actually drawn: capped so short shapes stay pills.</summary>
     public static double EffectiveCornerRadius(NotchFrame frame)
@@ -93,8 +164,28 @@ public static class NotchLayout
         return Math.Min(ChatMaxHeight, chat + ComposerHeight);
     }
 
-    /// <summary>Grows with wrapped lines (≈74 characters each), at least three lines, capped at the max height.</summary>
-    private static double ResponseHeight(string text)
+    /// <summary>A card's own height: its label, the text at 15 pt, the footnote at 11.5 pt, snug (no three-line minimum).</summary>
+    public static double CardHeight(string text, ResponseCard card, double width)
+    {
+        ArgumentNullException.ThrowIfNull(card);
+        var room = (width - PanelChrome - 22) / (ExpandedWidth - PanelChrome - 22);
+        static int Lines(string value, double perLine) => value.Split('\n').Sum(line => Math.Max(1, (int)Math.Ceiling(Math.Max(line.Length, 1) / perLine)));
+        var height = CardTop + CardLabelHeight + (Lines(text.Trim(), 60 * room) * CardLineHeight);
+        if (card.Footnote is { Length: > 0 } footnote)
+        {
+            height += 6 + (Lines(footnote, 84 * room) * 16);
+        }
+
+        return height + CardBottom;
+    }
+
+    private const double CardTop = 12;
+    private const double CardLabelHeight = 22;
+    private const double CardLineHeight = 21;
+    private const double CardBottom = 14;
+
+    /// <summary>Grows with wrapped lines (≈74 characters each at the usual width, more when wider), at least three lines, capped at the max height.</summary>
+    private static double ResponseHeight(string text, double width)
     {
         var trimmed = text.Trim();
         if (trimmed.Length == 0)
@@ -102,7 +193,8 @@ public static class NotchLayout
             return 70;
         }
 
-        var lines = trimmed.Split('\n').Sum(line => Math.Max(1, (int)Math.Ceiling(Math.Max(line.Length, 1) / CharactersPerLine)));
+        var perLine = CharactersPerLine * (width - PanelChrome) / (ExpandedWidth - PanelChrome);
+        var lines = trimmed.Split('\n').Sum(line => Math.Max(1, (int)Math.Ceiling(Math.Max(line.Length, 1) / perLine)));
         return Math.Min(MaxExpandedHeight, 56 + (LineHeight * Math.Max(3, lines)) + 32);
     }
 }

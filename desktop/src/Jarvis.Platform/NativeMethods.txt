@@ -79,6 +79,7 @@ IUIAutomationElement
 IUIAutomationValuePattern
 IUIAutomationTextPattern
 IUIAutomationTextRange
+IUIAutomationTextRangeArray
 UIA_PATTERN_ID
 UIA_CONTROLTYPE_ID
 OpenClipboard

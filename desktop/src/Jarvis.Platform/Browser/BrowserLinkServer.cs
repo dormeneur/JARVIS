@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jarvis.Contracts.Browser;
+using Jarvis.Contracts.Text;
 using Jarvis.Core.Companion;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -47,6 +48,8 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
 
     /// <summary>Raised when an extension that isn't approved yet tries to connect (its ID).</summary>
     public event Action<string>? ApprovalWanted;
+
+    public event Action<TextSelection, SelectionAction>? SelectionPicked;
 
     /// <summary>The last unapproved extension that tried to connect, for Settings.</summary>
     public string? WaitingForApproval { get; private set; }
@@ -341,6 +344,20 @@ public sealed partial class BrowserLinkServer : IBrowserLink, IHostedService, ID
         }
         catch (JsonException)
         {
+            return;
+        }
+
+        // The extension speaks first only for its right-click menu: Jarvis, explain / summarise / save this.
+        if (reply?["type"]?.GetValue<string>() == "selection" && reply["text"]?.GetValue<string>() is { Length: > 0 } selected)
+        {
+            var action = reply["action"]?.GetValue<string>() switch
+            {
+                "explain" => SelectionAction.Explain,
+                "summarise" => SelectionAction.Summarise,
+                "save" => SelectionAction.Save,
+                _ => SelectionAction.Menu,
+            };
+            SelectionPicked?.Invoke(new TextSelection(selected.Length > 20000 ? selected[..20000] : selected, reply["title"]?.GetValue<string>() ?? "your browser", reply["url"]?.GetValue<string>()), action);
             return;
         }
 

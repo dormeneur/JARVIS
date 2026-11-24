@@ -62,14 +62,64 @@ public sealed partial class FormFiller
     private readonly ILogger<FormFiller> _logger;
     private readonly SemaphoreSlim _memoryGate = new(1, 1);
 
-    /// <summary>The title of the last form read, for the notch's home.</summary>
-    public string? LastTitle { get; private set; }
+    private readonly string? _lastTitleFile;
+    private string? _lastTitle;
 
-    public FormFiller(FormServices services, TimeProvider time, ILogger<FormFiller> logger)
+    /// <summary>The title of the last form read, for the notch's home (kept across restarts when there's a file for it).</summary>
+    public string? LastTitle
+    {
+        get => _lastTitle;
+        private set
+        {
+            _lastTitle = value;
+            if (_lastTitleFile is not null && value is not null)
+            {
+                try
+                {
+                    File.WriteAllText(_lastTitleFile, value);
+                }
+                catch (IOException)
+                {
+                    // Only the home's "Fill again" card is lost after a restart.
+                }
+            }
+        }
+    }
+
+    /// <summary>The home's × on the last form's card: forgotten, now and after a restart (the form's vault folder stays).</summary>
+    public void ForgetLast()
+    {
+        _lastTitle = null;
+        if (_lastTitleFile is not null)
+        {
+            try
+            {
+                File.Delete(_lastTitleFile);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    /// <param name="lastTitleFile">Keeps the last form's title between runs (on this PC).</param>
+    public FormFiller(FormServices services, TimeProvider time, ILogger<FormFiller> logger, string? lastTitleFile = null)
     {
         _services = services;
         _time = time;
         _logger = logger;
+        _lastTitleFile = lastTitleFile;
+        if (lastTitleFile is not null && File.Exists(lastTitleFile))
+        {
+            try
+            {
+                LastTitle = File.ReadAllText(lastTitleFile).Trim() is { Length: > 0 } title ? title : null;
+            }
+            catch (IOException)
+            {
+                // No card, no harm.
+            }
+        }
     }
 
     /// <summary>This form's folder in the vault: its title, made safe for a file name.</summary>

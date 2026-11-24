@@ -159,7 +159,8 @@ internal static class MacAppHost
                 provider.GetRequiredService<IVocabularyStore>(),
                 Jarvis.Platform.Mac.Text.EnglishWords.IsKnown),
             provider.GetRequiredService<TimeProvider>(),
-            provider.GetRequiredService<ILogger<Jarvis.Core.Vault.FormFiller>>()));
+            provider.GetRequiredService<ILogger<Jarvis.Core.Vault.FormFiller>>(),
+            Path.Combine(AppPaths.DataDirectory, "last-form.txt")));
         services.AddSingleton(provider => new LocalTurns(
             provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>(),
             new Jarvis.Core.Vault.VaultBrain(provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>()),
@@ -225,7 +226,7 @@ internal static class MacAppHost
             provider.GetRequiredService<Jarvis.Contracts.Browser.IBrowserLink>(),
             provider.GetRequiredService<IOptionsMonitor<BrowserOptions>>(),
             provider.GetRequiredService<LocalTurns>()));
-        services.AddSingleton<ConversationLog>();
+        services.AddSingleton(_ => new ConversationLog(Path.Combine(AppPaths.DataDirectory, "chat.json"))); // the chat survives a restart
         services.AddSingleton(provider => new ScreenPrivacy(
             provider.GetRequiredService<IOptionsMonitor<PrivacyOptions>>(),
             Path.Combine(AppPaths.DataDirectory, "screen-looks.log"),

@@ -190,6 +190,136 @@ public sealed partial class UiaTextInsertion : ITextInsertion
         }
     }
 
+    /// <summary>Apps where Ctrl+C means "stop the running program", not copy: only UI Automation may read them.</summary>
+    private static readonly HashSet<string> Terminals = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "WindowsTerminal", "OpenConsole", "conhost", "cmd", "powershell", "pwsh", "wt", "mintty", "alacritty", "wezterm-gui", "ConEmu64", "ConEmu", "Hyper", "Tabby", "kitty",
+    };
+
+    private static readonly TimeSpan CopyWait = TimeSpan.FromMilliseconds(400);
+
+    public async Task<TextSelection?> ReadSelectionAsync(CancellationToken cancellationToken)
+    {
+        var (window, app) = Foreground();
+        if (app is null)
+        {
+            return null;
+        }
+
+        // 1. UI Automation: reads the selection without touching anything (most editors, browsers, Office).
+        var read = Task.Run(SelectionByAutomation, cancellationToken);
+        if (await Task.WhenAny(read, Task.Delay(FocusBudget, cancellationToken)).ConfigureAwait(false) == read
+            && await read.ConfigureAwait(false) is { Length: > 0 } text)
+        {
+            return new TextSelection(text, Title(window) ?? app);
+        }
+
+        // 2. Copy, the way a person would, on a borrowed clipboard that's given back. Never in a terminal.
+        if (Terminals.Contains(app))
+        {
+            return null;
+        }
+
+        await WaitForModifiersReleasedAsync(cancellationToken).ConfigureAwait(false);
+        var saved = await Task.Run(Clipboard.Snapshot, cancellationToken).ConfigureAwait(false);
+        var before = Clipboard.SequenceNumber;
+        SendCopy();
+        var deadline = Stopwatch.GetTimestamp() + (long)(CopyWait.TotalSeconds * Stopwatch.Frequency);
+        while (Clipboard.SequenceNumber == before && Stopwatch.GetTimestamp() < deadline)
+        {
+            await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (Clipboard.SequenceNumber == before)
+        {
+            return null; // nothing was selected (the app copied nothing)
+        }
+
+        var copied = await Task.Run(Clipboard.GetText, cancellationToken).ConfigureAwait(false);
+        await Task.Run(() => Clipboard.Restore(saved), cancellationToken).ConfigureAwait(false);
+        return copied is { Length: > 0 } ? new TextSelection(copied.Length > ReadLimit ? copied[..ReadLimit] : copied, Title(window) ?? app) : null;
+    }
+
+    private string? SelectionByAutomation()
+    {
+        try
+        {
+            var element = _automation.Value.GetFocusedElement();
+            if (element is null || element.CurrentIsPassword)
+            {
+                return null;
+            }
+
+            if (element.GetCurrentPattern(UIA_PATTERN_ID.UIA_TextPatternId) is not IUIAutomationTextPattern pattern)
+            {
+                return null;
+            }
+
+            var ranges = pattern.GetSelection();
+            if (ranges is null || ranges.Length == 0)
+            {
+                return null;
+            }
+
+            var text = ranges.GetElement(0).GetText(ReadLimit).ToString().Trim();
+            return text.Length > 0 ? text : null;
+        }
+        catch (COMException)
+        {
+            return null; // the app doesn't do UI Automation selection; the copy fallback tries
+        }
+    }
+
+    private static unsafe (HWND Window, string? App) Foreground()
+    {
+        var window = PInvoke.GetForegroundWindow();
+        if (window.IsNull)
+        {
+            return (window, null);
+        }
+
+        uint processId;
+        PInvoke.GetWindowThreadProcessId(window, &processId);
+        if (processId == Environment.ProcessId)
+        {
+            return (window, null); // Jarvis itself
+        }
+
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            return (window, process.ProcessName);
+        }
+        catch (ArgumentException)
+        {
+            return (window, null);
+        }
+    }
+
+    private static unsafe string? Title(HWND window)
+    {
+        Span<char> buffer = stackalloc char[256];
+        int length;
+        fixed (char* text = buffer)
+        {
+            length = PInvoke.GetWindowText(window, text, buffer.Length);
+        }
+
+        return length > 0 ? new string(buffer[..length]) : null;
+    }
+
+    private static void SendCopy()
+    {
+        Span<INPUT> inputs =
+        [
+            Key(VIRTUAL_KEY.VK_CONTROL, up: false),
+            Key(VIRTUAL_KEY.VK_C, up: false),
+            Key(VIRTUAL_KEY.VK_C, up: true),
+            Key(VIRTUAL_KEY.VK_CONTROL, up: true),
+        ];
+        PInvoke.SendInput(inputs, Marshal.SizeOf<INPUT>());
+    }
+
     private static void SendPaste()
     {
         Span<INPUT> inputs =
