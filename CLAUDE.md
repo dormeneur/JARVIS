@@ -92,6 +92,16 @@ flutter run
   notch asks one at a time (`/next`, served once per session, 6 unprompted a day, unlimited on demand); Skip
   stacks it for the next session. Answers go to `Profile/traits.md` / `Profile/not-me.md`; `Profile/hunches.md`
   shows what it still suspects. Raw observations stay in `.system/brain/hunches.db` (30 days). Local model only.
+- **About me (desktop):** Settings → About me (also the notch home's tile) shows `Profile/*.md` (one folder deep, not
+  forms/resume/documents) as an Obsidian-style graph (`Core/Vault/KnowledgeGraph` + `ForceLayout`) or a list; edits replace the
+  exact line (`ProfileNotes`) through the files API. "Tell Jarvis something" asks `/ask/profile/place` (local model,
+  `services/profile_place.py`; paths held to `Profile/[folder/]topic.md`, secrets refused) which file a fact belongs in.
+- **Outside text in (ingest):** select text anywhere, then double-tap Ctrl (desktop reads the selection with UIA, else a
+  borrowed-clipboard Ctrl+C, never in a terminal) or use the browser extension's right-click "Jarvis" menu. Explain/Summarise
+  send the text alone (no screenshot). Save asks `/ask/ingest/plan` (`services/ingest.py`, local model): a note keeping the
+  text verbatim with its source, in an existing (or new) top-level folder, never Secrets/system/Profile/Agent; summary, tags
+  and facts survive only if their words are in the text; facts about the owner go to Profile via `profile_place`. The
+  desktop shows the plan and writes it (files API) only on Save, then reindexes, so chat and forms can quote it.
 - **Background AI work goes through the Inbox:** the memory extractor (user's words only) and later
   features file *proposals* (`services/proposals.py`, `/ask/proposals`); nothing is written until the user
   approves on the phone. The scheduler (`services/scheduler.py`) runs reindex, the daily digest, trash
