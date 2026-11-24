@@ -54,3 +54,6 @@ desktop/artifacts/
 
 SECRETS
 REFERENCE
+
+# /brag render workspace
+brag-output*/
