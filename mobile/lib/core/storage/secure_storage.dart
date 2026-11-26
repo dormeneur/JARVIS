@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Wrapper around flutter_secure_storage for JWT and server URL persistence.
@@ -32,6 +34,21 @@ class SecureStorage {
 
   Future<void> setServerUrl(String url) =>
       _storage.write(key: _keyServerUrl, value: url);
+
+  // --- Other addresses the server answers on (Tailscale, Wi-Fi, USB) ---
+
+  Future<List<String>> getRoutes() async {
+    final raw = await _storage.read(key: 'jarvis_server_routes');
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      return (jsonDecode(raw) as List).whereType<String>().toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> setRoutes(List<String> routes) =>
+      _storage.write(key: 'jarvis_server_routes', value: jsonEncode(routes));
 
   // --- Device Info ---
 

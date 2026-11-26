@@ -1,5 +1,6 @@
 package com.jarvis.mobile
 
+import android.app.PendingIntent
 import android.app.assist.AssistStructure
 import android.app.assist.AssistStructure.ViewNode
 import android.content.pm.ApplicationInfo
@@ -11,6 +12,7 @@ import android.service.autofill.Dataset
 import android.service.autofill.FillCallback
 import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
+import android.service.autofill.InlinePresentation
 import android.service.autofill.SaveCallback
 import android.service.autofill.SaveInfo
 import android.service.autofill.SaveRequest
@@ -19,8 +21,11 @@ import android.util.Log
 import android.view.View
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
+import android.view.inputmethod.InlineSuggestionsRequest
 import android.widget.RemoteViews
 import androidx.annotation.RequiresApi
+import androidx.autofill.inline.UiVersions
+import androidx.autofill.inline.v1.InlineSuggestionUi
 import java.io.File
 
 /**
@@ -43,7 +48,8 @@ class JarvisAutofillService : AutofillService() {
             if (structure.activityComponent.packageName == packageName) null
             else {
                 val memory = memory(this)
-                responseFor(fieldsOf(structure, memory), titleOf(structure))
+                val inline = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) request.inlineSuggestionsRequest else null
+                responseFor(fieldsOf(structure, memory), titleOf(structure), inline)
             }
         } catch (e: Exception) {
             Log.w(TAG, "autofill skipped", e) // never break the other app's form
@@ -102,16 +108,19 @@ class JarvisAutofillService : AutofillService() {
      * form is sent. Then, on any field Jarvis remembers: its best value (filling every remembered
      * field at once) and up to two alternatives for that field alone.
      */
-    private fun responseFor(fields: List<Field>, title: String): FillResponse? {
+    private fun responseFor(fields: List<Field>, title: String, inline: Any? = null): FillResponse? {
+        val chips = Chips(this, inline)
         val known = fields.filter { it.suggestions.isNotEmpty() }
         val isForm = fields.size >= 2
         if (known.isEmpty() && !isForm) return null
         val response = FillResponse.Builder()
         if (isForm) {
             val sheet = Dataset.Builder()
-            fields.forEach { sheet.setValue(it.id, null, row("\u2726  Fill this form with Jarvis")) }
+            val label = "\u2726  Fill this form with Jarvis"
+            fields.forEach { chips.set(sheet, it.id, null, label) }
             sheet.setAuthentication(AutofillSheetActivity.fill(this, title, fields))
             response.addDataset(sheet.build())
+            chips.next()
             val ids = fields.map { it.id }.toTypedArray()
             val save = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_GENERIC).setOptionalIds(ids)
             else SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_GENERIC, arrayOf(ids[0])).setOptionalIds(ids.drop(1).toTypedArray())
@@ -120,12 +129,17 @@ class JarvisAutofillService : AutofillService() {
         if (known.isNotEmpty()) {
             val all = Dataset.Builder()
             for (field in known) {
-                all.setValue(field.id, AutofillValue.forText(field.suggestions[0]), row(if (known.size > 1) "${field.suggestions[0]}  \u00b7  fill all" else field.suggestions[0]))
+                chips.set(all, field.id, AutofillValue.forText(field.suggestions[0]), if (known.size > 1) "${field.suggestions[0]}  \u00b7  fill all" else field.suggestions[0])
             }
             response.addDataset(all.build())
+            chips.next()
             for (field in known) {
                 for (value in field.suggestions.drop(1).take(MAX_ALTERNATIVES)) {
-                    response.addDataset(Dataset.Builder().setValue(field.id, AutofillValue.forText(value), row(value)).build())
+                    if (!chips.room()) break
+                    val one = Dataset.Builder()
+                    chips.set(one, field.id, AutofillValue.forText(value), value)
+                    response.addDataset(one.build())
+                    chips.next()
                 }
             }
         }
@@ -163,7 +177,8 @@ class JarvisAutofillService : AutofillService() {
             val notes = profile.listFiles { file -> file.isFile && file.extension == "md" }.orEmpty().sortedBy { it.name }
             // Overlay what was learned while the PC was away, so the phone offers it right now.
             return FormMemory.parse(FormOutbox.fold(context, File(profile, "form-memory.json").takeIf { it.isFile }?.readText()).first)
-                .withFacts(notes.flatMap { FormMemory.facts(it.readText()) })
+                .withFacts(notes.flatMap { FormMemory.facts(it.readText()) } +
+                    ProfileJson.facts(File(profile, "profile.json").takeIf { it.isFile }?.readText()))
         }
 
         /** Android's own hints and HTML autocomplete tokens, in the memory's words. */
@@ -238,5 +253,41 @@ class JarvisAutofillService : AutofillService() {
         }
 
         private val CAMEL = Regex("([a-z])([A-Z])")
+    }
+}
+
+/**
+ * Suggestions as chips in the keyboard's strip (Android 11+, when the keyboard asks for them: Gboard
+ * does), alongside the classic dropdown row for keyboards that don't. Each dataset gets the next of
+ * the keyboard's presentation specs, up to the number of chips it said it can show.
+ */
+private class Chips(private val context: android.content.Context, request: Any?) {
+    private val inline = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) request as? InlineSuggestionsRequest else null
+    private var shown = 0
+
+    fun room(): Boolean = inline == null || shown < inline.maxSuggestionCount
+
+    fun next() {
+        shown++
+    }
+
+    fun set(dataset: Dataset.Builder, id: AutofillId, value: AutofillValue?, text: String) {
+        val chip = presentation(text)
+        @Suppress("DEPRECATION")
+        if (chip != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) dataset.setValue(id, value, JarvisAutofillService.row(context, text), chip)
+        else dataset.setValue(id, value, JarvisAutofillService.row(context, text))
+    }
+
+    private fun presentation(text: String): InlinePresentation? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val request = inline ?: return null
+        val specs = request.inlinePresentationSpecs
+        if (specs.isEmpty() || shown >= request.maxSuggestionCount) return null
+        val spec = specs[minOf(shown, specs.size - 1)]
+        if (!UiVersions.getVersions(spec.style).contains(UiVersions.INLINE_UI_VERSION_1)) return null
+        // Long-pressing a chip shows where it came from: Jarvis's own settings.
+        val attribution = PendingIntent.getActivity(context, 0, android.content.Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val content = InlineSuggestionUi.newContentBuilder(attribution).setTitle(text).setContentDescription("Jarvis: $text").build()
+        return InlinePresentation(content.slice, spec, false)
     }
 }

@@ -159,7 +159,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Use your Tailscale IP address.',
+              "Use your PC's Tailscale name (….ts.net:8000).",
               style: Theme.of(ctx).textTheme.bodySmall,
             ),
           ],

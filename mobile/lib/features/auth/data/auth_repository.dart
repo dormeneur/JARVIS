@@ -23,7 +23,7 @@ class AuthRepository {
 
   Future<bool> checkServerHealth(String serverUrl) async {
     try {
-      final response = await Dio().get('$serverUrl/health');
+      final response = await Dio(BaseOptions(connectTimeout: const Duration(seconds: 3), receiveTimeout: const Duration(seconds: 3))).get('$serverUrl/health');
       return response.statusCode == 200;
     } catch (_) {
       return false;

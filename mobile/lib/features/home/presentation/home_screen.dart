@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:jarvis_mobile/core/network/server_connection_provider.dart';
 import 'package:jarvis_mobile/core/storage/app_database.dart';
+import 'package:jarvis_mobile/features/about_me/presentation/about_me_screen.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
+import 'package:jarvis_mobile/features/hunches/hunch_card.dart';
 import 'package:jarvis_mobile/features/career/presentation/career_screen.dart';
 import 'package:jarvis_mobile/features/chat/presentation/chat_screen.dart';
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_screen.dart';
@@ -58,6 +61,7 @@ class HomeScreen extends ConsumerWidget {
     final tiles = <_Tile>[
       _Tile(Icons.chat_bubble_outline, 'Chat', 'Ask about your notes', () => open(const ChatScreen())),
       _Tile(Icons.badge_outlined, 'Interview', 'Teach JARVIS about you', () => open(const ChatScreen(interviewOnOpen: true))),
+      _Tile(Icons.hub_outlined, 'About me', 'What Jarvis knows about you', () => open(const AboutMeScreen())),
       _Tile(Icons.folder_open_outlined, 'Files', 'Your vault', () => open(const ExplorerScreen())),
       _Tile(Icons.inbox_outlined, 'Inbox', waiting > 0 ? '$waiting waiting for you' : 'Things JARVIS wants to save', () => open(const InboxScreen())),
       if (auth.isSecretsAuthorized) _Tile(Icons.work_outline, 'Jobs', 'Job search runs', () => open(const JobsScreen())),
@@ -91,13 +95,19 @@ class HomeScreen extends ConsumerWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
                 children: [
-                  Text(greeting, style: const TextStyle(color: JarvisLook.textPrimary, fontSize: 26, fontWeight: FontWeight.w600)),
+                  Row(
+                    children: [
+                      Expanded(child: Text(greeting, style: const TextStyle(color: JarvisLook.textPrimary, fontSize: 26, fontWeight: FontWeight.w600))),
+                      const _RoutePill(),
+                    ],
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     auth.deviceName == null ? 'What can I do?' : 'On ${auth.deviceName}',
                     style: const TextStyle(color: JarvisLook.textSecondary, fontSize: 14),
                   ),
                   const SizedBox(height: 28),
+                  const HunchCard(),
                   _AskButton(onTap: () => open(const ChatScreen(listenOnOpen: true))),
                   const SizedBox(height: 12),
                   _TypeBar(onTap: () => open(const ChatScreen())),
@@ -277,6 +287,39 @@ class _RecentRow extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+
+/// How the phone reaches the PC right now: a green dot and "Tailscale" / "Home Wi-Fi" / "USB", or
+/// "Offline" (what's saved here syncs when it's back).
+class _RoutePill extends ConsumerWidget {
+  const _RoutePill();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final online = ref.watch(serverConnectionProvider) == ServerConnectionState.online;
+    final route = ref.watch(serverRouteProvider);
+    final label = online ? (route ?? 'Connected') : 'Offline';
+    return Semantics(
+      label: online ? 'Connected to your PC over $label' : 'Not connected to your PC',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(gradient: JarvisLook.glass, border: JarvisLook.glassEdge, borderRadius: BorderRadius.circular(14)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(color: online ? const Color(0xFF3FD07A) : const Color(0xFF9093A0), shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            Text(label, style: const TextStyle(color: JarvisLook.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+          ],
         ),
       ),
     );

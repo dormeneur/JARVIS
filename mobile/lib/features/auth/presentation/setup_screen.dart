@@ -130,7 +130,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Use your Tailscale IP address\nto connect from mobile.',
+                "Use your PC's Tailscale name, like\nhttp://your-pc.your-tailnet.ts.net:8000",
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,

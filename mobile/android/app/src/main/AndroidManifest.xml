@@ -3,6 +3,7 @@
     <!-- Voice questions, recognised on the phone itself. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <application
+        android:networkSecurityConfig="@xml/network_security_config"
         android:label="Jarvis"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
@@ -56,6 +57,46 @@
                 <data android:mimeType="text/plain"/>
             </intent-filter>
         </activity>
+        <!-- Jarvis for text in any app: the selection toolbar's "Explain with Jarvis" / "Save to Jarvis",
+             and "Jarvis" in the share sheet. One sheet; the aliases say which action was picked. -->
+        <activity
+            android:name=".JarvisSelectionActivity"
+            android:label="Jarvis"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="com.jarvis.mobile.selection"
+            android:theme="@style/SheetTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter android:label="Jarvis">
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name=".SelectionExplain"
+            android:targetActivity=".JarvisSelectionActivity"
+            android:label="Explain with Jarvis"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".SelectionSave"
+            android:targetActivity=".JarvisSelectionActivity"
+            android:label="Save to Jarvis"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+        </activity-alias>
         <!-- Autofill in other apps from the synced form memory (Settings > Autofill > JARVIS). -->
         <service
             android:name=".JarvisAutofillService"

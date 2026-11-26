@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain http only where the line is already private: over Tailscale (WireGuard-encrypted, names
+     under ts.net) and to this phone itself (USB: adb reverse). Everything else, home Wi-Fi included,
+     stays https-only, so a device token never crosses a network in the clear (06-Security-Model.md). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">ts.net</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

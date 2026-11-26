@@ -44,6 +44,8 @@ flutter {
 }
 
 dependencies {
+    // Autofill suggestions as keyboard chips (InlineSuggestionUi, Android 11+).
+    implementation("androidx.autofill:autofill:1.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303") // Android's org.json is a stub in local unit tests
 }

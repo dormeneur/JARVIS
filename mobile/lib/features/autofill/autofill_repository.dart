@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jarvis_mobile/core/network/api_client.dart';
+import 'package:jarvis_mobile/core/network/vault_api.dart';
 import 'package:jarvis_mobile/core/storage/secure_storage.dart';
 import 'package:jarvis_mobile/features/auth/data/auth_repository.dart';
 import 'package:jarvis_mobile/features/auth/presentation/auth_provider.dart';
@@ -106,21 +107,9 @@ class AutofillRepository {
     }
   }
 
-  /// One request with the stored session; an expired one is renewed once with the device secret.
-  Future<Response<dynamic>> _session(Future<Response<dynamic>> Function() request) async {
-    await _api.init();
-    try {
-      return await request();
-    } on DioException catch (e) {
-      if (e.response?.statusCode != 401) rethrow;
-      final name = await _storage.getDeviceName();
-      final secret = await _storage.getDeviceSecret();
-      final url = await _storage.getServerUrl();
-      if (name == null || secret == null || url == null) rethrow;
-      await _auth.reconnectDevice(serverUrl: url, deviceName: name, deviceSecret: secret);
-      return await request();
-    }
-  }
+  /// One request with the stored session (renewed once if expired), and the PC found again over any
+  /// known route (Tailscale, Wi-Fi, USB) if the saved address doesn't answer: see [VaultApi.call].
+  Future<Response<dynamic>> _session(Future<Response<dynamic>> Function() request) => VaultApi(_api, _auth, _storage).call(request);
 }
 
 class AutofillException implements Exception {
