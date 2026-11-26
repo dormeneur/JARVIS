@@ -8,10 +8,7 @@ The JARVIS desktop app: a Windows (and macOS, see below) AI buddy that lives nex
 
 ## Commands
 
-The .NET 9 SDK is installed per-user, **not on PATH**. Prefix shell sessions with:
-```bash
-export PATH="$HOME/AppData/Local/Microsoft/dotnet:$PATH" DOTNET_ROOT="$(cygpath -m "$HOME")/AppData/Local/Microsoft/dotnet"
-```
+Use the machine-wide .NET (`C:\Program Files\dotnet`, SDK 11, the same one Visual Studio Insiders uses): plain `dotnet` on PATH. `global.json` asks for 9.0.320 with `rollForward: latestMajor`, so any newer SDK builds it; projects still target `net9.0` and the tests roll forward onto the newest runtime. VS Code's C# extension is pointed at the same host in `.vscode/settings.json` (`dotnet.dotnetPath`), so VS Code, VS Insiders and the terminal all build with one SDK. (A per-user .NET 9 under `%LOCALAPPDATA%\Microsoft\dotnet` still exists and also works, but don't mix the two in one session.)
 Run from `desktop/`:
 - Build everything: `dotnet build -p:Platform=x64`. The WinUI app needs the x64 platform. Warnings are errors.
 - All tests: `dotnet test tests/Jarvis.Tests`

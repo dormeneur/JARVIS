@@ -23,7 +23,7 @@ Full architecture, phase status, and gotchas: `PROJECT_OVERVIEW.md`. Setup: `HOW
 ## Commands
 
 ```bash
-# Desktop (from desktop/; .NET SDK is per-user, see desktop/CLAUDE.md)
+# Desktop (from desktop/; machine-wide .NET SDK 11, see desktop/CLAUDE.md)
 dotnet build -p:Platform=x64
 dotnet test tests/Jarvis.Tests
 
