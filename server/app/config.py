@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     jwt_secret: str = ""
     jwt_expiry_hours: int = 720
+    # Other addresses devices can reach this server at, comma-separated (e.g. the Tailscale one).
+    routes: str = ""
     max_devices: int = 5
     sync_timestamp_tolerance_seconds: int = 2
     brain_url: str = "http://jv-brain:8001"

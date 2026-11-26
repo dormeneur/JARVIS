@@ -177,6 +177,19 @@ async def ask_hunches(rest: str, request: Request, device=Depends(get_current_de
     return response.json()
 
 
+@router.post("/ask/ai/explain")
+async def ask_explain(request: Request, device=Depends(get_current_device)):
+    """Explain / summarise / answer about selected text with the local model (no vault search). NDJSON."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    return StreamingResponse(
+        proxy_stream(payload, f"{settings.brain_url.rstrip('/')}/brain/ai/explain"),
+        media_type="application/x-ndjson",
+    )
+
+
 @router.post("/ask/ai/form-answers")
 async def ask_form_answers(
     request: Request,
