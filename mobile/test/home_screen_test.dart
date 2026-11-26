@@ -46,7 +46,7 @@ void main() {
     final recent = [
       ChatSession(id: 's1', title: 'Trip to Lisbon', createdAt: '2026-11-01T10:00:00Z', lastActiveAt: '2026-11-02T10:00:00Z', status: 'inactive'),
     ];
-    tester.view.physicalSize = const Size(1080, 2400); // a phone, so the whole home is laid out
+    tester.view.physicalSize = const Size(1080, 3000); // a tall phone, so the whole home is laid out
     tester.view.devicePixelRatio = 2.5;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(_home(admin: true, recent: recent));
@@ -54,7 +54,7 @@ void main() {
 
     expect(find.text('Ask JARVIS'), findsOneWidget);
     expect(find.text('Or type a question…'), findsOneWidget);
-    for (final tile in ['Chat', 'Interview', 'Files', 'Jobs', 'Career', 'Settings']) {
+    for (final tile in ['Chat', 'Interview', 'Tasks', 'On my PC', 'Files', 'Jobs', 'Career', 'Settings']) {
       expect(find.text(tile), findsOneWidget);
     }
     expect(find.text('On Pixel'), findsOneWidget);

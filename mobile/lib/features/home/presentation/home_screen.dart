@@ -12,6 +12,9 @@ import 'package:jarvis_mobile/features/explorer/presentation/explorer_screen.dar
 import 'package:jarvis_mobile/features/inbox/data/inbox_repository.dart';
 import 'package:jarvis_mobile/features/inbox/presentation/inbox_screen.dart';
 import 'package:jarvis_mobile/features/jobs/presentation/jobs_screen.dart';
+import 'package:jarvis_mobile/features/relay/relay_repository.dart';
+import 'package:jarvis_mobile/features/relay/relay_screen.dart';
+import 'package:jarvis_mobile/features/tasks/tasks_screen.dart';
 import 'package:jarvis_mobile/features/settings/presentation/settings_screen.dart';
 
 /// The JARVIS look, shared with the desktop notch: black, with the reply blue pooling in a
@@ -48,6 +51,7 @@ class HomeScreen extends ConsumerWidget {
     final auth = ref.watch(authProvider);
     final recent = ref.watch(recentChatsProvider);
     final waiting = ref.watch(inboxCountProvider).valueOrNull ?? 0;
+    ref.watch(relayWatcherProvider); // "Done on your PC" notifications for the app's whole run
     final hour = DateTime.now().hour;
     final greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
@@ -61,6 +65,8 @@ class HomeScreen extends ConsumerWidget {
     final tiles = <_Tile>[
       _Tile(Icons.chat_bubble_outline, 'Chat', 'Ask about your notes', () => open(const ChatScreen())),
       _Tile(Icons.badge_outlined, 'Interview', 'Teach JARVIS about you', () => open(const ChatScreen(interviewOnOpen: true))),
+      _Tile(Icons.check_box_outlined, 'Tasks', 'Tick off, add new', () => open(const TasksScreen())),
+      _Tile(Icons.computer_outlined, 'On my PC', 'Send a job to your PC', () => open(const RelayScreen())),
       _Tile(Icons.hub_outlined, 'About me', 'What Jarvis knows about you', () => open(const AboutMeScreen())),
       _Tile(Icons.folder_open_outlined, 'Files', 'Your vault', () => open(const ExplorerScreen())),
       _Tile(Icons.inbox_outlined, 'Inbox', waiting > 0 ? '$waiting waiting for you' : 'Things JARVIS wants to save', () => open(const InboxScreen())),

@@ -18,6 +18,7 @@ import 'package:jarvis_mobile/features/settings/presentation/settings_provider.d
 import 'package:jarvis_mobile/features/explorer/presentation/explorer_provider.dart';
 import 'package:jarvis_mobile/features/sync/presentation/sync_provider.dart';
 import 'widgets/file_creation_modal.dart';
+import 'package:jarvis_mobile/features/tasks/task_repository.dart';
 
 class ChatMessage {
   final String role; // 'user' or 'assistant'
@@ -419,6 +420,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _replyingTo = null;
     });
 
+    // "Add a task: …" goes straight to the task list once confirmed, never through a model.
+    final task = _interviewMode || sentAttachments.isNotEmpty ? null : TaskInbox.parse(query);
+    if (task != null && await _addTask(task)) return;
+
     // `/create` still works, but is no longer required — the model now picks
     // its own tools for "make me a file…" style requests.
     if (query.toLowerCase().startsWith('/create')) {
@@ -434,6 +439,49 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     _scrollToBottom();
     await _runAgentTurn(query, sentAttachments, reply);
+  }
+
+  /// Confirms [task] and adds it to Agent/tasks.md. False when the user would rather ask Jarvis.
+  Future<bool> _addTask(String task) async {
+    final choice = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Add to your tasks?', style: Theme.of(sheet).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              Text(task, style: Theme.of(sheet).textTheme.bodyLarge),
+              const SizedBox(height: 4),
+              Text('Goes to ${TaskInbox.path}', style: Theme.of(sheet).textTheme.bodySmall),
+              const SizedBox(height: 16),
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                TextButton(onPressed: () => Navigator.pop(sheet, false), child: const Text('Ask Jarvis instead')),
+                const SizedBox(width: 8),
+                FilledButton(onPressed: () => Navigator.pop(sheet, true), child: const Text('Add task')),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || choice == false) return false;
+    var reply = 'Not added.';
+    if (choice == true) {
+      try {
+        await ref.read(taskRepositoryProvider).add(task);
+        reply = 'Added to your tasks: **$task**';
+      } catch (_) {
+        reply = "Couldn't reach your PC, so it isn't added yet. Try again in a moment.";
+      }
+    }
+    if (!mounted) return true;
+    setState(() => _messages.add(ChatMessage(role: 'assistant', text: reply)));
+    _scrollToBottom();
+    return true;
   }
 
   /// Drive the agentic loop, pausing for approval whenever the server asks.

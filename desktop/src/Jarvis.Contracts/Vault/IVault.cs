@@ -76,6 +76,12 @@ public interface IVault
     /// </summary>
     Task<IngestPlan?> PlanIngestAsync(string text, string source, string? url, CancellationToken cancellationToken) => Task.FromResult<IngestPlan?>(null);
 
+    /// <summary>The oldest job sent from the phone, now marked running by this PC; null when there's none.</summary>
+    Task<RelayJob?> ClaimRelayJobAsync(CancellationToken cancellationToken) => Task.FromResult<RelayJob?>(null);
+
+    /// <summary>Tells the phone how a job it sent went: "finished" or "failed", with the result.</summary>
+    Task ReportRelayJobAsync(string id, string status, string result, CancellationToken cancellationToken) => Task.CompletedTask;
+
     /// <summary>Puts a hunch on the stack: not asked again this session, first in the next.</summary>
     Task SkipHunchAsync(string id, string session, CancellationToken cancellationToken) => Task.CompletedTask;
 }
@@ -85,6 +91,9 @@ public sealed record IngestPlan(string NotePath, string NoteContent, IReadOnlyLi
 
 /// <summary>A fact about the user and the Profile file it belongs in.</summary>
 public sealed record PlacedFact(string Path, string Fact);
+
+/// <summary>A job the user sent from the phone for this PC to do.</summary>
+public sealed record RelayJob(string Id, string Brief);
 
 /// <summary>A run of time with one window in front.</summary>
 public sealed record ActivityObservation(DateTimeOffset At, string App, string Title, int Seconds);

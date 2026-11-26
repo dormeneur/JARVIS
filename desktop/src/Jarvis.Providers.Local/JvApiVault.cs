@@ -324,6 +324,22 @@ public sealed partial class JvApiVault : IVault
         return new IngestPlan(path, content, facts);
     }
 
+    public async Task<RelayJob?> ClaimRelayJobAsync(CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(HttpMethod.Post, "/relay/jobs/claim", null, cancellationToken).ConfigureAwait(false);
+        EnsureOk(response);
+        var reply = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false);
+        return reply?["job"] is JsonObject job && job["id"]?.GetValue<string>() is { } id && job["brief"]?.GetValue<string>() is { Length: > 0 } brief
+            ? new RelayJob(id, brief)
+            : null;
+    }
+
+    public async Task ReportRelayJobAsync(string id, string status, string result, CancellationToken cancellationToken)
+    {
+        using var response = await SendAsync(HttpMethod.Post, $"/relay/jobs/{Uri.EscapeDataString(id)}", new JsonObject { ["status"] = status, ["result"] = result }, cancellationToken).ConfigureAwait(false);
+        EnsureOk(response);
+    }
+
     public async Task<string?> PlaceFactAsync(string fact, CancellationToken cancellationToken)
     {
         using var response = await SendAsync(HttpMethod.Post, "/ask/profile/place", new JsonObject { ["fact"] = fact }, cancellationToken).ConfigureAwait(false);

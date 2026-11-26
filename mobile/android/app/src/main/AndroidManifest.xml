@@ -2,6 +2,8 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <!-- Voice questions, recognised on the phone itself. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- "Done on your PC" when a job sent from the phone ends. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"

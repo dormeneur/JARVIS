@@ -71,11 +71,19 @@ internal static class HunchHosting
             provider.GetRequiredService<IOptionsMonitor<HunchOptions>>(),
             provider.GetRequiredService<TimeProvider>(),
             provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HunchCoach>>()));
+
+        // Jobs sent from the phone (jv-api /relay/jobs), run here as background jobs.
+        services.AddSingleton(provider => new RelayCoach(
+            provider.GetRequiredService<Jarvis.Contracts.Vault.IVault>(),
+            provider.GetRequiredService<IAgentJobs>(),
+            () => provider.GetRequiredService<Jarvis.Core.Companion.ScreenPrivacy>().PrivateMode,
+            provider.GetRequiredService<Jarvis.Core.PauseSwitch>(),
+            provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RelayCoach>>()));
     }
 }
 
 /// <summary>Lets the proactive layer look around every 30 seconds; a failed tick is logged, not fatal.</summary>
-internal sealed partial class ProactiveTimer(ProactiveCoach coach, HunchCoach hunches, TimeProvider time, Microsoft.Extensions.Logging.ILogger<ProactiveTimer> logger) : BackgroundService
+internal sealed partial class ProactiveTimer(ProactiveCoach coach, HunchCoach hunches, RelayCoach relay, TimeProvider time, Microsoft.Extensions.Logging.ILogger<ProactiveTimer> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -84,7 +92,7 @@ internal sealed partial class ProactiveTimer(ProactiveCoach coach, HunchCoach hu
         {
             // Each on its own: a failing one never stops the other. The coach goes first, so a
             // meeting heads-up or the morning brief wins the notch over a hunch.
-            foreach (var tick in (Func<CancellationToken, Task>[])[coach.TickAsync, hunches.TickAsync])
+            foreach (var tick in (Func<CancellationToken, Task>[])[coach.TickAsync, hunches.TickAsync, relay.TickAsync])
             {
                 try
                 {

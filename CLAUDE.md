@@ -86,6 +86,16 @@ flutter run
   clients/agents that answer themselves. The desktop's "add a task: …" is `TurnRoute.TaskAdd` (`TaskInbox`: a pattern, not a
   model; confirmed in the notch, appended to `Agent/tasks.md` through the files API). The standalone Strands vault agent
   (`B:\DEV\strands-agent`, outside this repo) is a registered device that uses the same two endpoints and the same file.
+- **Tasks (phone):** jv-api `GET /tasks` lists every `- [ ]`/`- [x]` line in vault notes (`services/tasks.py`; never
+  Secrets/system/hidden folders; `Agent/tasks.md` first), `POST /tasks/toggle {path,text,done}` rewrites exactly that line
+  (409 when it changed elsewhere), `POST /tasks {text}` appends to `Agent/tasks.md`. The phone's chat ports `TaskInbox`
+  (`features/tasks/task_repository.dart`) and confirms in a sheet before adding.
+- **Phone → PC jobs (relay):** `services/relay.py`, a 30-job queue in `<vault>/system/relay-jobs.json` (no push service).
+  The phone `POST /relay/jobs {brief}` (secret-looking briefs refused, 422); the desktop's `Core/Proactive/RelayCoach`
+  (ticked by `ProactiveTimer` every 30 s; waits while paused, in private mode or disconnected) claims the oldest
+  (`/relay/jobs/claim`), runs it as an ordinary `IAgentJobs` job on Claude and reports `finished`/`failed` + result
+  (`/relay/jobs/{id}`). Running jobs older than 6 h are failed. The phone's `RelayWatcher` polls every 20 s while one of
+  its jobs is pending (and at app start) and notifies through the `jarvis/notify` channel (`MainActivity.kt`, `JobNotice`).
 - **Hunches (learning the user):** `brain/app/services/hunches.py`. The desktop sends app + window-title runs
   (`/ask/hunches/observe`); every 2 h the local model turns a week of them plus recently changed notes into
   guesses with evidence and 3 tap answers (agree/partly/disagree), dropping sensitive topics and repeats. The
