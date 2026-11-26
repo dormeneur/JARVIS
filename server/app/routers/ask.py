@@ -20,7 +20,7 @@ async def proxy_stream(payload: dict, url: str) -> AsyncGenerator[bytes, None]:
     """Proxy a streaming request to the brain service — raw byte forwarding."""
     client = httpx.AsyncClient(timeout=120.0)
     try:
-        logger.info(f"Opening proxy stream to: {url} with payload: {payload}")
+        logger.info(f"Opening proxy stream to: {url} ({len(str(payload))} chars)")  # never the content: it is vault text
         async with client.stream("POST", url, json=payload) as response:
             if response.status_code != 200:
                 await response.aread()

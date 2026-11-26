@@ -32,7 +32,7 @@ async def generate_rag_stream(request_data: AskRequest, app_state):
     chat_history = request_data.chat_history or []
     current_directory = request_data.current_directory or "."
     options = request_data.options or AskOptions()
-    logger.info(f"generate_rag_stream started. Query: {query}, Options: {options}")
+    logger.info(f"generate_rag_stream started ({len(query)} chars, top_k={options.top_k})")  # never the question itself
     
     # Extract services from app state
     embedder = app_state.embedding_pipeline
